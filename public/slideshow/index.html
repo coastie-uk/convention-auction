@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auction Slideshow</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background-color: black;
+            font-family: sans-serif;
+        }
+
+        .slideshow-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+
+        #slide-image {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            opacity: 0;
+            transition: opacity 1s ease-in-out;
+        }
+
+        #overlay-text {
+            position: absolute;
+            bottom: 5%;
+            left: 5%;
+            background-color: rgba(0, 0, 0, 0.6);
+            color: white;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            font-size: 1.5rem;
+            max-width: 90%;
+        }
+
+        #start-button {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 2rem;
+            padding: 1rem 2rem;
+            z-index: 10;
+        }
+
+        #config-panel {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background-color: rgba(255,255,255,0.9);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            display: none;
+            z-index: 20;
+        }
+
+        #config-panel label {
+            display: block;
+            margin-bottom: 0.5rem;
+        }
+
+        #config-panel button {
+            margin-top: 0.5rem;
+            margin-right: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="slideshow-container">
+        <img id="slide-image" src="" alt="Auction Item">
+        <div id="overlay-text"></div>
+        <!-- <button id="start-button">Start Slideshow</button> -->
+        <div id="config-panel">
+            <p>Press [c] or touch and hold to show this panel, it will auto-hide. [space] to pause/resume</p>
+            <label>Transition Time (s): <input type="number" id="transition-time" min="1" value="10"></label>
+            <label><input type="checkbox" id="show-description" checked> Show Description</label>
+            <label><input type="checkbox" id="show-contributor" checked> Show Contributor</label>
+            <label><input type="checkbox" id="show-artist" checked> Show Creator</label>
+            <label>Refresh Interval (s): <input type="number" id="refresh-interval" min="10" value="60"></label>
+            <label><input type="checkbox" id="shuffle-items" checked> Shuffle Items</label>
+            <button id="change-auction">Change auction / Logout</button>
+            <button id="pause-button">Pause</button>
+            <button id="resume-button">Resume</button>
+            <button id="restart-button">Reload slideshow</button>
+
+            
+        </div>
+    </div>
+    <script>
+            let items = [], shownItems = [], upcomingItems = [], index = 0;
+            let slideshowRunning = false, config = {}, refreshTimer, slideTimer, paused = false;
+            let configHideTimeout;
+            const API = "/api";
+            // const urlParam = new URLSearchParams(window.location.search).get("admin");
+
+
+            const slideImage = document.getElementById("slide-image");
+            const overlayText = document.getElementById("overlay-text");
+            const configPanel = document.getElementById("config-panel");
+            //       const startButton = document.getElementById("start-button");
+
+            document.addEventListener("DOMContentLoaded", async function () {
+
+                let auctionId = localStorage.getItem("slideshowAuctionId");
+                let auctionName = localStorage.getItem("slideshowFullName");
+
+                if (auctionId && auctionName) {
+                    if (fetchItems()) {
+                        setupChangeAuctionButton();
+                        await fetchItems();
+                        items = [...shownItems, ...upcomingItems];
+                        startSlideshow();
+                        document.documentElement.requestFullscreen?.();
+                        triggerConfigPanel();
+
+
+                    }
+                }
+                else { showAuctionInputForm(); }
+            })
+
+
+            function loadConfig() {
+                config = JSON.parse(localStorage.getItem("slideshowConfig")) || {
+                    transitionTime: 10,
+                    showDescription: true,
+                    showContributor: true,
+                    showArtist: true,
+                    refreshInterval: 60,
+                    shuffleItems: true
+                };
+                document.getElementById("transition-time").value = config.transitionTime;
+                document.getElementById("show-description").checked = config.showDescription;
+                document.getElementById("show-contributor").checked = config.showContributor;
+                document.getElementById("show-artist").checked = config.showArtist;
+                document.getElementById("refresh-interval").value = config.refreshInterval;
+                document.getElementById("shuffle-items").checked = config.shuffleItems;
+            }
+
+            function saveConfig() {
+                config.transitionTime = parseInt(document.getElementById("transition-time").value);
+                config.showDescription = document.getElementById("show-description").checked;
+                config.showContributor = document.getElementById("show-contributor").checked;
+                config.showArtist = document.getElementById("show-artist").checked;
+                config.refreshInterval = parseInt(document.getElementById("refresh-interval").value);
+                config.shuffleItems = document.getElementById("shuffle-items").checked;
+                localStorage.setItem("slideshowConfig", JSON.stringify(config));
+            }
+
+            function shuffleArray(arr) {
+                for (let i = arr.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [arr[i], arr[j]] = [arr[j], arr[i]];
+                }
+            }
+
+            async function fetchItems() {
+
+                const token = localStorage.getItem("slideshowtoken");
+
+                try {
+                    const res = await fetch(`${API}/auctions/${auctionId}/slideshow-items`, { headers: { Authorization: token } })
+
+                    if (!res.ok) {
+                        alert("Session expired, please log in again");
+                        logout();
+                        return false;
+                    }
+
+                    let data = await res.json();
+                    data = data.filter(item => item.photo);
+                    const knownIds = new Set([...shownItems.map(i => i.id), ...upcomingItems.map(i => i.id)]);
+                    const newItems = data.filter(item => !knownIds.has(item.id));
+                    if (newItems.length) {
+                        if (config.shuffleItems) shuffleArray(newItems);
+                        for (const item of newItems) {
+                            const randIndex = Math.floor(Math.random() * (upcomingItems.length + 1));
+                            upcomingItems.splice(randIndex, 0, item);
+                        }
+                    }
+                    return true;
+                } catch (err) {
+                    console.error("Failed to fetch items:", err);
+                    return false;
+                }
+            }
+
+
+            function logout() {
+                localStorage.removeItem("slideshowAuctionId");
+                localStorage.removeItem("slideshowtoken");
+                location.reload();
+            }
+
+            function showNextSlide() {
+                if (paused || !upcomingItems.length) {
+                    // If we run out of upcoming items, start over with all items
+                    upcomingItems = [...shownItems];
+                    shownItems = [];
+                    if (config.shuffleItems) shuffleArray(upcomingItems);
+                }
+
+                if (!upcomingItems.length) return; // Still nothing to show
+
+                const item = upcomingItems.shift();
+                shownItems.push(item);
+                slideImage.style.opacity = 0;
+                setTimeout(() => {
+                    const version = item.mod_date ? `?v=${encodeURIComponent(item.mod_date)}` : "";
+                    slideImage.src = `${API}/uploads/${item.photo}${version}`;
+                    overlayText.innerHTML = "";
+                    if (config.showDescription) overlayText.innerHTML += `<p>${item.description}</p>`;
+                    if (config.showContributor) overlayText.innerHTML += `<p>Donated by: ${item.contributor}</p>`;
+                    if (config.showArtist) overlayText.innerHTML += `<p>Creator: ${item.artist}</p>`;
+                    slideImage.onload = () => { slideImage.style.opacity = 1; };
+                }, 500);
+                slideTimer = setTimeout(showNextSlide, config.transitionTime * 1000);
+            }
+
+            function startSlideshow() {
+                //          startButton.style.display = "none";
+                configPanel.style.display = "none";
+                slideshowRunning = true;
+                paused = false;
+                shownItems = [];
+                upcomingItems = items.slice();
+                if (config.shuffleItems) shuffleArray(upcomingItems);
+                showNextSlide();
+                refreshTimer = setInterval(fetchItems, config.refreshInterval * 1000);
+            }
+
+            function stopSlideshow() {
+                clearTimeout(slideTimer);
+                clearInterval(refreshTimer);
+                slideshowRunning = false;
+                //       startButton.style.display = "block";
+            }
+
+            function restartSlideshow() {
+                clearTimeout(slideTimer);
+                clearInterval(refreshTimer);
+                slideshowRunning = false;
+                //       startButton.style.display = "block";
+                fetchItems();
+                startSlideshow();
+            }
+
+            function pauseSlideshow() {
+                paused = true;
+                clearTimeout(slideTimer);
+                showStatusMessage("Slideshow Paused");
+
+            }
+
+            function resumeSlideshow() {
+                if (!paused) return;
+                paused = false;
+                showStatusMessage("Slideshow Started");
+                showNextSlide();
+            }
+
+            function togglePause() {
+                console.log("toggle")
+                if (slideshowRunning) {
+                    if (paused) {
+                        resumeSlideshow();
+                    } else {
+                        pauseSlideshow();
+                    };
+                }
+
+            }
+
+            function autoHideConfigPanel() {
+                clearTimeout(configHideTimeout);
+                configHideTimeout = setTimeout(() => {
+                    configPanel.style.display = "none";
+                }, 10000);
+            }
+
+            document.addEventListener("fullscreenchange", () => {
+                if (!document.fullscreenElement && slideshowRunning) {
+                    pauseSlideshow();
+                }
+            });
+
+            document.addEventListener("keydown", e => {
+                if (e.key === "c" || e.key === "C") {
+                    configPanel.style.display = configPanel.style.display === "none" ? "block" : "none";
+                    if (configPanel.style.display === "block") autoHideConfigPanel();
+                }
+                if (e.key === "Escape") pauseSlideshow();
+                if (e.key === " ") { //spacebar
+                    togglePause();
+                }
+            });
+
+            document.querySelectorAll("#config-panel input").forEach(input => {
+                input.addEventListener("change", () => {
+                    saveConfig();
+                    autoHideConfigPanel();
+                });
+            });
+
+            document.getElementById("pause-button").addEventListener("click", () => {
+                pauseSlideshow();
+                autoHideConfigPanel();
+            });
+
+            document.getElementById("resume-button").addEventListener("click", () => {
+                resumeSlideshow();
+                autoHideConfigPanel();
+            });
+
+            document.getElementById("restart-button").addEventListener("click", () => {
+                restartSlideshow();
+                showStatusMessage("Slideshow Restarted");
+                autoHideConfigPanel();
+            });
+
+
+            // Long press/tap-and-hold to open config panel (mobile + mouse)
+            let pressTimer;
+            const container = document.querySelector(".slideshow-container");
+
+            function triggerConfigPanel() {
+                configPanel.style.display = "block";
+                autoHideConfigPanel();
+            }
+
+            container.addEventListener("touchstart", () => {
+                pressTimer = setTimeout(triggerConfigPanel, 1000);
+            });
+
+            container.addEventListener("touchend", () => {
+                clearTimeout(pressTimer);
+            });
+
+            container.addEventListener("mousedown", () => {
+                pressTimer = setTimeout(triggerConfigPanel, 1000);
+            });
+
+            container.addEventListener("mouseup", () => {
+                clearTimeout(pressTimer);
+            });
+
+
+            loadConfig();
+            if (!localStorage.getItem("slideshowConfig")) configPanel.style.display = "block";
+
+            // Create and style the status overlay
+            const statusOverlay = document.createElement("div");
+            statusOverlay.style.position = "absolute";
+            statusOverlay.style.top = "10%";
+            statusOverlay.style.left = "50%";
+            statusOverlay.style.transform = "translateX(-50%)";
+            statusOverlay.style.background = "rgba(0, 0, 0, 0.7)";
+            statusOverlay.style.color = "white";
+            statusOverlay.style.padding = "1rem 2rem";
+            statusOverlay.style.borderRadius = "1rem";
+            statusOverlay.style.fontSize = "2rem";
+            statusOverlay.style.zIndex = "999";
+            statusOverlay.style.display = "none";
+            document.body.appendChild(statusOverlay);
+
+            function showStatusMessage(message) {
+                statusOverlay.textContent = message;
+                statusOverlay.style.display = "block";
+                clearTimeout(statusOverlay.timeout);
+                statusOverlay.timeout = setTimeout(() => {
+                    statusOverlay.style.display = "none";
+                }, 3000);
+            }
+
+            document.addEventListener("fullscreenchange", () => {
+                if (document.fullscreenElement && slideshowRunning && paused) {
+                    resumeSlideshow();
+                }
+            })
+
+            let auctionId = localStorage.getItem("slideshowAuctionId");
+            let auctionName = localStorage.getItem("slideshowFullName");
+
+            const elevated = localStorage.getItem("token") || localStorage.getItem("maintenanceToken") || localStorage.getItem("cashierToken");
+
+
+            function showAuctionInputForm() {
+                const container = document.createElement("div");
+                container.style.position = "fixed";
+                container.style.top = "0";
+                container.style.left = "0";
+                container.style.width = "100vw";
+                container.style.height = "100vh";
+                container.style.background = "rgba(0, 0, 0, 0.85)";
+                container.style.display = "flex";
+                container.style.flexDirection = "column";
+                container.style.justifyContent = "center";
+                container.style.alignItems = "center";
+                container.style.zIndex = "10000";
+
+                const notice = document.createElement("div");
+                notice.textContent = `Elevated login detected - For security, starting a slideshow will log this browser out of any non-public pages`;
+                notice.style.color = "yellow";
+                notice.style.marginBottom = "10px";
+                notice.style.textAlign = "center";
+                notice.style.fontSize = "1rem";
+
+                const auctionInput = document.createElement("input");
+                auctionInput.type = "text";
+                auctionInput.placeholder = "Enter Auction Short Name";
+                auctionInput.style.padding = "10px";
+                auctionInput.style.fontSize = "1.2rem";
+                auctionInput.style.borderRadius = "6px";
+                auctionInput.style.border = "1px solid #ccc";
+                auctionInput.style.marginBottom = "10px";
+
+                const adminPassword = document.createElement("input");
+                adminPassword.type = "password";
+                adminPassword.placeholder = "Enter Admin Password";
+                adminPassword.style.padding = "10px";
+                adminPassword.style.fontSize = "1.2rem";
+                adminPassword.style.borderRadius = "6px";
+                adminPassword.style.border = "1px solid #ccc";
+                adminPassword.style.marginBottom = "10px";
+
+                const button = document.createElement("button");
+                button.textContent = "Submit";
+                button.style.padding = "10px 20px";
+                button.style.fontSize = "1.2rem";
+                button.style.border = "none";
+                button.style.borderRadius = "6px";
+                button.style.backgroundColor = "#007bff";
+                button.style.color = "white";
+                button.style.cursor = "pointer";
+
+                const message = document.createElement("div");
+                message.style.color = "white";
+                message.style.marginTop = "10px";
+
+                button.addEventListener("click", async () => {
+                    try {
+                        message.textContent = "";
+                        const loginRes = await fetch(`${API}/login`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ password: adminPassword.value.trim(), role: "admin" })
+                        });
+
+                        const loginData = await loginRes.json();
+                        if (!loginRes.ok) throw new Error(loginData.error || "Admin login failed");
+
+                        const tokenRes = await fetch(`${API}/slideshow-auth`, {
+
+                            headers: {
+                                "Content-Type": "application/json",
+                                Authorization: loginData.token
+                            }
+                        });
+
+                        const tokenData = await tokenRes.json();
+                        if (!tokenRes.ok) throw new Error(tokenData.error || "Failed to get slideshow token");
+                        slideshowToken = tokenData.token;
+
+                        // const shortName = auctionInput.value.trim();
+
+                        const id = await validateAuctionShortName(auctionInput.value.trim());
+                        auctionId = id;
+
+
+                        localStorage.setItem("slideshowAuctionId", auctionId);
+                        localStorage.setItem("slideshowtoken", slideshowToken);
+
+                        // This is expected to be left unattended, so we're going to log out any other elevated users
+                        localStorage.removeItem("token");
+                        localStorage.removeItem("maintenanceToken");
+                        localStorage.removeItem("cashierToken");
+
+                        container.remove();
+                        setupChangeAuctionButton();
+                        await fetchItems();
+                        items = [...shownItems, ...upcomingItems];
+                        startSlideshow();
+                        document.documentElement.requestFullscreen?.();
+                        triggerConfigPanel();
+
+                    } catch (err) {
+                        message.textContent = err.message;
+                    }
+                });
+
+
+                if (elevated) {
+                    container.appendChild(notice);
+                }
+                container.appendChild(auctionInput);
+                container.appendChild(adminPassword);
+                container.appendChild(button);
+                container.appendChild(message);
+
+                document.body.appendChild(container);
+            }
+
+
+            function setupChangeAuctionButton() {
+                const changeBtn = document.getElementById("change-auction");
+                if (changeBtn) {
+                    changeBtn.addEventListener("click", () => {
+                        if (confirm("Are you sure you want to select a different auction? ")) {
+                            logout();
+
+                        }
+                    });
+                }
+            }
+
+            async function validateAuctionShortName(shortName) {
+                console.log("validate called");
+                if (!shortName) throw new Error("Auction name required");
+
+                const res = await fetch(`${API}/validate-auction`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ short_name: shortName })
+                });
+
+                const data = await res.json();
+                //    console.log(data);
+                if (res.ok && data.id) {
+                    localStorage.setItem("slideshowAuctionId", data.id);
+                    localStorage.setItem("slideshowFullName", data.full_name);
+                    return data.id;
+                } else {
+                    throw new Error(data.error || "Name not found");
+                }
+
+            }
+
+</script>
+
+
+
+</body>
+</html>

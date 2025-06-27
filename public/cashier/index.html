@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Cashier – Charity Auction</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Core styles reused from admin area -->
+  <link rel="stylesheet" href="/styles/admin-styles.css">
+
+  <!-- Minimal additions for sticky header layout -->
+  <style>
+    /* Sticky header bar that remains visible while scrolling */
+    #dashboard-section.sticky {
+      position: sticky;
+      top: 0;
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      padding: 0.5rem 1rem;
+      background: #ffffff;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+      z-index: 1000;
+    }
+
+    #viewport {
+      padding: 1rem;
+      min-height: 70vh; /* keeps footer pushed down */
+    }
+  </style>
+</head>
+<body>
+  
+
+  <!-- 1️⃣ LOGIN -->
+  <section id="login-section">
+    <div class="login-container">
+    <h2>Cashier Login</h2>
+    <input type="password" id="cashier-password" placeholder="Enter Password" autocomplete="current-password">
+    <button id="login-button">Login</button>
+    <p id="error-message" class="error"></p>
+    </div>
+  </section>
+
+  <!-- 2️⃣ DASHBOARD HEADER (hidden until authenticated) -->
+  <header id="dashboard-section" class="sticky" style="display:none;">
+    <b>Cashier's Panel</b>
+    <label for="live-select">Live bidding view:</label>
+    <select id="live-select"></select>
+    <button id="open-live" disabled>Open</button>
+
+    <label for="settle-select">Settlement & Payment Panel:</label>
+    <select id="settle-select"></select>
+    <button id="open-settle" disabled>Open</button>
+
+    <button id="logout">Logout</button>
+  </header>
+
+  <!-- 3️⃣ VIEWPORT WHERE SUB‑PAGES ARE LOADED -->
+  <main id="viewport" style="display:none;">
+    <p class="placeholder">Pick an auction to begin…</p>
+  </main>
+
+  <script src="/scripts/cashier-login.js"></script>
+    <script src="/scripts/banner.js"></script>
+
+</body>
+</html>

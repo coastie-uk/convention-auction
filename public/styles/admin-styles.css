@@ -1,0 +1,407 @@
+/* Admin Page Styles */
+
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f4f4f4;
+    margin: 0;
+    padding: 0;
+}
+
+main {
+    padding: 20px;
+}
+
+h2 {
+    color: #333;
+}
+
+/* Sticky Top Command Bar */
+.sticky-controls {
+    position: sticky;
+    top: 0;
+    background-color: #f8f9fa;
+    padding: 10px 15px;
+    border-bottom: 1px solid #ccc;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    z-index: 10;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.button-group-left,
+.button-group-right {
+    display: flex;
+    gap: 10px;
+    position: relative;
+}
+
+.dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.dropdown-button {
+    padding: 8px 12px;
+    border: none;
+    background-color: #005bbb;
+    color: white;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: background-color 0.3s ease;
+}
+
+.dropdown-button:hover {
+    background-color: #004799;
+}
+
+.dropdown-content {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background-color: white;
+    min-width: 160px;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+    z-index: 20;
+    border-radius: 5px;
+    overflow: hidden;
+    flex-direction: column;
+}
+
+.dropdown-content button {
+    background: none;
+    border: none;
+    text-align: left;
+    padding: 10px 15px;
+    width: 100%;
+    color: #333;
+    font-weight: normal;
+    cursor: pointer;
+}
+
+.dropdown-content button:hover {
+    background-color: #f0f0f0;
+}
+
+.dropdown:hover .dropdown-content,
+.dropdown:focus-within .dropdown-content {
+    display: flex;
+}
+
+/* Table Styling */
+.table-container {
+    margin-top: 20px;
+    overflow-x: auto;
+}
+
+#itemsTable,
+#feed {
+    width: 100%;
+    border-collapse: collapse;
+    background-color: white;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+#itemsTable th,
+#itemsTable td,
+#feed th,
+#feed td {
+    padding: 10px;
+    border: 1px solid #ccc;
+    text-align: left;
+}
+
+#itemsTable th,
+#feed th {
+    background-color: #e9ecef;
+    font-weight: bold;
+}
+
+/* Forms */
+form input[type="text"],
+form input[type="file"],
+form input[type="password"] {
+    width: 100%;
+    padding: 8px;
+    margin: 6px 0 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+
+form button {
+    padding: 10px 15px;
+    background-color: #007bff;
+    border: none;
+    color: white;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    margin-right: 10px;
+}
+
+form button:hover {
+    background-color: #0056b3;
+}
+
+
+/* Message Banner Styles */
+.message-banner {
+    position: fixed;
+    top: 10px;
+    left: 50%;
+    width: 200px;
+    text-align: center;
+    transform: translateX(-50%);
+    padding: 10px 20px;
+    font-size: 16px;
+    border-radius: 5px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    display: none;
+    opacity: 0;
+    transition: opacity 3s;
+    z-index: 1000;
+}
+
+/* Success Message */
+.message-banner.success {
+    background-color: #28a745;
+    color: white;
+}
+
+/* Error Message */
+.message-banner.error {
+    background-color: #dc3545;
+    color: white;
+}
+
+/* Info Message */
+.message-banner.info {
+    background-color: #17a2b8;
+    color: white;
+}
+
+/* Mobile Optimization */
+@media (max-width: 600px) {
+    .sticky-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .button-group-left,
+    .button-group-right {
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .dropdown-content {
+        min-width: 100%;
+        position: static;
+        box-shadow: none;
+    }
+
+    .dropdown-content button {
+        padding: 12px;
+    }
+}
+
+footer {
+    text-align: center;
+    font-size: 0.8em;
+    color: #777;
+    margin-top: 2em;
+    padding: 1em 0;
+    border-top: 1px solid #ccc;
+}
+
+/* Section Styling */
+#edit-section,
+#add-section {
+    background: #fafafa;
+    border: 1px solid #ddd;
+    border-radius: 12px;
+    padding: 20px;
+    margin: 30px auto;
+    max-width: 700px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+/* Form fields */
+#edit-form label,
+#add-form label {
+    display: block;
+    font-weight: bold;
+    margin-top: 15px;
+    margin-bottom: 5px;
+    color: #333;
+}
+
+#edit-form input[type="text"],
+#edit-form input[type="file"],
+#add-form input[type="text"],
+#add-form input[type="file"] {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #bbb;
+    border-radius: 6px;
+    box-sizing: border-box;
+}
+
+/* Photo preview */
+#current-photo {
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    box-shadow: 0 0 5px rgba(0,0,0,0.1);
+}
+
+/* Rotate/Crop button row */
+#edit-form .image-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.image-tools button {
+    flex: 1;
+    min-width: 120px;
+    padding: 10px;
+    background-color: #e0e0e0;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+.image-tools button:hover {
+    background-color: #d5d5d5;
+}
+
+
+/* Action buttons */
+#edit-form .form-actions {
+    margin-top: 20px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+#edit-form .form-actions button {
+    flex: 1;
+    min-width: 120px;
+    padding: 10px 16px;
+    border: none;
+    border-radius: 6px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+#edit-form .form-actions button[type="submit"] {
+    background-color: #4CAF50;
+    color: white;
+}
+
+#edit-form #delete-item {
+    background-color: #f44336;
+    color: white;
+}
+
+#edit-form #cancel-edit {
+    background-color: #9e9e9e;
+    color: white;
+}
+.auction-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .image-tools button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+  .login-container {
+    background: white;
+    padding: 30px 40px;
+    border-radius: 10px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+    width: 100%;
+    max-width: 400px;
+}
+
+.login-container h2 {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.login-container input,
+.login-container select,
+.login-container button {
+    width: 100%;
+    padding: 10px;
+    margin: 8px 0;
+    font-size: 1em;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    box-sizing: border-box;
+}
+
+.login-container button {
+    background: #0077cc;
+    color: white;
+    border: none;
+    cursor: pointer;
+}
+
+.login-container button:hover {
+    background: #005fa3;
+}
+
+/* ---------------- 1. Responsive layout ---------------- */
+@media (max-width: 760px) {
+  #wrap          { flex-direction: column; }
+  #leftPane,
+  #rightPane     { width: 100%; height: auto; }
+  #rightPane     { padding: 1rem; }
+}
+
+/* ---------------- 2. Scrollable bidder list ----------- */
+
+#bidderTable {
+  flex: 1 1 auto;           /* take remaining height */
+  overflow-y: auto;
+}
+
+/* ---------------- 3. Hide Paddle header/column on XS --- */
+@media (max-width: 480px) {
+  #bidderTable thead th:first-child,
+  #bidderTable tbody td:first-child {
+    display: none;          /* hide Paddle # */
+  }
+}
+
+/* ---------------- 4. Touch-friendly buttons ------------ */
+#payButtons button,
+#summaryBtn,
+#csv {
+  font-size: 1rem;
+  padding: 10px 20px;
+  min-width: 120px;
+  margin-bottom: 6px;
+}
+
+/* ---------------- 5. Ellipsis Title in Lots table ------ */
+#lotsTable td:nth-child(2) {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

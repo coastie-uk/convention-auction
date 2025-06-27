@@ -1,0 +1,18 @@
+{
+  "CONFIG_IMG_DIR": "resources",
+  "SAMPLE_DIR": "sample-assets",
+  "BACKUP_DIR": "backups",
+  "MAX_UPLOADS": 30,
+  "allowedExtensions": [".jpg", ".jpeg", ".png"],
+  "DB_PATH": "auction.db",
+  "UPLOAD_DIR": "uploads",
+  "SECRET_KEY": "RarityIsBestPony",
+  "port": 3000,
+  "LOG_LEVEL": "DEBUG",
+  "MAX_AUCTIONS": 20,
+  "MAX_ITEMS": 2000
+
+
+
+
+}

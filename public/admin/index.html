@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Charity Auction</title>
+    <link rel="stylesheet" href="/styles/admin-styles.css">
+
+    <link rel="icon" type="image/png" href="/images/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="/images/favicon.svg" />
+    <link rel="shortcut icon" href="/images/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <link href="https://cdn.jsdelivr.net/npm/cropperjs@1.5.13/dist/cropper.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.5.13/dist/cropper.min.js"></script>
+
+</head>
+
+<body>
+
+    <main>
+        <section id="login-section">
+            <div class="login-container">
+                <h2>Admin Login</h2>
+                <input type="password" id="admin-password" placeholder="Enter Password">
+                <button id="login-button">Login</button>
+                <p id="error-message" style="color:red;"></p>
+            </div>
+        </section>
+
+
+        <section id="admin-section" style="display: none;">
+            <div class="sticky-controls">
+                <div class="button-group-left">
+                    <div class="auction-filter">
+                        <label for="auction-select" style="font-weight:bold;">Auction:</label>
+                        <select id="auction-select"></select>
+
+
+                        <label for="sort-field" style="font-weight:bold;">Sort by:</label>
+                        <select id="sort-field">
+                            <option value="item_number">Number</option>
+                            <option value="description">Name</option>
+                            <option value="contributor">Contributor</option>
+                            <option value="artist">Creator</option>
+                            <option value="paddle_number">Bidder</option>
+                            <option value="hammer_price">Price</option>
+
+
+                        </select>
+
+                        <label for="sort-order" style="font-weight:bold;">Order:</label>
+                        <select id="sort-order">
+                            <option value="asc">Ascending</option>
+                            <option value="desc">Descending</option>
+                        </select>
+
+                        <div id="auction-total">
+                            Total : £0.00
+                        </div>
+
+                    </div>
+
+                </div>
+                <div class="button-group-right">
+                    <button id="add-item">Create New Item</button>
+                    <button id="refresh">Refresh</button>
+
+                    <div class="dropdown">
+                        <button>Export</button>
+                        <div class="dropdown-content">
+                            <button id="export-csv">Generate CSV Export</button>
+                            <button id="generate-ppt">Generate Auction Slides</button>
+                            <button id="generate-cards">Generate Item Cards</button>
+                        </div>
+                    </div>
+
+                     <div class="dropdown">
+                        <button>Other pages</button>
+                        <div class="dropdown-content">
+                            <button id="public">Public form</button>
+                            <button id="livefeed">Live Feed</button>
+                            <a href="/maint/index.html" target="_blank"><button>Maintenance (login required)</button></a>
+                            <a href="/cashier/index.html" target="_blank"><button>Cashier (login required)</button></a>
+                            <a href="/slideshow/index.html" target="_blank"><button>Slideshow (will logout)</button></a>
+
+
+                        </div>
+                    </div>
+
+
+                    <a href="/help/admin-guide.html" target="_blank"><button>User Guide</button></a>
+                    <button id="logout">Logout</button>
+                </div>
+            </div>
+
+            <div class="table-container">
+                <table id="itemsTable">
+                    <thead>
+                        <tr>
+                            <th>Item #</th>
+                            <th>Description</th>
+                            <th>Contributor</th>
+                            <th>Creator</th>
+                            <th>Photo</th>
+                            <th class="live-only" style="display:none;">Bidder</th>
+                            <th class="live-only" style="display:none;">Price</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="items-table-body">
+                        <!-- Items will be dynamically inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section id="edit-section" style="display: none;">
+            <p id="edit-title"></p>
+            <form id="edit-form">
+                <input type="hidden" id="edit-id">
+
+                <p><img id="current-photo" src="" alt="Current Photo" style="max-width:200px;"></p>
+                <div class="image-tools">
+                    <button type="button" id="rotate-left">⟲ Rotate Left</button>
+                    <button type="button" id="rotate-right">⟳ Rotate Right</button>
+                    <button type="button" id="crop-image">✂ Crop Image</button>
+                </div>
+
+
+                <div id="crop-modal"
+                    style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.8); justify-content:center; align-items:center; z-index:9999;">
+                    <div style="
+                        background:#fff;
+                        padding:20px;
+                        border-radius:8px;
+                        max-width:90vw;
+                        max-height:90vh;
+                        display: flex;
+                        flex-direction: column;
+                        overflow: hidden;
+                    ">
+                        <h3 style="margin-top:0;">Crop Image</h3>
+
+                        <div style="flex: 1; overflow: auto; display: flex; justify-content: center;">
+                            <img id="crop-target" style="max-width:100%; max-height:100%;">
+                        </div>
+
+                        <div style="margin-top: 15px; text-align: center;">
+                            <button type="button" id="apply-crop">Apply Crop</button>
+                            <button type="button" id="cancel-crop">Cancel</button>
+                        </div>
+                    </div>
+
+                </div>
+
+                <p id="edit-dates"></p>
+                <label for="edit-description">Item Description:</label>
+                <input type="text" id="edit-description" required>
+
+                <label for="edit-contributor">Contributor:</label>
+                <input type="text" id="edit-contributor" required>
+
+                <label for="edit-artist">Creator:</label>
+                <input type="text" id="edit-artist">
+
+                <label for="edit-notes">Notes:</label>
+                <input type="text" id="edit-notes">
+
+                <!-- <label for="edit-auction">Auction:</label>
+                <select id="edit-auction"></select> -->
+
+
+
+                <label>Select an existing Photo (jpeg/png):</label>
+                <input type="file" accept="image/*" id="edit-photo" name="photo">
+
+                <!-- Custom Button -->
+                <button type="button" id="capture-button">Take a Photo now</button>
+
+                <!-- Hidden file input -->
+                <input type="file" id="edit-photo-live" name="edit-photo-live" accept="image/*" capture="environment"
+                    style="display: none;">
+
+                <div class="form-actions">
+                    <button type="submit">Save Changes</button>
+                    <button type="button" id="delete-item">Delete Item</button>
+                    <button type="button" id="cancel-edit">Cancel</button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Add Item Form Section -->
+        <section id="add-section" style="display: none;">
+            <h2>Add New Item</h2>
+            <form id="add-form">
+                <label for="add-description">Item Description:</label>
+                <input type="text" id="add-description" required>
+
+                <label for="add-contributor">Contributor:</label>
+                <input type="text" id="add-contributor" required>
+
+                <label for="add-artist">Creator:</label>
+                <input type="text" id="add-artist">
+
+                <label for="add-notes">Notes:</label>
+                <input type="text" id="add-notes">
+
+                <label for="add-photo">Upload Photo:</label>
+                <input type="file" id="add-photo" accept="image/*">
+
+                <button type="submit">Add Item</button>
+                <button type="button" id="cancel-add">Cancel</button>
+            </form>
+        </section>
+
+<div id="history-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.7); z-index:9999; justify-content:center; align-items:center;">
+  <div style="background:white; padding:20px; border-radius:8px; max-width:700px; max-height:80vh; overflow:auto;">
+    <h3>Item History</h3>
+    <table style="width:100%; border-collapse: collapse; font-size: 0.9em;">
+      <thead>
+        <tr style="background:#f0f0f0;">
+          <th style="text-align:left; padding: 6px;">Timestamp</th>
+          <th style="text-align:left; padding: 6px;">User</th>
+          <th style="text-align:left; padding: 6px;">Action</th>
+          <th style="text-align:left; padding: 6px;">Details</th>
+        </tr>
+      </thead>
+      <tbody id="history-table-body"></tbody>
+    </table>
+    <div style="text-align:right; margin-top:10px;">
+      <button onclick="closeHistoryModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+    </main>
+    <script src="/scripts/admin-script.js"></script>
+    <script src="/scripts/daypilot-modal-3.15.1.min.js"></script>
+    <script src="/scripts/finalise-lot.js"></script>
+    <script src="/scripts/banner.js"></script>
+
+
+    <script>
+        document.getElementById('capture-button').addEventListener('click', function () {
+            document.getElementById('edit-photo-live').click();
+        });
+
+        document.getElementById("admin-password").addEventListener("keyup", function (event) {
+            if (event.keyCode === 13) {
+                document.getElementById('login-button').click();
+            }
+        })
+    </script>
+
+    <footer>
+        <p>Developed by Chris Staples ("Coastie") for Festival of Friendship <span title="Hoers">🐴</span></p>
+    </footer>
+</body>
+
+</html>

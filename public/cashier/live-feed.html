@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Live Feed – Auction</title>
+  <link rel="stylesheet" href="/styles/admin-styles.css" />
+  <style>
+    /* tiny inline additions */
+    #status.ok    { color: green; }
+    #status.stale { color: darkorange; }
+    tr[data-paddle] { transition: background 0.2s; }
+    tr.unsold-row {   color: #777; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1></h1>
+</header>
+
+  <div class="toolbar">
+    <label>Filter Paddle #:
+      <input id="filter" type="number" min="1" max="999" />
+    </label>
+    <button id="btnApply">Go</button>
+    <span id="status" class="ok">Connected</span>
+
+    <label style="margin-left:8px;">
+      <input type="checkbox" id="showUnsold" checked>
+      Show unsold
+    </label>
+  </div>
+
+  <table id="feed" class="datatable">
+    <thead>
+      <tr><th>Paddle #</th><th>Lot</th><th>Title</th><th>Price</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script src="/scripts/live-feed.js"></script>
+  <script src="/scripts/banner.js"></script>
+</body>
+</html>
+

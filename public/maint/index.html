@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Maintenance Panel - Charity Auction</title>
+
+  <link rel="stylesheet" href="/styles/maintenance.css" />
+</head>
+<body>
+  <main>
+    <section id="login-section">
+      <div class="login-container">
+      <h2>Maintenance Login</h2>
+      <input type="password" id="maintenance-password" placeholder="Enter Maintenance Password">
+      <button id="login-button">Login</button>
+      <p id="error-message" style="color:red;"></p>
+      </div>
+    </section>
+
+    <section id="maintenance-section" style="display:none;">
+      <h1>Maintenance Panel</h1>
+      <a href="/help/maint-guide.html" target="_blank" style="margin-left: 10px; font-size: 0.9em;">User Guide</a>
+
+      <details class="group" open>
+        <summary>Auction Management</summary>
+      
+        <details class="group">
+          <summary>Create new</summary>
+
+
+        <div>
+
+          <label for="auction-full-name">Auction Name:</label>
+          <input type="text" id="auction-full-name" placeholder="e.g. Festival of Friendship 2026">
+          <label for="auction-short-name">URL Tag i.e. ?auction=[name]</label>
+          <input type="text" id="auction-short-name" placeholder="e.g. fof2026">
+          
+          <label for="auction-logo-select">Auction logo:</label>
+            <select id="auction-logo-select">
+              <!-- Options will be populated dynamically -->
+            </select>
+     
+          <button id="create-auction">Create Auction</button>
+        </div>
+      </details>
+
+        <h4>Existing Auctions</h4>
+        <table id="auction-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>URL tag</th>
+              <th>Name</th>
+              <!-- <th>Accept Submissions</th> -->
+              <th>Logo</th>
+              <th>Items</th>
+              <td>Status</td>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="auction-table-body">
+            <!-- Rows will be added by JS -->
+          </tbody>
+        </table>
+      </details>
+
+      <details class="group">
+        <summary>Database</summary>
+        <button id="backup-db">Create Backup on server</button>
+        <input type="file" id="restore-file">
+        <button id="restore-db">Restore database from local backup</button>
+
+      </details>
+
+      <details class="group">
+        <summary>Import/Export</summary>
+        <button id="export-csv">Export CSV</button>
+        <input type="file" id="import-csv">
+        <button id="import-csv-btn">Import CSV</button>
+        <p>Column headings: description, artist, contributor, notes, and auction_id</p>
+        <button id="download-db">Download database and photos</button>
+      </details>
+
+      <details class="group">
+        <summary>Diagnostics</summary>
+
+        <button id="photo-report">Get Photo Storage Report</button>
+        <!-- <button id="integrity-check">Run Data Integrity Check</button> -->
+        <button id="cleanup-orphans">Clean Up Unused Photos</button>
+        <H3>Integrity Check</H3>
+
+        <button id="integrity-check">Check for Invalid Items</button>
+        <div id="integrity-results" style="display:none;">
+          <p id="integrity-summary"></p>
+          <button id="delete-invalid-items">Delete Invalid Items</button>
+          <pre id="invalid-items-list" style="background:#f0f0f0; padding:10px; max-height:200px; overflow:auto;"></pre>
+          <H3>Server control</H3>
+          <button id="restart-server">Restart Server</button>
+
+      </details>
+
+      <!-- <details class="group">
+        <summary>Data Integrity</summary>
+        <button id="integrity-check">Check for Invalid Items</button>
+        <div id="integrity-results" style="display:none;">
+          <p id="integrity-summary"></p>
+          <button id="delete-invalid-items">Delete Invalid Items</button>
+          <pre id="invalid-items-list" style="background:#f0f0f0; padding:10px; max-height:200px; overflow:auto;"></pre>
+        </div>
+      </details> -->
+      
+
+      <details class="group">
+        <summary>Security</summary>
+        
+        <label for="password-role">Select role:</label>
+        <select id="password-role">
+          <option value="admin">Admin</option>
+          <option value="cashier">Cashier</option>
+          <option value="maintenance">Maintenance</option>
+        </select>
+
+        <input type="password" id="new-password" placeholder="New Password">
+        <input type="password" id="confirm-password" placeholder="Confirm New Password">
+        <button id="change-password">Change Password</button>
+      </details>
+
+      <details class="group">
+        <summary>Generate Test Data</summary>
+      
+        <label for="test-auction-select">Target Auction:</label>
+        <select id="test-auction-select">
+          <option value="">-- Select Auction --</option>
+        </select>
+        <label for="test-count">Number of test items:</label>
+        <input type="number" id="test-count" placeholder="Number of test items (e.g. 10)" min="1" max="1000">
+        <button id="generate-test-data">Generate</button>
+      
+        <h3>Generate Test Bids</h3>
+        <label for="test-bid-count">Number of bids:</label>
+        <input type="number" id="test-bid-count" min="1">
+      
+        <label for="test-bidder-count">Number of bidders:</label>
+        <input type="number" id="test-bidder-count" min="1">
+      
+        <button id="generate-bids-btn">Generate Bids</button>
+      
+        <h3>Test Data Management</h3>
+        <button id="delete-test-bids">Delete Test Bids</button>
+      
+      </details>
+
+      <!-- <details class="group">
+        <summary>Server Control</summary>
+        <button id="restart-server">Restart Server</button>
+      </details> -->
+
+
+      
+
+      <details class="group">
+        <summary>Powerpoint Template Editor</summary>
+        <button onclick="showConfigEditor()">Edit PPT Generator Config</button>
+
+        <section id="config-editor" style="display: none;">
+          <h2>Edit Configuration</h2>
+          <label for="config-select">Which config?</label>
+          <select id="config-select" onchange="showConfigEditor()">
+            <option value="pptx">Slide Config (pptxConfig.json)</option>
+            <option value="card">Card Config (cardConfig.json)</option>
+          </select>
+          <textarea id="config-json" rows="20" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
+          <p id="config-error" style="color: red;"></p>
+          <button id="save-config">Save Config</button>
+          <button id="reset-pptx-config">Reset to Default</button>
+          <button onclick="document.getElementById('config-editor').style.display='none'">Cancel</button>
+        </section>  
+
+      </details>
+
+      <details class="group">
+        <summary>Image Manager</summary>
+        <form id="pptx-image-form">
+          <input type="file" id="pptx-image-input" name="images" accept=".jpg,.jpeg,.png" multiple>
+          <button type="submit">Upload Images</button>
+        </form>
+        <p id="pptx-image-status"></p>
+        <table id="pptx-image-table" style="width:100%; margin-top:10px; border-collapse: collapse;">
+          <thead>
+            <tr>
+              <th style="text-align:left; border-bottom:1px solid #ccc;">Filename (in /resources)</th>
+              <th style="text-align:right; border-bottom:1px solid #ccc;">Size</th>
+              <th style="text-align:right; border-bottom:1px solid #ccc;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="pptx-image-table-body"></tbody>
+        </table>
+      </details>
+
+<details class="group">
+  <summary>Audit Log Viewer</summary>
+    <label for="audit-filter-id">Filter by Item ID:</label>
+    <input type="number" id="audit-filter-id" style="margin-right: 10px;" />
+    <button id="fetch-audit-log">Fetch Audit log</button>
+  <button id="export-audit-log">Download CSV</button>
+  <br>
+  <div style="max-height: 300px; overflow-y: auto; border: 1px solid #ccc; background: #f9f9f9">
+    <table style="width: 100%; font-family: monospace; border-collapse: collapse;">
+      <thead>
+        <tr>
+          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Time</th>
+          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Item ID</th>
+          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Action</th>
+          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Details</th>
+
+          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">User</th>
+
+          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Description</th>
+          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Auction</th>
+          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Item #</th>
+        </tr>
+      </thead>
+      <tbody id="audit-log-body"></tbody>
+    </table>
+  </div>
+ 
+</details>
+
+
+      <div class="group">
+        <button id="load-logs">View Server Logs</button>
+        <label><input type="checkbox" id="auto-refresh-logs">Auto-refresh logs every 5 seconds</label>
+        <pre id="server-logs" style="
+        background: #f0f0f0;
+        padding: 10px;
+        overflow-y: auto;       /* <- vertical scrollbar */
+        overflow-x: hidden;     /* <- optional: hide horizontal scroll */
+        white-space: pre-wrap;
+        font-family: monospace;
+        height: 300px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+      "></pre>
+              <button onclick="window.location.href='/admin'">Back to Admin Panel</button>
+        <button id="logout">Log Out</button>
+      </div>
+
+    
+      <div id="output"></div>
+    </section>
+
+
+  </main>
+
+  <script src="/scripts/maintenance.js"></script>
+  <script src="/scripts/daypilot-modal-3.15.1.min.js"></script>
+  <footer>
+    <p>Developed by Chris Staples ("Coastie") for Festival of Friendship <span title="Hoers">🐴</span></p>
+  </footer>
+</body>
+</html>

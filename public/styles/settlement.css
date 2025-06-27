@@ -1,0 +1,51 @@
+/***** layout tweaks already present *****/
+body        { font-family: Arial, sans-serif; margin:0; }
+#wrap       { display:flex; height:100vh; }
+#leftPane   { width:280px; border-right:1px solid #ccc; overflow-y:auto; }
+#rightPane  { flex:1; padding:1rem 2rem; overflow-y:auto; }
+
+/***** generic table styling *****/
+table             { width:100%; border-collapse:collapse; font-size:0.95rem; }
+th, td            { padding:6px 8px; border-bottom:1px solid #e0e0e0; }
+th                { text-align:left; font-weight:600; }
+tbody tr:nth-child(even) { background:#fafafa; }
+
+/***** lots table (unchanged) *****/
+
+/***** payments table – tidier look *****/
+#payTable th      { text-align:center; }
+#payTable td:nth-child(1) { width:110px; font-size:0.85rem; text-align:center; }
+#payTable td:nth-child(2) { width:80px; text-transform:capitalize; text-align:center; }
+#payTable td:nth-child(3) { width:100px; text-align:right; }
+#payTable td:nth-child(4) { width:40px; text-align:center; }
+
+#payTable .delPay {
+  border: none;
+  background: #fff;
+  font-size: 0.9rem;
+  cursor:pointer;
+  padding:0 4px;
+}
+#payTable .delPay:hover { color:#d32f2f; }
+
+/***** totals line *****/
+#totals {
+  margin-top:12px;
+  font-size:1rem;
+  display:flex;
+  gap:1.5rem;
+}
+#totals strong { font-weight:600; }
+
+/***** add-payment button *****/
+#addPay {
+  margin-top:12px;
+  padding:6px 14px;
+}
+
+
+.bidder-row { cursor:pointer; }
+.bidder-row.sel { background:#e0f7ff; }
+.bidder-paid    { background:#e5ffe5 !important; }
+.pay-list td{ font-size:0.85rem; }
+.disabled   { opacity:0.5; pointer-events:none; }

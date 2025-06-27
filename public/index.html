@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auction - Submit Item</title>
+    <link rel="stylesheet" href="/styles/styles.css">
+
+    <link rel="icon" type="image/png" href="/images/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="/images/favicon.svg" />
+    <link rel="shortcut icon" href="/images//favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/images//apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+</head>
+<body>
+    <header>
+        <h1></h1>
+    </header>
+    <main>
+
+        <div id="auction-gate" style="display:none; text-align:center; margin:20px;">
+            <h2>Please enter the auction name</h2>
+            <input type="text" id="auction-code-input" placeholder="Enter auction short name">
+            <button id="auction-code-submit">Continue</button>
+            <p id="auction-error-message" style="color:red;"></p>
+        </div>
+        
+
+        <div id="submission-section" style="display:none;">
+        <form id="auction-form">
+            <label for="description">Item Description:</label>
+            <input type="text" id="description" name="description" maxlength="256" required>
+            
+            <label for="contributor">Contributor:</label>
+            <input type="text" id="contributor" name="contributor" maxlength="256" required>
+            
+            <label for="artist">Creator (if applicable):</label>
+            <input type="text" id="artist" name="artist" maxlength="256">
+            
+
+			<label>Select an existing Photo (jpeg/png):</label>
+        <input type="file" accept="image/*" id="photo" name="photo" onchange="previewImage(event)">      
+     
+            <!-- Custom Button -->
+            <button type="button" id="capture-button">Take a Photo now</button>
+            
+             <!-- Hidden file input -->
+            <input type="file" id="live-photo" name="live-photo" accept="image/*" capture="environment" style="display: none;" onchange="previewImage(event)">
+    
+            <label for="no-photo">  <input type="checkbox" id="no-photo" name="no-photo"> I don't have a photo
+            </label>
+            
+            <button type="submit">Submit</button>
+            <input type="reset">
+            
+            <!-- <a href="/admin"> <img src="images/logo.png" width="80" height="80"></a> -->
+
+            <a href="/admin"><img id="auction-logo" class="logo" alt="Auction Logo"></a>
+
+
+        </form>
+        </div>
+    </main>
+    <script src="/scripts/script.js"></script>
+    <script src="/scripts/daypilot-modal-3.15.1.min.js"></script>
+        <script src="/scripts/banner.js"></script>
+
+
+
+    <script>
+        document.getElementById('capture-button').addEventListener('click', function() {
+            document.getElementById('live-photo').click();
+        });
+
+        
+    </script>
+<footer>
+    <p>Developed by Chris Staples ("Coastie") for Festival of Friendship <span title="Hoers">🐴</span></p>
+</footer>
+</body>
+</html>

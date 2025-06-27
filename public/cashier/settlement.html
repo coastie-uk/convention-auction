@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Settlement – Charity Auction</title>
+  <link rel="stylesheet" href="/styles/admin-styles.css" />
+  <style>
+    body        { font-family:Arial, sans-serif; margin:0; }
+    #wrap       { display:flex; height:100vh; }
+    #leftPane   { width:280px; border-right:1px solid #ccc; overflow-y:auto; }
+    #rightPane  { flex:1; padding:1rem; overflow-y:auto; }
+    .bidder-row { cursor:pointer; }
+    .bidder-row.sel { background:#e0f7ff; }
+    .bidder-paid    { background:#e5ffe5 !important; }
+    table       { width:100%; border-collapse:collapse; }
+    th,td       { padding:6px 4px; border-bottom:1px solid #ddd; }
+    .pay-list td{ font-size:0.85rem; }
+    .disabled   { opacity:0.5; pointer-events:none; }
+    #payButtons button{margin-right:8px;padding:6px 14px;}
+  </style>
+    <link rel="stylesheet" href="/styles/settlement.css" />
+
+</head>
+<body>
+<div id="wrap">
+  <div id="leftPane">
+    
+    <button id="summaryBtn" style="margin-top:12px;">Payment Summary</button>
+    <p></p>
+
+    <h3 style="text-align:center;margin:4px 0;">Bidders</h3>
+    <table id="bidderTable">
+      <thead><tr><th>Paddle</th><th>£ Due</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <button id="csv" style="width:100%;">Download CSV</button>
+  </div>
+
+  <div id="rightPane">
+    <h2 id="title">Select a bidder…</h2>
+    <div id="detail" style="display:none;">
+      <h3>Lots won</h3>
+      <table id="lotsTable"><thead><tr><th>Lot</th><th>Title</th><th>Price</th></tr></thead><tbody></tbody></table>
+      <h3>Payments</h3>
+      <table id="payTable" class="pay-list"><thead><tr><th>Time</th><th>Method</th><th>Amount</th><th></th></tr></thead><tbody></tbody></table>
+      <div id="totals" style="margin-top:8px;"></div>
+
+      <div id="payButtons" style="margin-top:12px;">
+        <button data-method="cash">Cash</button>
+        <button data-method="card">Card (manual)</button>
+        <button data-method="paypal">PayPal (manual)</button>
+        <!-- <button data-method="sumup" disabled>SumUp</button> -->
+        
+    </div>
+  </div>
+</div>
+
+<template id="payTpl">
+  <div style="position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;justify-content:center;align-items:center;z-index:9999;">
+    <div style="background:#fff;padding:20px 24px;border-radius:8px;width:280px;">
+      <h3 id="modalTitle">Add payment</h3>
+      <label>Amount £</label>
+      <input id="amt" type="number" min="0" step="0.01" style="width:100%" autofocus>
+      <label style="margin-top:6px;display:block;">Note</label>
+      <input id="note" type="text" style="width:100%">
+      <div style="display:flex;justify-content:flex-end;margin-top:10px;gap:8px;">
+        <button id="cancel">Cancel</button>
+        <button id="ok">Record</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script src="/scripts/settlement.js"></script>
+<script src="/scripts/banner.js"></script>
+<script src="/scripts/daypilot-modal-3.15.1.min.js"></script>
+
+
+
+</body>
+</html>
