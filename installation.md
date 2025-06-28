@@ -6,7 +6,7 @@ This guide explains how to deploy the Auction App backend and frontend using Nod
 
 ## **System Requirements**
 
-* Linux Mint / Ubuntu server (or compatible Debian-based system)  
+* Linux server (developed on Mint) 
 * Root/sudo access  
 * A registered domain name (e.g. `yourdomain.com`) pointing to your server's IP address
 
