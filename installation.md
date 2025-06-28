@@ -84,6 +84,7 @@ sudo nano /etc/apache2/sites-available/auction.conf
 
 Paste and edit the config to include your domain name. If you already have SSL keys, uncomment those lines and point them to the required files.
 
+
 <VirtualHost *:80>
     ServerName yourdomain.com
     Redirect permanent / https://yourdomain.com/
@@ -92,9 +93,9 @@ Paste and edit the config to include your domain name. If you already have SSL k
 <VirtualHost *:443>
     ServerName yourdomain.com
 
-#    SSLEngine on
- #   SSLCertificateFile /etc/letsencrypt/live/yourdomain.com/fullchain.pem
-  #  SSLCertificateKeyFile /etc/letsencrypt/live/yourdomain.com/privkey.pem
+#   SSLEngine on
+#   SSLCertificateFile /etc/letsencrypt/live/yourdomain.com/fullchain.pem
+#   SSLCertificateKeyFile /etc/letsencrypt/live/yourdomain.com/privkey.pem
 
     DocumentRoot /var/www/auction-frontend
 
@@ -140,25 +141,24 @@ Test automatic renewal:
 
 sudo certbot renew \--dry-run
 
----
-
-## **Optional Tips**
-
 Restart Apache if changes don’t take effect:  
  sudo systemctl restart apache2
 
+
+Additional changes
+
+Set SECRET_KEY in config.json
+Update front-end icons (/images) as required
+Update backend default logo (/resources/default_logo.png) if required
 
 ---
 
 The default setup assumes that frontend and backend are running on the same server- /api/ is proxied to the backend on localhost, port 3000\. If this is not the case, the following changes will be needed:
 
+* If a port other than 3000 is needed, you need to edit the port setting in config.json.
 * Update the $API constant in each frontend script file to point to the correct backend server  
-* Update the Apache site .conf file above as required  
-* The backend will require CORS to prevent browsers blocking the cross-domain traffic. The code required for this is present in [backend.js](http://backend.js) but is commented out by default.
+* Update the Apache site .conf file as required  
+* The backend will require CORS to prevent browsers blocking the cross-domain traffic. The code required for this is present in [backend.js] but will need to be uncommented and configured for your use.
 
-Additional changes
 
-Set SECRET\KEY in config.json
-
-Update front-end icons as required
 

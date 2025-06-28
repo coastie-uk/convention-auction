@@ -12,6 +12,7 @@ const db = require('./db');
 const { CONFIG_IMG_DIR, SAMPLE_DIR, UPLOAD_DIR, DB_PATH, BACKUP_DIR, MAX_UPLOADS, allowedExtensions, MAX_AUCTIONS, LOG_LEVEL } = require('./config');
 const CONFIG_PATH = path.join(__dirname, "./pptx-config/pptxConfig.json");
 const CARD_PATH = path.join(__dirname, "./pptx-config/cardConfig.json");
+const archiver = require("archiver");
 
 const logFilePath = path.join(__dirname, 'server.log'); 
 const logLines = 500;
@@ -416,7 +417,7 @@ router.post("/change-password", (req, res) => {
   );
 });
 
-const archiver = require("archiver");
+
 
 router.get("/download-full", (req, res) => {
   logFromRequest(req, logLevels.DEBUG, `Full download requested`);
