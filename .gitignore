@@ -148,5 +148,8 @@ backend/logs/
 backend/uploads/
 backend/outputs/
 backend/server.log
+backend/*.db-shm
+backend/*.db-wal
+
 
 >>>>>>> 5cc5db6 (Initial commit for con charity auction app)
