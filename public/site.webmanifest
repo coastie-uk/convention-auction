@@ -1,6 +1,6 @@
 {
-  "name": "FOF 2025 Charity Auction",
-  "short_name": "FOF",
+  "name": "Your Convention Name",
+  "short_name": "Shortname",
   "icons": [
     {
       "src": "/images/web-app-manifest-192x192.png",
