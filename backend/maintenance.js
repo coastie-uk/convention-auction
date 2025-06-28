@@ -361,7 +361,7 @@ router.post("/restart", (req, res) => {
   res.json({ message: "Restarting server..." });
   logFromRequest(req, logLevels.INFO, `Server restart requested`);
   setTimeout(() => {
-    exec("pm2 restart charity-auction", (err) => {
+    exec("pm2 restart auction", (err) => {
       if (err) console.log("Restart failed:", err);
     });
   }, 1000);
