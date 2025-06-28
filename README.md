@@ -1,6 +1,6 @@
 # convention-auction
 
-Web platform to collect, manage, and present auction items for the kind of auctions 
+Web platform to collect, manage, and present, and take payment for items at the kind of auctions 
 often encountered at fan conventions. The use case may vary slightly from 
 con to con, but generally looks like this:
 
@@ -12,13 +12,14 @@ con to con, but generally looks like this:
 This software automates the process from item submission through to payment.
 
 ## Features
-- Supports multiple simultaneous auctions with state management
-- Public item submission (with optional photo)
-- Admin panel to edit, delete, and manage items
-- Cashier panel to manage payments
-- Maintenance tools: database reset, logs, auditing, import/export, etc.
-- Automatic PowerPoint generation from custom templates
-- Slideshow for in-venue advertising
+- Supports multiple simultaneous auctions with manageed state lifecycle
+- Public item submission (with optional photo) & QR code support
+- Admin panel to add, edit, delete, and manage items, including image rotate/crop
+- Bid recording view with undo function
+- Cashier panel to record payments
+- Maintenance tools: manage auctions, logs, auditing, import/export, auto-create test items, etc.
+- Automatic PowerPoint generation from custom templates (slide deck + item cards)
+- Auto-updating slideshow for in-venue advertising
 - Mobile-friendly interfaces
 
 ## Limitations
@@ -29,8 +30,8 @@ This software automates the process from item submission through to payment.
 ## System Requirements
 
 - Linux server (developed on Mint) 
-- Root/sudo access  
-- A registered domain name (e.g. `yourdomain.com`) pointing to your server's IP address
+- Root/sudo access for installation (runs as normal user)  
+- A registered domain name pointing to your server's IP address
 
 ## Stack
 
