@@ -1,6 +1,6 @@
 # convention-auction
 
-Web platform to collect, manage, and present, and take payment for items at the kind of auctions 
+Web platform to collect, manage, present, record bids and take payment for items at the kind of auctions 
 often encountered at fan conventions. The use case may vary slightly from 
 con to con, but generally looks like this:
 
@@ -9,7 +9,7 @@ con to con, but generally looks like this:
 - Attendees bid on items by holding up a paddle card
 - Attendees pay for and collect their won items.
 
-This software automates the process from item submission through to payment.
+This software provides a single platform which automates the process from item submission through to payment.
 
 ## Features
 - Supports multiple simultaneous auctions with manageed state lifecycle
