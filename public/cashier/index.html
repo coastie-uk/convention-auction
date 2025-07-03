@@ -45,13 +45,13 @@
   <!-- 2️⃣ DASHBOARD HEADER (hidden until authenticated) -->
   <header id="dashboard-section" class="sticky" style="display:none;">
     <b>Cashier's Panel</b>
-    <label for="live-select">Live bidding view:</label>
+    <label for="live-select">Select auction:</label>
     <select id="live-select"></select>
-    <button id="open-live" disabled>Open</button>
+    <button id="open-live" disabled>View live feed</button>
 
-    <label for="settle-select">Settlement & Payment Panel:</label>
-    <select id="settle-select"></select>
-    <button id="open-settle" disabled>Open</button>
+    <!-- <label for="settle-select">Settlement & Payment Panel:</label>
+    <select id="settle-select"></select> -->
+    <button id="open-settle" disabled>Manage payments</button>
 
     <button id="logout">Logout</button>
   </header>
@@ -62,7 +62,17 @@
   </main>
 
   <script src="/scripts/cashier-login.js"></script>
-    <script src="/scripts/banner.js"></script>
+  <script src="/scripts/banner.js"></script>
+  
+  <script>
 
-</body>
-</html>
+    document.getElementById("cashier-password").addEventListener("keyup", function (event) {
+      if (event.keyCode === 13) {
+        document.getElementById('login-button').click();
+      }
+    })
+  </script>
+  
+  </body>
+  
+  </html>

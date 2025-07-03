@@ -18,7 +18,7 @@ const API = "/api"
       pwInput      : $("cashier-password"),
       error        : $("error-message"),
       liveSel      : $("live-select"),
-      settleSel    : $("settle-select"),
+   //   settleSel    : $("settle-select"),
       openLiveBtn  : $("open-live"),
       openSettleBtn: $("open-settle"),
       logoutBtn    : $("logout"),
@@ -92,7 +92,10 @@ function loadLastView() {
       );
       
       if (auctions.some(a => String(a.id) === prev)) sel.value = prev;
-      (sel === els.liveSel ? els.openLiveBtn : els.openSettleBtn).disabled = !auctions.length;
+    
+      els.openSettleBtn.disabled = !auctions.length;
+      els.openLiveBtn.disabled = !auctions.length;
+
     };
   
     function loadIntoViewport(path, auctionId) {
@@ -150,16 +153,18 @@ function loadLastView() {
   
     async function refreshAuctionLists() {
       try {
-        const [live, settlement] = await Promise.all([
+        const [live] = await Promise.all([
           fetchAuctions(),
-          fetchAuctions("settlement")
+    //      fetchAuctions("settlement")
         ]);
   
         populateSelect(els.liveSel, live);
-        populateSelect(els.settleSel, settlement);
-        log("Auctions refreshed", { live: live.length, settlement: settlement.length });
+    //    populateSelect(els.settleSel, live);
+        log("Auctions refreshed", { live: live.length
+          
+         });
   
-        autoSwitchIfNeeded(live, settlement);
+    //    autoSwitchIfNeeded(live, settlement);
       } catch (e) {
         console.error(e);
         showError("Could not refresh auctions");
@@ -202,7 +207,7 @@ function loadLastView() {
       // refreshTimer = setInterval(refreshAuctionLists, REFRESH_MS);
   
       els.openLiveBtn  .onclick = () => loadIntoViewport("/cashier/live-feed.html", els.liveSel.value);
-      els.openSettleBtn.onclick = () => loadIntoViewport("/cashier/settlement.html", els.settleSel.value);
+      els.openSettleBtn.onclick = () => loadIntoViewport("/cashier/settlement.html", els.liveSel.value);
       els.logoutBtn    .onclick = () => { localStorage.removeItem("cashierToken"); location.reload(); };
     }
   
