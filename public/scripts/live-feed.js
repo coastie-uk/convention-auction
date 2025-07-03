@@ -37,6 +37,9 @@ const API_ROOT = "/api"
   const tbody = document.querySelector('#feed tbody');
   const statusEl = document.getElementById('status');
   const chkUnsold = document.getElementById('showUnsold');
+  const applyFilter = document.getElementById('btnApply');
+
+  
 
   // ---------- state -----------------------------------------------------------
   const rowsMap = new Map(); // rowid -> <tr>
@@ -124,77 +127,8 @@ if (!token) {
 }
 
 
+    applyFilter.addEventListener("click", function () { clearTable(); poll(); })
 
-  // -------- auth -------------------------------------------------
-//   async function ensureAuth() {
-//    // if (!token) return redirect();
-
-//     if (!token) throw new Error('no token');     // halt script
-
-//     try {
-//       const res = await fetch(VALIDATE, {
-//         method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization': token },
-//         body: JSON.stringify({ token })
-//       });
-//       if (!res.ok) throw 0;
-//     } catch { 
-//       showMessage("Session expired. Please log in again.", "info");
-
-// //      redirect(); 
-//     }
-//   }
-
-  // async function checkAuth() {
-
-  //   const token1 = checkToken(localStorage.getItem('token'));
-  //   const token2 = checkToken(localStorage.getItem('cashierToken'));
-
-  //   console.log(`token 1:` + token1);
-  //   console.log(`token 2:` + token2);
-
-
-  //   if (token1) {
-  //     console.log("token1 valid");
-
-  //     return token1;
-  //   } else if (token2) {
-  //     console.log("token2 valid");
-
-  //     return token2;
-  //   }
-  //   else {
-  //     showMessage("Session expired. Please log in again.", "info");
-  //     throw new Error('no token');     // halt script
-
-  //   }
-
-  // }
-
-
-// async function checkToken(token) {
-
-  
-//     if (!token) {
-//       console.log("no token")
-
-//       return false;
-//     }
-//       const res = await fetch(VALIDATE, {
-//         method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization': token },
-//         body: JSON.stringify({ token })
-//       });
-//       if (!res.ok) {
-//         console.log("token not valid")
-//         return false;
-//       }
-//      console.log("token valid")
-
-//       return token;
-// }
-
-
- // const redirect = () => (location.reload());
- // ensureAuth();
 
   chkUnsold.onchange = () => { clearTable(); poll() }; // re-poll will rebuild
 
