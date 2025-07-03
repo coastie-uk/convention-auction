@@ -499,7 +499,7 @@ const sortOrder = sort.toUpperCase() === "DESC" ? "DESC" : "ASC";
     FROM items   i
     LEFT JOIN bidders b ON b.id = i.winning_bidder_id
     WHERE i.auction_id = ?
-    ORDER BY ${sortField} ${sortOrder}, item_number ${sortOrder}
+    ORDER BY ${sortField} COLLATE NOCASE ${sortOrder}, item_number ${sortOrder}
   `;
 
     // db.all(LIST_ITEMS_SQL, [auction_id], (err, rows) => {
@@ -805,6 +805,8 @@ app.post('/generate-pptx', authenticateRole("admin"), async (req, res) => {
         res.download(filePath);
     } catch (error) {
         res.status(500).json({ error: error.message });
+        logFromRequest(req, logLevels.ERROR, `slide gen for auction ${auction_id} failed: ` + error.message);
+
     }
 });
 // API to generate item cards
@@ -864,6 +866,8 @@ app.post('/generate-cards', authenticateRole("admin"), async (req, res) => {
         res.download(filePath);
     } catch (error) {
         res.status(500).json({ error: error.message });
+                logFromRequest(req, logLevels.ERROR, `card gen for auction ${auction_id} failed: ` + error.message);
+
 
     }
 });
@@ -897,9 +901,11 @@ app.post('/export-csv', authenticateRole("admin"), (req, res) => {
         fs.writeFileSync(filePath, csv);
         logFromRequest(req, logLevels.INFO, 'CSV file generated for auction ' + auction_id);
 
-        res.setHeader("Content-Type", "text/csv");
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader("Content-Disposition", `attachment; filename=auction_${auction_id}_items.csv`);
+        res.end('\uFEFF' + csv);
         res.download(filePath);
+    
     });
 });
 
