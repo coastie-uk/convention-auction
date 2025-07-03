@@ -647,7 +647,7 @@ function formatHistoryDetails(details) {
             window.URL.revokeObjectURL(url);
         } catch (err) {
             console.error("Slide export error:", err);
-            showMessage("Failed to generate slides", "error");
+            showMessage("Failed to generate slides:" + err, "error");
         }
     });
 
@@ -952,7 +952,15 @@ function formatHistoryDetails(details) {
 
     // Button to open the live feed view
     liveFeedButton.addEventListener("click", function () {
-        window.open(`/cashier/live-feed.html?auctionId=` + selectedAuctionId, '_blank').focus();
+
+        const selectedAuction = auctions.find(a => a.id === selectedAuctionId);
+        const status = selectedAuction?.status;
+
+
+        window.open(`/cashier/live-feed.html?auctionId=${selectedAuctionId}&auctionStatus=${status}`, '_blank').focus();
+
+
+        //       frame.src = `${path}?auctionId=${auctionId}&auctionStatus=${status}`;
 
     })
 
