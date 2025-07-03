@@ -2,7 +2,7 @@
 
 This program is designed for the kind of auctions often encountered at fan conventions. The use case may vary slightly from con to con, but generally looks like this:
 
-1) Attendees submit items during the event  
+1) Attendees (and/or staff) submit items during the event  
 2) A live auction is held, using a slide deck to show items  
 3) Attendees bid on items by holding up a paddle card  
 4) Attendees pay for and collect their won items.
@@ -45,9 +45,11 @@ Multiple auctions are supported (default limit is 20). This has been included fo
 
 Default passwords:
 
-admin: a1234
-maintenance: m1234
-cashier: c1234
+| Role        | Pass  |
+|-------------|-------|
+| admin       | a1234 |
+| maintenance | m1234 |
+| cashier     | c1234 |
 
 \[Maintenance\] Configure the auction template generator and item card generator (if needed). This uses the pptxgenjs library. Custom graphics can be added via the “manage resources” function.
 
