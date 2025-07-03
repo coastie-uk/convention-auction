@@ -20,12 +20,17 @@ const API_ROOT = `${API}/settlement`;
 
   const urlParams  = new URLSearchParams(location.search);
   const AUCTION_ID = Number(urlParams.get('auctionId'));
+  const AUCTION_STATUS = (urlParams.get('auctionStatus') || '').toLowerCase();
+
+
+
   
   if (!Number.isInteger(AUCTION_ID) || AUCTION_ID <= 0) {
     alert('This page must be opened with ?auctionId=<number>');
 
     throw new Error('auctionId missing');     // halt script
   }
+
 
 
   function sortBidders(arr){
@@ -68,6 +73,9 @@ const API_ROOT = `${API}/settlement`;
       if(selBidder&&selBidder.id===b.id) tr.classList.add('sel');
       bidderBody.appendChild(tr);
     });
+
+
+
   }
 
   async function selectBidder(b){
@@ -97,7 +105,23 @@ const API_ROOT = `${API}/settlement`;
 
     renderLots();
     renderPayments();
-    updateTotals();
+    
+
+    if (AUCTION_STATUS === 'settlement') {
+document.getElementById('payButtons').classList.remove('disabled');
+document.querySelectorAll('#payButtons button').forEach(btn => btn.disabled = false);
+document.querySelectorAll('#delPay button').forEach(btn => btn.disabled = false);
+console.log("buttons enabled");
+
+  } else {
+  
+document.querySelectorAll('#payButtons button').forEach(btn => btn.disabled = true);
+document.querySelectorAll('#delPay button').forEach(btn => btn.disabled = true);
+document.getElementById('payButtons').classList.add('disabled');
+  }
+
+updateTotals();
+
   }
 
   function renderLots(){
