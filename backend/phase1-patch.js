@@ -241,8 +241,8 @@ const {bidder_id, amount, method = 'cash', note = '' } = req.body;
 
   // DELETE /api/settlement/payment/:id  → remove a mistaken payment
   // auctionId provided in the request body to feed checkAuctionState
-settlement.delete('/payment/:id', authenticateRole('cashier'), checkAuctionState(['settlement']), (req, res) => {
-  const payId = Number(req.params.id);
+settlement.delete('/payment/:pay_id', authenticateRole('cashier'), checkAuctionState(['settlement']), (req, res) => {
+  const payId = Number(req.params.pay_id);
   if (!payId) return res.status(400).json({ error: 'Bad id' });
 
   // look up the row for audit purposes
@@ -269,8 +269,8 @@ settlement.delete('/payment/:id', authenticateRole('cashier'), checkAuctionState
     const auctionId = Number(req.query.auction_id);
     if (!auctionId) return res.status(400).json({ error:'auction_id required' });
     const rows = db.all(`
-      SELECT b.paddle_number, IFNULL(b.name,'') AS name,
-             GROUP_CONCAT(i.item_number,'|') AS lots_won,
+      SELECT b.paddle_number, IFNULL(b.name,'') AS name,             
+             GROUP_CONCAT(i.item_number || ':' || i.description, '|')  AS lots_won,
              SUM(i.hammer_price) AS lots_total,
              IFNULL((SELECT SUM(amount) FROM payments p WHERE p.bidder_id = b.id),0) AS payments_total
         FROM bidders b
@@ -284,9 +284,10 @@ settlement.delete('/payment/:id', authenticateRole('cashier'), checkAuctionState
       return [r.paddle_number, r.name, r.lots_won || '', r.lots_total || 0, r.payments_total || 0, balance].join(',');
     }).join('\n');
 
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename="settlement.csv"');
-    res.end(csv);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="settlement_auction_${auctionId}.csv"`);
+
+    res.end('\uFEFF' + csv);
   });
 
   //--------------------------------------------------------------------------
