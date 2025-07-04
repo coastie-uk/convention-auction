@@ -30,9 +30,7 @@ All logins are session based and will remain logged in for several hours, unless
 
 * The name is used to populate the header of the public submission page  
 * The short name is used as a URL tag to allow the public page to be opened directly e.g. index.html?auction=\[shortname\]. Intended for use in QR codes etc. The tag is case insensitive and cannot contain spaces  
-* If a custom picture is wanted on the public submission page, use the “manage resources” function to upload a suitable image before selecting the picture during auction creation.
-
-\[Maintenance\] Set the auction state to “setup”
+* If a custom picture is desired on the public submission page, use the “manage resources” function to upload a suitable image before selecting the picture during auction creation.
 
 Multiple auctions are supported (default limit is 20). This has been included for flexibility. For example:
 
@@ -133,10 +131,11 @@ Archive: The auction is preserved in a read-only state
 | Delete item             | A    | Yes                       | Yes                        | No    | No                        | No               |
 | Record bid              | A    | No                        | No                         | Yes   | Yes                       | No               |
 | Undo bid                | A    | No                        | No                         | Yes   | If bidder not paid        | No               |
+| View payments           | C    | Yes                       | Yes                        | Yes   | Yes                       | Yes              |
 | Take payments           | C    | No                        | No                         | No    | Yes                       | No               |
 | Undo payments           | C    | No                        | No                         | No    | Yes                       | No               |
 | Run slideshow           | A    | Yes                       | Yes                        | Yes   | Yes                       | Yes              |
-| Show live view          | A,C  | Yes                       | Yes                        | Yes   | Yes                       | Yes              |
+| Show live bidding view  | A,C  | Yes                       | Yes                        | Yes   | Yes                       | Yes              |
 | Add test items          | M    | Yes                       | Yes                        | No    | No                        | No               |
 | Add test bids           | M    | No                        | No                         | Yes   | No                        | No               |
 | Reset auction           | M    | Yes                       | No                         | No    | No                        | Yes              |
