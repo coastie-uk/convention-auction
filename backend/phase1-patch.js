@@ -48,50 +48,6 @@ module.exports = function phase1Patch (app, authenticateRole) {
   }
 
   //--------------------------------------------------------------------------
-  // Schema updates
-  //--------------------------------------------------------------------------
-  try { db.run("ALTER TABLE auctions ADD COLUMN status TEXT DEFAULT 'setup'"); } catch (_) {}
-  try { db.run("ALTER TABLE items ADD COLUMN winning_bidder_id INTEGER"); }  catch (_) {}
-  try { db.run("ALTER TABLE items ADD COLUMN hammer_price REAL"); }        catch (_) {}
-
-  try { db.run(`CREATE TABLE IF NOT EXISTS bidders (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    paddle_number INTEGER NOT NULL,
-    name          TEXT,
-    created_at    TEXT DEFAULT (strftime('%Y-%m-%d %H:%M', 'now'))
-  )`); } catch (_) {}
-
-    // Isolate bidders between auctions
-    // add auction_id column if missing
-try { db.run("ALTER TABLE bidders ADD COLUMN auction_id INTEGER"); } catch (_) {}
-
- try {  db.run(`CREATE TABLE IF NOT EXISTS payments (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    bidder_id   INTEGER NOT NULL,
-    amount      REAL    NOT NULL,
-    method      TEXT    NOT NULL DEFAULT 'cash',
-    note        TEXT,
-    created_by  TEXT,
-    created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M', 'now')),
-    FOREIGN KEY (bidder_id) REFERENCES bidders(id)
-  )`); } catch (_) {}
-
- try {  db.run(`CREATE TABLE IF NOT EXISTS audit_log (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    user        TEXT,
-    action      TEXT,
-    object_type TEXT,
-    object_id   INTEGER,
-    details     TEXT,
-    created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now'))
-  )`); } catch (_) {}
-
-// re-create uniqueness on (auction_id, paddle_number)
-db.run("DROP INDEX IF EXISTS idx_bidders_paddle");
-db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_bidder_auction_paddle ON bidders(auction_id, paddle_number)");
-
-
-  //--------------------------------------------------------------------------
   // Record audit events
   //--------------------------------------------------------------------------
   function audit (user, action, type, id, details = {}) {
@@ -180,7 +136,10 @@ db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_bidder_auction_paddle ON bidders(a
   });
 
 
-  // record a payment
+  //--------------------------------------------------------------------------
+  // Settlement (record paymeny)
+  //--------------------------------------------------------------------------
+
 
  settlement.post('/payment/:auctionId', authenticateRole('cashier'), checkAuctionState(['settlement']), (req, res) => {
  const auction_id   = Number(req.params.auctionId);
@@ -237,10 +196,12 @@ const {bidder_id, amount, method = 'cash', note = '' } = req.body;
   
  
 
-
-
-  // DELETE /api/settlement/payment/:id  → remove a mistaken payment
+  //--------------------------------------------------------------------------
+  // Settlement (delete paymeny)
   // auctionId provided in the request body to feed checkAuctionState
+  //--------------------------------------------------------------------------
+
+
 settlement.delete('/payment/:pay_id', authenticateRole('cashier'), checkAuctionState(['settlement']), (req, res) => {
   const payId = Number(req.params.pay_id);
   if (!payId) return res.status(400).json({ error: 'Bad id' });
@@ -263,6 +224,10 @@ settlement.delete('/payment/:pay_id', authenticateRole('cashier'), checkAuctionS
 
   res.json({ ok: true });
 });
+
+  //--------------------------------------------------------------------------
+  // Settlement (create csv summary)
+  //--------------------------------------------------------------------------
 
 
   settlement.get('/export.csv', authenticateRole('cashier'), (req, res) => {
@@ -291,7 +256,7 @@ settlement.delete('/payment/:pay_id', authenticateRole('cashier'), checkAuctionS
   });
 
   //--------------------------------------------------------------------------
-  // Finalize Lot + Undo endpoints (admin)
+  // Finalize Lot - record bid (admin)
   //--------------------------------------------------------------------------
   const sales = express.Router();
 
@@ -300,6 +265,8 @@ settlement.delete('/payment/:pay_id', authenticateRole('cashier'), checkAuctionS
     const { paddle, price, auctionId } = req.body;
     if (!paddle || !price || !auctionId) return res.status(400).json({ error: 'Missing paddle or price or auction id' });
 
+// Get the bidder ID if they exist, otherwise create a new entry for them
+try {
     let bidder = db.get('SELECT id FROM bidders WHERE paddle_number = ? AND auction_id = ?', [paddle, auctionId]);
     if (!bidder) {
       const info = db.run('INSERT INTO bidders (paddle_number, auction_id) VALUES (?, ?)', [paddle, auctionId]);
@@ -307,9 +274,24 @@ settlement.delete('/payment/:pay_id', authenticateRole('cashier'), checkAuctionS
       bidder = { id: info.lastInsertRowid };
     }
 
-    db.run(`UPDATE items SET winning_bidder_id = ?, hammer_price = ? WHERE id = ?`, [bidder.id, price, itemId]);
+const stmt = db.prepare(`
+  UPDATE items
+     SET winning_bidder_id = ?, hammer_price = ?
+   WHERE id = ?
+     AND hammer_price IS NULL          -- ← only if not finalised yet
+`);
+
+const info = stmt.run(bidder.id, price, itemId);
+
+if (info.changes === 0) {
+  // nothing updated → someone else already finalised this lot
+  throw new Error('This lot has already been recorded by another user.');
+}
+
+//    db.run(`UPDATE items SET winning_bidder_id = ?, hammer_price = ? WHERE id = ?`, [bidder.id, price, itemId]);
     audit(req.user.role, 'finalize', 'item', itemId, { bidder: paddle, price });
     logFromRequest(req, logLevels.INFO, `Bid recorded for auction ${auctionId}, bidder ${paddle}, item ${itemId}, price ${price}`);
+
 
   /* -----------------------------------------------------------
      Auto-transition: are there still unsold lots?
@@ -345,10 +327,22 @@ settlement.delete('/payment/:pay_id', authenticateRole('cashier'), checkAuctionS
     auction_status: remaining === 0 ? 'settlement' : 'live'
   });
 
+          } catch (error) {
+            logFromRequest(req, logLevels.ERROR, `Failed to record bid for item ${itemId}: ${error.message}`);
+
+            res.status(500).json({ error: `Failed to record bid for item ${itemId}: ${error.message}` });
+        }
+
 
   });
 
-  sales.post('/:id/undo', authenticateRole('admin'), (req, res) => {
+  //--------------------------------------------------------------------------
+  // Undo/retract bid (admin)
+  // Checks for payment by bidder
+  //--------------------------------------------------------------------------
+
+
+  sales.post('/:id/undo', authenticateRole('admin'), checkAuctionState(['live', 'settlement']), (req, res) => {
     const itemId = Number(req.params.id);
     const row = db.get(`SELECT winning_bidder_id FROM items WHERE id = ?`, [itemId]);
     if (!row) return res.status(404).json({ error: 'Item not found' });
@@ -366,7 +360,9 @@ settlement.delete('/payment/:pay_id', authenticateRole('cashier'), checkAuctionS
     res.json({ ok: true });
   });
 
-  // GET /api/settlement/bidders/:id  -> full detail
+  //--------------------------------------------------------------------------
+  // Settlement - retrieve items the bidder won
+  //--------------------------------------------------------------------------
 settlement.get('/bidders/:id', authenticateRole('cashier'), (req, res) => {
   const id = Number(req.params.id);
   const auctionId = Number(req.query.auction_id);           // NEW
@@ -407,7 +403,9 @@ if (!auctionId || !id) return res.status(400).json({ error: 'item # and auction_
   res.json({ ...summary, lots, payments, balance });
 });
 
-// GET /api/settlement/summary?auction_id=17
+  //--------------------------------------------------------------------------
+  // Settlement - Generate a £ summary by payment method
+  //--------------------------------------------------------------------------
 settlement.get('/summary', authenticateRole('cashier'), (req, res) => {
   const aid = Number(req.query.auction_id);
   if (!aid) return res.status(400).json({ error: 'auction_id required' });
@@ -441,11 +439,11 @@ settlement.get('/summary', authenticateRole('cashier'), (req, res) => {
 
 
   //--------------------------------------------------------------------------
-  // 6.  Mount routers under /api
+  //   Mount routers under /api
   //--------------------------------------------------------------------------
   app.use('/cashier', liveFeed);
   app.use('/settlement', settlement);
   app.use('/lots', sales);
 
-  log('Phase1', logLevels.INFO, 'Phase 1 patch v1.1 loaded (routes & schema ready)');
+  log('Phase1', logLevels.INFO, 'Phase 1 patch v1.1 (bid+payment processor) loaded');
 };
