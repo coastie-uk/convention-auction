@@ -20,6 +20,7 @@ This software provides a single platform which automates the process from item s
 - Maintenance tools: manage auctions, logs, auditing, import/export, auto-create test items, etc.
 - Automatic PowerPoint generation from custom templates (slide deck + item cards)
 - Auto-updating slideshow for in-venue advertising
+- Automatic randomised item & bid generators (for testing/training/evaluation)
 - Mobile-friendly interfaces
 
 ## Limitations
