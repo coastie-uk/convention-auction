@@ -13,10 +13,7 @@ const jwt = require('jsonwebtoken');
 const app = express();
 const fsp = require('fs').promises;
 const db = require('./db');
-
-
 const VALID_ROLES = new Set(['admin', 'maintenance', 'cashier', 'slideshow']);
-
 const {
     CONFIG_IMG_DIR,
     SAMPLE_DIR,
@@ -30,24 +27,12 @@ const {
     LOG_LEVEL,
     MAX_ITEMS
 } = require('./config');
-
-
 const maintenanceRoutes = require('./maintenance');
-const {
-    logLevels,
-    setLogLevel,
-    logFromRequest,
-    createLogger,
-    log
-} = require('./logger');
-
-  const checkAuctionState = require('./middleware/checkAuctionState')(
+const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
+const checkAuctionState = require('./middleware/checkAuctionState')(
     db,
-    { ttlSeconds: 2 }   // optional – default is 5
+    { ttlSeconds: 2 } 
  );
-
-
-
 
 // this text is used to trim the maint log display
 log('General', logLevels.INFO, '~~ Starting up Auction backend ~~');
@@ -89,88 +74,6 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// log('General', logLevels.DEBUG, 'Opening database');
-
-      //--------------------------------------------------------------------------
-      // Create the database
-      //--------------------------------------------------------------------------
-
-
-// try {
-
-//     db.run(`CREATE TABLE IF NOT EXISTS auctions (
-//         id INTEGER PRIMARY KEY AUTOINCREMENT,
-//         short_name TEXT UNIQUE NOT NULL,
-//         full_name TEXT NOT NULL,
-//         created_at TEXT DEFAULT (strftime('%d-%m-%Y %H:%M','now'))
-//         logo TEXT,
-//         status TEXT DEFAULT 'setup'
-//         )`);
-
-//     db.run(`CREATE TABLE IF NOT EXISTS items (
-//         id INTEGER PRIMARY KEY AUTOINCREMENT,
-//         description TEXT,
-//         contributor TEXT,
-//         artist TEXT,
-//         photo TEXT,
-//         date TEXT,
-//         notes TEXT,
-//         mod_date TEXT,
-//         item_number INTEGER,
-//         auction_id INTEGER REFERENCES auctions(id),
-//         test_item INTEGER,
-//         test_bid INTEGER,
-//         winning_bidder_id INTEGER, 
-//         hammer_price REAL
-//     )`);
-
-//     db.run(`CREATE TABLE IF NOT EXISTS passwords (
-//         role TEXT PRIMARY KEY,
-//         password TEXT NOT NULL
-//     )`);
-
-//     db.run(`CREATE TABLE IF NOT EXISTS bidders (
-//         id            INTEGER PRIMARY KEY AUTOINCREMENT,
-//         paddle_number INTEGER NOT NULL,
-//         name          TEXT,
-//         created_at    TEXT DEFAULT (strftime('%Y-%m-%d %H:%M', 'now')),
-//         auction_id INTEGER
-//       )`);
-
-//     db.run(`CREATE TABLE IF NOT EXISTS payments (
-//         id          INTEGER PRIMARY KEY AUTOINCREMENT,
-//         bidder_id   INTEGER NOT NULL,
-//         amount      REAL    NOT NULL,
-//         method      TEXT    NOT NULL DEFAULT 'cash',
-//         note        TEXT,
-//         created_by  TEXT,
-//         created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M', 'now')),
-//         FOREIGN KEY (bidder_id) REFERENCES bidders(id)
-//       )`);
-
-//     db.run(`CREATE TABLE IF NOT EXISTS audit_log (
-//         id          INTEGER PRIMARY KEY AUTOINCREMENT,
-//         user        TEXT,
-//         action      TEXT,
-//         object_type TEXT,
-//         object_id   INTEGER,
-//         details     TEXT,
-//         created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now'))
-//       )`);
-
-//     // create uniqueness on (auction_id, paddle_number)
-//     db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_bidder_auction_paddle ON bidders(auction_id, paddle_number)");
-
-// } catch (err) {
-//     log('General', logLevels.ERROR, `Error opening database: ${err.message}`);
-// }
-
-
-
-// Insert default passwords
-
-
-log('General', logLevels.INFO, 'Database opened');
 
 // Multer storage setup for file uploads
 const storage = multer.diskStorage({
@@ -184,35 +87,6 @@ const upload = multer({
     storage: storage,
     limits: { fileSize: (20000000) /* bytes */ }
 });
-
-
-// function authenticateRole(expectedRole) {
-//     return function (req, res, next) {
-//         const token = req.headers["authorization"];
-//         if (!token) {
-//             logFromRequest(req, logLevels.ERROR, 'No token received');
-//             return res.status(403).json({ error: "Access denied" });
-//         }
-
-//         jwt.verify(token, SECRET_KEY, (err, decoded) => {
-//             if (err) {
-//                 logFromRequest(req, logLevels.DEBUG, `Invalid token. Session expired. Got ${token.slice(0, 10)}...`);
-//                 return res.status(403).json({ error: "Session expired" });
-//             }
-//             if (decoded.role !== expectedRole) {
-//                 logFromRequest(req, logLevels.WARN, `Role mismatch. Expected ${expectedRole}, got ${decoded.role}`);
-//                 return res.status(403).json({ error: "Unauthorized" });
-//             }
-//             // This generates a lot of log output....... 
-//             // logFromRequest(req, logLevels.DEBUG, `Token & role validated for role ${decoded.role}`);
-
-//             req.user = decoded;
-//             next();
-//         });
-//     };
-// }
-
-
 
 
 /**

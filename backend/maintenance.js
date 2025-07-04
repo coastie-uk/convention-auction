@@ -13,25 +13,15 @@ const { CONFIG_IMG_DIR, SAMPLE_DIR, UPLOAD_DIR, DB_PATH, BACKUP_DIR, MAX_UPLOADS
 const CONFIG_PATH = path.join(__dirname, "./pptx-config/pptxConfig.json");
 const CARD_PATH = path.join(__dirname, "./pptx-config/cardConfig.json");
 const archiver = require("archiver");
-
 const logFilePath = path.join(__dirname, 'server.log'); 
 const logLines = 500;
-
 const CONFIG_PATHS = {
   pptx: './pptx-config/pptxConfig.json',
   card: './pptx-config/cardConfig.json'
 };
 
 const maintenanceRoutes = require('./maintenance');
-const {
-    logLevels,
-    setLogLevel,
-    logFromRequest,
-    createLogger,
-    log
-  } = require('./logger');
-
-setLogLevel(logLevels.DEBUG);
+const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
 
 const checkAuctionState = require('./middleware/checkAuctionState')(
     db, { ttlSeconds: 2 }   // optional – default is 5
@@ -454,10 +444,6 @@ archive.pipe(res);
       }
     }
 
-    // res.writeHead(200, {
-    //   'Content-Disposition': 'attachment; filename=' + filename,
-    //   'Content-Type': 'application/zip'
-    // });
 
 // Include additional image resources from CONFIG_IMG_DIR
 const extraResources = fs.readdirSync(CONFIG_IMG_DIR).filter(f =>
@@ -883,32 +869,6 @@ router.post("/auctions/list", async (req, res) => {
     res.json(rows);
   });
 });
-
-
-// router.post("/auctions/set-status", async (req, res) => {
-
-//   const { id, is_active } = req.body;
-
-
-//   if (typeof id !== "number" || typeof is_active !== "boolean") {
-//     return res.status(400).json({ error: "Missing or invalid auction ID or status" });
-//   }
-
-//   try {
-//     // db.run("UPDATE auctions SET is_active = ? WHERE id = ?", is_active ? 1 : 0, id);
-//     db.run("UPDATE auctions SET is_active = ? WHERE id = ?", [is_active ? 1 : 0, id]);
-//     res.json({ message: `Auction ${is_active ? "activated" : "deactivated"}` });
-//     logFromRequest(req, logLevels.INFO, `Auction ${id} set to ${is_active ? "activated" : "deactivated"}`);
-//   } catch (err) {
-//     logFromRequest(req, logLevels.ERROR, `Toggle auction status error: ${err}`);
-
-//     res.status(500).json({ error: "Failed to update auction status" });
-//   }
-// });
-
-// const allowedExtensions = [".jpg", ".jpeg", ".png"];
-// const MAX_UPLOADS = 20;
-
 
 router.post("/resources/upload", upload.array("images", MAX_UPLOADS), async (req, res) => {
   if (!req.files || req.files.length === 0) {

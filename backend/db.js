@@ -4,6 +4,8 @@ const path     = require('path');
 
 const db = new Database(path.join(__dirname, 'auction.db'));
 
+const { logLevels, log } = require('./logger');
+
 try {
 
     db.exec(`CREATE TABLE IF NOT EXISTS auctions (
@@ -80,9 +82,10 @@ defaultPasswords.forEach(({ role, password }) => {
 
 });
 
+log('General', logLevels.INFO, 'Database opened');
 
 } catch (err) {
-    console.log(`Error creating database: ${err.message}`);
+    log('General', logLevels.ERROR, `Database error: ${err.message}`);
 }
 
 // ──────────────────────────────────────────────────────────────
