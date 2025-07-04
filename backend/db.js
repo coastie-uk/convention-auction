@@ -71,16 +71,20 @@ try {
     // create uniqueness on (auction_id, paddle_number)
     db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_bidder_auction_paddle ON bidders(auction_id, paddle_number)");
 
+// one-time default passwords
 const defaultPasswords = [
-    { role: "admin", password: "a1234" },
-    { role: "maintenance", password: "m1234" },
-    { role: "cashier", password: "c1234" }
-
+  { role: "admin",       password: "a1234" },
+  { role: "maintenance", password: "m1234" },
+  { role: "cashier",     password: "c1234" }
 ];
-defaultPasswords.forEach(({ role, password }) => {
-    db.exec(`INSERT OR IGNORE INTO passwords (role, password) VALUES (?, ?)`, [role, password]);
 
-});
+const insertPwd = db.prepare(
+  "INSERT OR IGNORE INTO passwords (role, password) VALUES (?, ?)"
+);
+
+for (const { role, password } of defaultPasswords) {
+  insertPwd.run(role, password);      
+}
 
 log('General', logLevels.INFO, 'Database opened');
 
@@ -148,7 +152,7 @@ module.exports = {
     }
   },
 
-  /** expose the underlying driver when you really need it */
+  /** expose the underlying driver  */
   // prepare  : (...args) => db.prepare(...args),
 
 
