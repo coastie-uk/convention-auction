@@ -89,56 +89,86 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Database setup
-log('General', logLevels.DEBUG, 'Opening database');
+// log('General', logLevels.DEBUG, 'Opening database');
 
-try {
+      //--------------------------------------------------------------------------
+      // Create the database
+      //--------------------------------------------------------------------------
 
-        db.run(`CREATE TABLE IF NOT EXISTS auctions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        short_name TEXT UNIQUE NOT NULL,
-        full_name TEXT NOT NULL,
-        is_active INTEGER DEFAULT 1,
-        logo TEXT,
-        created_at TEXT DEFAULT (strftime('%d-%m-%Y %H:%M','now'))
-    )`);
 
-    db.run(`CREATE TABLE IF NOT EXISTS items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        description TEXT,
-        contributor TEXT,
-        artist TEXT,
-        photo TEXT,
-        date TEXT,
-        notes TEXT,
-        mod_date TEXT,
-        item_number INTEGER,
-        auction_id INTEGER REFERENCES auctions(id),
-        test_item INTEGER,
-        test_bid INTEGER
-    )`);
-    db.run(`CREATE TABLE IF NOT EXISTS passwords (
-        role TEXT PRIMARY KEY,
-        password TEXT NOT NULL
-    )`);
+// try {
 
-} catch (err) {
-    log('General', logLevels.ERROR, `Error opening database: ${err.message}`);
-}
+//     db.run(`CREATE TABLE IF NOT EXISTS auctions (
+//         id INTEGER PRIMARY KEY AUTOINCREMENT,
+//         short_name TEXT UNIQUE NOT NULL,
+//         full_name TEXT NOT NULL,
+//         created_at TEXT DEFAULT (strftime('%d-%m-%Y %H:%M','now'))
+//         logo TEXT,
+//         status TEXT DEFAULT 'setup'
+//         )`);
+
+//     db.run(`CREATE TABLE IF NOT EXISTS items (
+//         id INTEGER PRIMARY KEY AUTOINCREMENT,
+//         description TEXT,
+//         contributor TEXT,
+//         artist TEXT,
+//         photo TEXT,
+//         date TEXT,
+//         notes TEXT,
+//         mod_date TEXT,
+//         item_number INTEGER,
+//         auction_id INTEGER REFERENCES auctions(id),
+//         test_item INTEGER,
+//         test_bid INTEGER,
+//         winning_bidder_id INTEGER, 
+//         hammer_price REAL
+//     )`);
+
+//     db.run(`CREATE TABLE IF NOT EXISTS passwords (
+//         role TEXT PRIMARY KEY,
+//         password TEXT NOT NULL
+//     )`);
+
+//     db.run(`CREATE TABLE IF NOT EXISTS bidders (
+//         id            INTEGER PRIMARY KEY AUTOINCREMENT,
+//         paddle_number INTEGER NOT NULL,
+//         name          TEXT,
+//         created_at    TEXT DEFAULT (strftime('%Y-%m-%d %H:%M', 'now')),
+//         auction_id INTEGER
+//       )`);
+
+//     db.run(`CREATE TABLE IF NOT EXISTS payments (
+//         id          INTEGER PRIMARY KEY AUTOINCREMENT,
+//         bidder_id   INTEGER NOT NULL,
+//         amount      REAL    NOT NULL,
+//         method      TEXT    NOT NULL DEFAULT 'cash',
+//         note        TEXT,
+//         created_by  TEXT,
+//         created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M', 'now')),
+//         FOREIGN KEY (bidder_id) REFERENCES bidders(id)
+//       )`);
+
+//     db.run(`CREATE TABLE IF NOT EXISTS audit_log (
+//         id          INTEGER PRIMARY KEY AUTOINCREMENT,
+//         user        TEXT,
+//         action      TEXT,
+//         object_type TEXT,
+//         object_id   INTEGER,
+//         details     TEXT,
+//         created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now'))
+//       )`);
+
+//     // create uniqueness on (auction_id, paddle_number)
+//     db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_bidder_auction_paddle ON bidders(auction_id, paddle_number)");
+
+// } catch (err) {
+//     log('General', logLevels.ERROR, `Error opening database: ${err.message}`);
+// }
 
 
 
 // Insert default passwords
-const defaultPasswords = [
-    { role: "admin", password: "a1234" },
-    { role: "maintenance", password: "m1234" },
-    { role: "cashier", password: "c1234" }
 
-];
-defaultPasswords.forEach(({ role, password }) => {
-    db.run(`INSERT OR IGNORE INTO passwords (role, password) VALUES (?, ?)`, [role, password]);
-
-});
 
 log('General', logLevels.INFO, 'Database opened');
 
@@ -280,8 +310,6 @@ app.post('/login', (req, res) => {
         return res.status(400).json({ error: "Password required" });
     }
 
-    // const loginDB = new sqlite3.Database('./auction.db');
-    //    loginDB.get(`SELECT password FROM passwords WHERE role = ?`, [role], (err, row) => {
     db.get(`SELECT password FROM passwords WHERE role = ?`, [role], (err, row) => {
 
         if (err) return res.status(500).json({ error: err.message });
