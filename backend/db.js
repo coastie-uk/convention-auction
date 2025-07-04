@@ -4,6 +4,87 @@ const path     = require('path');
 
 const db = new Database(path.join(__dirname, 'auction.db'));
 
+try {
+
+    db.exec(`CREATE TABLE IF NOT EXISTS auctions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        short_name TEXT UNIQUE NOT NULL,
+        full_name TEXT NOT NULL,
+        created_at TEXT DEFAULT (strftime('%d-%m-%Y %H:%M','now')),
+        logo TEXT,
+        status TEXT DEFAULT 'setup'
+        )`);
+
+    db.exec(`CREATE TABLE IF NOT EXISTS items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        description TEXT,
+        contributor TEXT,
+        artist TEXT,
+        photo TEXT,
+        date TEXT,
+        notes TEXT,
+        mod_date TEXT,
+        item_number INTEGER,
+        auction_id INTEGER REFERENCES auctions(id),
+        test_item INTEGER,
+        test_bid INTEGER,
+        winning_bidder_id INTEGER, 
+        hammer_price REAL
+    )`);
+
+    db.exec(`CREATE TABLE IF NOT EXISTS passwords (
+        role TEXT PRIMARY KEY,
+        password TEXT NOT NULL
+    )`);
+
+    db.exec(`CREATE TABLE IF NOT EXISTS bidders (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        paddle_number INTEGER NOT NULL,
+        name          TEXT,
+        created_at    TEXT DEFAULT (strftime('%Y-%m-%d %H:%M', 'now')),
+        auction_id INTEGER
+      )`);
+
+    db.exec(`CREATE TABLE IF NOT EXISTS payments (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        bidder_id   INTEGER NOT NULL,
+        amount      REAL    NOT NULL,
+        method      TEXT    NOT NULL DEFAULT 'cash',
+        note        TEXT,
+        created_by  TEXT,
+        created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M', 'now')),
+        FOREIGN KEY (bidder_id) REFERENCES bidders(id)
+      )`);
+
+    db.exec(`CREATE TABLE IF NOT EXISTS audit_log (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        user        TEXT,
+        action      TEXT,
+        object_type TEXT,
+        object_id   INTEGER,
+        details     TEXT,
+        created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now'))
+      )`);
+
+    // create uniqueness on (auction_id, paddle_number)
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_bidder_auction_paddle ON bidders(auction_id, paddle_number)");
+
+const defaultPasswords = [
+    { role: "admin", password: "a1234" },
+    { role: "maintenance", password: "m1234" },
+    { role: "cashier", password: "c1234" }
+
+];
+defaultPasswords.forEach(({ role, password }) => {
+    db.exec(`INSERT OR IGNORE INTO passwords (role, password) VALUES (?, ?)`, [role, password]);
+
+});
+
+
+} catch (err) {
+    console.log(`Error creating database: ${err.message}`);
+}
+
 // ──────────────────────────────────────────────────────────────
 // Performance / concurrency tuning
 db.pragma('journal_mode = WAL');   // enables write-ahead logging
