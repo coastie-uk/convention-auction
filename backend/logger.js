@@ -1,51 +1,12 @@
-// const fs = require('fs');
-// const path = require('path');
-
-// const logFilePath = path.join(__dirname, 'server.log');
-
-// const logLevels = {
-//   INFO: 'INFO',
-//   WARN: 'WARN',
-//   ERROR: 'ERROR'
-// };
-
-// // Core logging function
-// function log(api, severity, message) {
-//   const timestamp = new Date().toISOString();
-//   const entry = `[${timestamp}] [${severity}] [${api}] ${message}`;
-
-//   console.log(entry);
-//   fs.appendFile(logFilePath, entry + '\n', (err) => {
-//     if (err) console.error(`[LOGGER ERROR] Failed to write to log file: ${err.message}`);
-//   });
-// }
-
-// // Middleware-style logger
-// function createLogger(severity = logLevels.INFO) {
-//   return function (req, res, next) {
-//     log(req.originalUrl || req.url, severity, `${req.method} ${req.originalUrl}`);
-//     next();
-//   };
-// }
-
-// // Convenience function for manual use
-// function logFromRequest(req, severity, message) {
-//   log(req.originalUrl || req.url, severity, message);
-// }
-
-// module.exports = {
-//   logLevels,
-//   log,
-//   createLogger,
-//   logFromRequest
-// };
-
-
 const fs = require('fs');
 const path = require('path');
 
 const logFilePath = path.join(__dirname, 'server.log');
 const archiveDir = path.join(__dirname, 'logs'); // store rotated logs here
+
+if (!fs.existsSync(archiveDir)) {
+  fs.mkdirSync(archiveDir, { recursive: true });
+}
 
 const logLevels = {
   DEBUG: 0,
@@ -57,10 +18,6 @@ const logLevels = {
 const MAX_LOG_SIZE_MB = 3;
 
 let currentLogLevel = logLevels.INFO;
-
-// function setLogLevel(level) {
-//   currentLogLevel = level;
-// }
 
 function setLogLevel(level) {
   if (typeof level === 'string') {

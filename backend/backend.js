@@ -89,6 +89,13 @@ const upload = multer({
 });
 
 
+const outputsDir = path.join(__dirname, 'outputs');
+
+if (!fs.existsSync(outputsDir)) {
+  fs.mkdirSync(outputsDir, { recursive: true });
+}
+
+
 /**
  * Express middleware factory that validates a JWT **and** authorisation role.
  *
