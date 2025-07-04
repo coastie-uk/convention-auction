@@ -813,7 +813,7 @@ app.post('/export-csv', authenticateRole("admin"), (req, res) => {
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader("Content-Disposition", `attachment; filename=auction_${auction_id}_items.csv`);
         res.end('\uFEFF' + csv);
-        res.download(filePath);
+
     
     });
 });

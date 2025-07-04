@@ -116,7 +116,11 @@ router.get("/export", (req, res) => {
     const csv = parser.parse(rows);
     const filePath = path.join(__dirname, "outputs", "bulk_export.csv");
     fs.writeFileSync(filePath, csv);
-    res.download(filePath);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader("Content-Disposition", `attachment; filename=bulk_items.csv`);
+    res.end('\uFEFF' + csv);
+ //   res.download(filePath);
     logFromRequest(req, logLevels.INFO, `Bulk CSV export complete`);
   });
 });
@@ -1213,8 +1217,12 @@ router.get("/audit-log/export", (req, res) => {
     const csvContent = [header, ...csvData].join("\n");
 
     res.setHeader("Content-Disposition", "attachment; filename=audit_log.csv");
-    res.setHeader("Content-Type", "text/csv");
-    res.send(csvContent);
+ //   res.setHeader("Content-Type", "text/csv");
+//    res.send(csvContent);
+    
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.end('\uFEFF' + csvContent);
+
   } catch (err) {
     console.error("Error exporting audit log:", err.message);
     res.status(500).send("Failed to export CSV.");
