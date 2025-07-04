@@ -12,7 +12,7 @@ con to con, but generally looks like this:
 This software provides a single platform which automates the process from item submission through to payment.
 
 ## Features
-- Supports multiple simultaneous auctions with manageed state lifecycle
+- Supports multiple simultaneous auctions with managed state lifecycle
 - Public item submission (with optional photo) & QR code support
 - Admin panel to add, edit, delete, and manage items, including image rotate/crop
 - Bid recording view with undo function
@@ -24,8 +24,7 @@ This software provides a single platform which automates the process from item s
 
 ## Limitations
 
-- Integration with payment providers has not been included in this version, 
-  in part due to the additional attack surface it presents
+- Integration with payment providers (e.g. SumUp) has not been included in this version
 
 ## System Requirements
 
