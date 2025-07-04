@@ -8,7 +8,7 @@
   "UPLOAD_DIR": "uploads",
   "SECRET_KEY": "RarityIsBestPony",
   "port": 3000,
-  "LOG_LEVEL": "DEBUG",
+  "LOG_LEVEL": "INFO",
   "MAX_AUCTIONS": 20,
   "MAX_ITEMS": 2000
 
