@@ -344,7 +344,7 @@ router.post("/change-password", (req, res) => {
       if (err) return res.status(500).json({ error: err.message });
       if (this.changes === 0) return res.status(404).json({ error: "Role not found." });
 
-      logFromRequest(req, `Password changed for role: ${role}`);
+      logFromRequest(req, logLevels.INFO, `Password changed for role: ${role}`);
       res.json({ message: `Password for ${role} updated.` });
     }
   );
