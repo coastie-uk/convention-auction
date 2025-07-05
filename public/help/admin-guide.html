@@ -2,42 +2,153 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Admin User Guide - Charity Auction</title>
+  <title>Admin Panel User Guide</title>
   <style>
-    body { font-family: Arial, sans-serif; padding: 2em; max-width: 800px; margin: auto; }
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 2em auto; padding: 1em; line-height: 1.6; }
     h1, h2 { color: #003366; }
-    ul { line-height: 1.6; }
-    code { background-color: #f0f0f0; padding: 2px 4px; border-radius: 4px; }
+    ul { margin-left: 1.2em; }
+    code { background: #f0f0f0; padding: 2px 5px; border-radius: 4px; }
     .section { margin-bottom: 2em; }
   </style>
 </head>
 <body>
-  <h1>Admin Page User Guide</h1>
+  <h1>Admin Panel – User Guide</h1>
 
   <div class="section">
     <h2>Overview</h2>
-    <p>The admin page allows authorized users to manage submitted items for the charity auction. You can add, edit, delete, export, and generate presentation materials for all items.</p>
+    <p>The Admin interface provides tools for managing auction items: submitting, editing, organizing, and exporting data for presentation and reporting.</p>
   </div>
 
   <div class="section">
-    <h2>Functions</h2>
+    <h2>Functional Areas</h2>
+
+    <h3>Auction Tools</h3>
     <ul>
-      <li><strong>Login:</strong> Enter the admin password to access the admin interface. Sessions last for 8 hours.</li>
-      <li><strong>View Items:</strong> All submitted items are displayed in a table with ID, description, contributor, artist, and thumbnail.</li>
-      <li><strong>Add New Item:</strong> Use the "New Item" button to open a form where you can submit a new entry including photo and notes.</li>
-      <li><strong>Edit Item:</strong> Click "Edit" next to any item to modify its information or upload a new photo.</li>
-      <li><strong>Delete Item:</strong> From the edit view, you can permanently delete an item (including its image file).</li>
-      <li><strong>Export CSV:</strong> Download a spreadsheet-compatible CSV file containing all item data.</li>
-      <li><strong>Slides:</strong> Generate a PowerPoint presentation with one slide per item, showing all key information and photo if available.</li>
-      <li><strong>Item Cards:</strong> Generate compact A6-sized cards for printing or display at the auction event.</li>
-      <li><strong>Refresh:</strong> Reload the item list from the server.</li>
-      <li><strong>Logout:</strong> End your admin session and return to the public submission page.</li>
+      <li><strong>Auction Selector:</strong> Choose which auction you're working in. The state is also shown</li>
+      <li><strong>Sorting Options:</strong> Sort the item list by item number, description, contributor, creator, bidder, or price, in ascending or descending order.</li>
+      <li><strong>Item counts and Value:</strong> Shows a live count of bids and the current total.</li>
+    </ul>
+
+    <h3>Item Management</h3>
+    <p>The controls available will depend on the auction state (and for moves, the state of the target auction)</p>
+    <ul>
+      <li><strong>Create New Item:</strong> Opens the item form to enter a new submission with optional photo and notes.</li>
+      <li><strong>Edit:</strong> Opens the edit form to modify the selected item.</li>
+      <li><strong>Photo Tools:</strong> Rotate, crop, or replace an image.</li>
+      <li><strong>Delete:</strong> Remove the item and its photos permanently.</li>
+      <li><strong>Move within auction:</strong> Move the item within the auction</li>
+      <li><strong>Move to auction:</strong> Move the item to a different auction. The item will be placed at the end of the target auction</li>
+      <li><strong>Finalise:</strong> Record the bidder and hammer price for the item. When the bid is recorded, focus will automatically shift to the next un-finalised item in the table/li>
+      <li><strong>Undo bid:</strong> Undo a recorded bid.</li>
+      <li><strong>History:</strong> Displays a detailed log of changes for a specific item, including timestamp, user, and action type.</li>
+    </ul>
+
+
+    <h3>Export Options</h3>
+    <ul>
+      <li><strong>Generate CSV Export:</strong> Download all items in spreadsheet format.</li>
+      <li><strong>Generate Auction Slides:</strong> Create a PowerPoint deck with one slide per item, styled according to the current template configuration.</li>
+      <li><strong>Generate Item Cards:</strong> Produces A6-sized slides/cards for printing and on-site use.</li>
+    </ul>
+
+    <h3>Navigation</h3>
+    <ul>
+      <li><strong>Public Form:</strong> Opens the public-facing item submission page.</li>
+      <li><strong>Live Feed:</strong> Opens the auction live bid display.</li>
+      <li><strong>Maintenance:</strong> Opens the maintenance panel (separate login required).</li>
+      <li><strong>Cashier:</strong> Opens the cashier interface (separate login required).</li>
+      <li><strong>Slideshow:</strong> Opens the presentation slideshow mode (will end your current admin session).</li>
+    </ul>
+
+    <h3>Session</h3>
+    <ul>
+      <li><strong>Logout:</strong> Ends your current admin session and returns you to the login screen.</li>
+    </ul>
+  </div>
+
+  
+
+    <h1>Settlement Interface – User Guide</h1>
+
+  <div class="section">
+    <h2>Overview</h2>
+    <p>This interface supports closing out payments after the auction. It shows what each bidder owes, tracks payments, and helps staff issue receipts or summaries.</p>
+  </div>
+
+  <div class="section">
+    <h2>Main Features</h2>
+
+    <h3>Bidder List (Left Panel)</h3>
+    <ul>
+      <li>Lists all bidders who have won items.</li>
+      <li>Each row shows the paddle number and total amount due.</li>
+      <li>Click a row to view details and process payments.</li>
+      <li><strong>Green highlight</strong> indicates a bidder is fully settled.</li>
+      <li><strong>Download CSV:</strong> Exports bidder payment status summary.</li>
+    </ul>
+
+    <h3>Bidder Details (Right Panel)</h3>
+    <ul>
+      <li><strong>Lots Won:</strong> Displays all winning bids and their prices.</li>
+      <li><strong>Payments:</strong> Shows recorded payment transactions.</li>
+      <li><strong>Totals:</strong> Calculates outstanding balance in real time.</li>
+    </ul>
+
+    <h3>Payment Buttons</h3>
+    <ul>
+      <li>Options: <strong>Cash</strong>, <strong>Card (manual)</strong>, <strong>PayPal (manual)</strong></li>
+      <li>Clicking a button opens a popup to enter amount and optional note.</li>
+      <li>All payments are timestamped and listed immediately.</li>
+    </ul>
+  </div>
+
+  <h1>Auction Slideshow – User Guide</h1>
+
+  <div class="section">
+    <h2>Overview</h2>
+    <p>This slideshow is designed for unattended display during the live auction. It cycles through item images with optional text overlays and supports remote updates from the admin panel.</p>
+  </div>
+
+  <div class="section">
+    <h2>Getting Started</h2>
+    <ul>
+      <li>On first load, you'll be prompted to enter the <strong>auction short name</strong> and <strong>admin password</strong>.</li>
+      <li>Once validated, the system enters full-screen slideshow mode and logs out any existing elevated user sessions for security.</li>
     </ul>
   </div>
 
   <div class="section">
-    <h2>Known Limitations</h2>
-    <p>[To be populated]</p>
+    <h2>Controls & Shortcuts</h2>
+    <ul>
+      <li><strong>[c]</strong> – Toggle configuration panel</li>
+      <li><strong>[space]</strong> – Pause or resume the slideshow</li>
+      <li><strong>[Esc]</strong> – Pause slideshow</li>
+      <li><strong>Tap-and-hold</strong> or <strong>click-and-hold</strong> – Show configuration panel on touch screens</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h2>Configuration Panel</h2>
+    <p>This overlay appears when triggered by keyboard or touch. It auto-hides after 10 seconds of inactivity.</p>
+    <ul>
+      <li><strong>Transition Time:</strong> Duration each slide is shown (in seconds)</li>
+      <li><strong>Show Description:</strong> Toggle display of item description</li>
+      <li><strong>Show Contributor:</strong> Toggle display of the item's donor</li>
+      <li><strong>Show Creator:</strong> Toggle display of the artist/creator</li>
+      <li><strong>Refresh Interval:</strong> How often to check for new items (in seconds)</li>
+      <li><strong>Shuffle Items:</strong> Enable randomized item order</li>
+      <li><strong>Change Auction / Logout:</strong> Reset slideshow and prompt for new auction details</li>
+      <li><strong>Pause / Resume / Reload:</strong> Playback controls</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h2>How It Works</h2>
+    <ul>
+      <li>Items are loaded dynamically from the server, but only if a photo is present for the item.</li>
+      <li>Items are shuffled (if enabled) and loop continuously. Once the queue is exhausted, it restarts.</li>
+      <li>The slideshow polls the backend regularly to fetch new items and updates in real-time.</li>
+    </ul>
   </div>
 
 </body>

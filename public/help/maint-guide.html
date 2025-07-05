@@ -4,76 +4,91 @@
   <meta charset="UTF-8">
   <title>Maintenance Panel User Guide</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 800px; margin: 2em auto; padding: 0 1em; line-height: 1.6; }
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 2em auto; padding: 1em; line-height: 1.6; }
     h1, h2 { color: #004c3f; }
-    code { background: #f4f4f4; padding: 2px 4px; border-radius: 4px; }
-    ul { margin-left: 1em; }
+    ul { margin-left: 1.2em; }
+    code { background: #f0f0f0; padding: 2px 5px; border-radius: 4px; }
     .section { margin-bottom: 2em; }
   </style>
 </head>
 <body>
-  <h1>Maintenance Panel User Guide</h1>
+  <h1>Maintenance Panel – User Guide</h1>
 
   <div class="section">
-    <h2>Access</h2>
-    <p>Log in with the dedicated maintenance password. A successful login unlocks all maintenance tools.</p>
+    <h2>Overview</h2>
+    <p>This interface provides access to tools for managing auctions, data management, configuring export templates, and other tasks.</p>
   </div>
 
   <div class="section">
-    <h2>Available Tools</h2>
+    <h2>Functional Areas</h2>
+
+    <h3>Auction Management</h3>
+    <ul>
+      <li><strong>Create New Auction:</strong> Define a full display name and a short URL tag (e.g. <code>?auction=fof2026</code>).</li>
+      <li><strong>Select Logo:</strong> Choose a logo from the uploaded image set for branding PowerPoint slides.</li>
+      <li><strong>Existing Auctions Table:</strong> Lists all auctions, showing ID, name, tag, logo, item count, and status. 
+        Actions include: Setting auction status, Delete (if empty), Reset: Remove all items. Deleting the last auction will delete the audit history and reset all counters in the database</li>
+    </ul>
 
     <h3>Database</h3>
     <ul>
-      <li><strong>Create Backup on Server:</strong> Saves a backup of the database on the server.</li>
-      <li><strong>Restore Database:</strong> Upload and restore a `.zip` backup from your device.</li>
-      <li><strong>Reset Database:</strong> Wipes all data. Requires confirmation.</li>
+      <li><strong>Create Backup on Server:</strong> Makes a snapshot of the current database to a folder on the server.</li>
+      <li><strong>Restore Database:</strong> Upload a previously saved databse file.</li>
     </ul>
 
     <h3>Import/Export</h3>
     <ul>
-      <li><strong>Export CSV:</strong> Download all items as a CSV file.</li>
-      <li><strong>Import CSV:</strong> Upload a CSV file to bulk add items.</li>
-      <li><strong>Download Database and Photos:</strong> Downloads a zipped copy of the current database and all images.</li>
+      <li><strong>Export CSV:</strong> Exports all items in CSV format.</li>
+      <li><strong>Import CSV:</strong> Bulk import items using a CSV. Required column headers: <code>description</code>, <code>artist</code>, <code>contributor</code>, <code>notes</code>, and <code>auction_id</code>.</li>
+      <li><strong>Download Database and Photos:</strong> Exports a zipped copy of the database and all photos.</li>
     </ul>
 
     <h3>Diagnostics</h3>
     <ul>
-      <li><strong>Photo Storage Report:</strong> Shows total image count and size.</li>
-      <li><strong>Data Integrity Check:</strong> Reports missing photo files associated with items.</li>
-      <li><strong>Clean Up Unused Photos:</strong> Identifies and removes orphaned photo files not linked to any item.</li>
+      <li><strong>Photo Storage Report:</strong> Shows number and total size of stored images.</li>
+      <li><strong>Check for Invalid Items:</strong> Identifies broken item entries (e.g. missing auctions or photos).</li>
+      <li><strong>Delete Invalid Items:</strong> Permanently removes broken entries.</li>
+      <li><strong>Clean Up Unused Photos:</strong> Finds and deletes orphaned photo files.</li>
+      <li><strong>Restart Server:</strong> Sends a soft restart command to the backend process. Requires that pm2 is used with the process name "auction"</li>
     </ul>
 
     <h3>Security</h3>
     <ul>
-      <li><strong>Change Password:</strong> Update the admin password. Requires confirmation and input validation.</li>
+      <li><strong>Change Password:</strong> Update password for Admin, Cashier, or Maintenance roles.</li>
     </ul>
 
     <h3>Generate Test Data</h3>
     <ul>
-      <li><strong>Generate:</strong> Add a specified number of sample items for testing purposes.</li>
+      <li><strong>Generate Items:</strong> Add a number of mock items to a selected auction for testing purposes.</li>
+      <li><strong>Generate Test Bids:</strong> Simulate activity by generating test bids and bidders.</li>
+      <li><strong>Delete Test Bids:</strong> Clears all test bidding data.</li>
     </ul>
 
-    <h3>System</h3>
+    <h3>PowerPoint Template Editor</h3>
     <ul>
-      <li><strong>Restart Server:</strong> Triggers a backend restart.</li>
-      <li><strong>View Server Logs:</strong> Displays recent backend logs.</li>
+      <li><strong>Edit Config:</strong> Select between <code>Slide Config</code> or <code>Card Config</code> to modify PowerPoint layout settings in JSON format.</li>
+      <li><strong>Reset to Default:</strong> Revert selected config to factory settings.</li>
     </ul>
 
-    <h3>Presentation Configuration</h3>
+    <h3>Image Manager</h3>
     <ul>
-      <li><strong>Edit Slide Config:</strong> Opens a JSON editor to update PowerPoint slide layout options. Includes validation and save button.</li>
+      <li><strong>Upload Images:</strong> Upload assets (e.g. logos or backgrounds) for use in PowerPoint and/or auction logos.</li>
+      <li><strong>Delete:</strong> Remove previously uploaded image resources.</li>
     </ul>
 
-    <h3>Navigation</h3>
+    <h3>Audit Log Viewer</h3>
     <ul>
-      <li><strong>Back to Admin Panel:</strong> Return to the main admin interface.</li>
-      <li><strong>Log Out:</strong> Ends your maintenance session.</li>
+      <li><strong>Fetch Audit Log:</strong> Loads audit history showing time, user, action, item details, and auction.</li>
+      <li><strong>Filter by Item ID:</strong> Narrow the log view to actions affecting a specific item. Note that this is a unique database internal item ID. </li>
+      <li><strong>Download CSV:</strong> Export log data for offline review or archiving.</li>
+    </ul>
+
+    <h3>Server Logs</h3>
+    <ul>
+      <li><strong>View Logs:</strong> Show recent backend server output.</li>
+      <li><strong>Auto-Refresh:</strong> Enable live updates every 5 seconds.</li>
     </ul>
   </div>
 
-  <div class="section">
-    <h2>Known Limitations</h2>
-    <p>[To be populated]</p>
-  </div>
 </body>
 </html>
