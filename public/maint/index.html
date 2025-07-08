@@ -22,7 +22,11 @@
 
     <section id="maintenance-section" style="display:none;">
       <h1>Maintenance Panel</h1>
-      <a href="/help/maint-guide.html" target="_blank" style="margin-left: 10px; font-size: 0.9em;">User Guide</a>
+      <a href="/help/user-guide.html?section=maintenance-panel" target="_blank"><button>User guide</button></a>
+
+              <button onclick="window.location.href='/admin'">Back to Admin Panel</button>
+        <button id="logout">Log Out</button>
+
 
       <details class="group" open>
         <summary>Auction Management</summary>
@@ -102,17 +106,6 @@
 
       </details>
 
-      <!-- <details class="group">
-        <summary>Data Integrity</summary>
-        <button id="integrity-check">Check for Invalid Items</button>
-        <div id="integrity-results" style="display:none;">
-          <p id="integrity-summary"></p>
-          <button id="delete-invalid-items">Delete Invalid Items</button>
-          <pre id="invalid-items-list" style="background:#f0f0f0; padding:10px; max-height:200px; overflow:auto;"></pre>
-        </div>
-      </details> -->
-      
-
       <details class="group">
         <summary>Security</summary>
         
@@ -152,14 +145,6 @@
         <button id="delete-test-bids">Delete Test Bids</button>
       
       </details>
-
-      <!-- <details class="group">
-        <summary>Server Control</summary>
-        <button id="restart-server">Restart Server</button>
-      </details> -->
-
-
-      
 
       <details class="group">
         <summary>Powerpoint Template Editor</summary>
@@ -244,8 +229,6 @@
         border: 1px solid #ccc;
         border-radius: 6px;
       "></pre>
-              <button onclick="window.location.href='/admin'">Back to Admin Panel</button>
-        <button id="logout">Log Out</button>
       </div>
 
     
