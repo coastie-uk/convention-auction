@@ -1181,10 +1181,21 @@ app.use('/maintenance', authenticateRole("maintenance"), (req, res, next) => {
     maintenanceRoutes(req, res, next);
 });
 
+// Start the server
+const server = app.listen(port, () => {
+    log('General', logLevels.INFO, 'Server startup complete and listening on port ' + port);
+});
 
-log('General', logLevels.INFO, 'Server startup complete and listening on port ' + port);
-app.listen(port, () => {
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+      log('General', logLevels.ERROR, `❌ Port ${port} is already in use. Please stop the other process or use a different port.`);
+      process.exit(1);
+  } else {
+    console.error('❌ Server error:', err);
+    log('General', logLevels.ERROR, `❌ Server error:`+ err);
 
+    process.exit(1);
+  }
 });
 
 app.use((err, req, res, next) => {

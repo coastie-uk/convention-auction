@@ -153,3 +153,4 @@ backend/*.db-wal
 
 
 >>>>>>> 5cc5db6 (Initial commit for con charity auction app)
+backend/auction.db
