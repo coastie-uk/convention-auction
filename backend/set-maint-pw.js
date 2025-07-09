@@ -1,3 +1,10 @@
+/**
+ * @file        set-maint-pw.js
+ * @description Small utility to set the maintenance password in case a lockout occurs
+ * @author      Chris Staples
+ * @license     GPL3
+ */
+
 const sqlite3 = require("sqlite3").verbose();
 const readline = require("readline");
 

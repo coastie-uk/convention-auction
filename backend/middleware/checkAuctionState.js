@@ -1,4 +1,10 @@
 /**
+ * @file        checkAuctionState.js
+ * @description Validates that an auction is in one of the allowed states
+ * @author      Chris Staples
+ * @license     GPL3
+ */
+/**
  * Middleware: checkAuctionState  ➜  better‑sqlite3 + in‑memory TTL cache
  * ---------------------------------------------------------------------------
  * Validates that an auction is in one of the allowed states **before** letting
@@ -122,7 +128,7 @@ module.exports = (db, options = {}) => {
         // set auction id from the inputs
         let auctionId = paramAuctionId || bodyAuctionId || bodyAuctionIdAlt;
 
-        // if both ID have showed up, check that the item actually belongs to the auction
+        // if both ID and auction have showed up, check that the item actually belongs to the auction
         if (auctionId && id) {
           const itemValid = stmtCheckConsistency.get(id, auctionId);
 

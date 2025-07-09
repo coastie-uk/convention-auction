@@ -1,3 +1,10 @@
+/**
+ * @file        backend.js
+ * @description Backend main file. Handles core operations
+ * @author      Chris Staples
+ * @license     GPL3
+ */
+
 const express = require('express');
 const multer = require('multer');
 const sharp = require('sharp');
@@ -31,8 +38,8 @@ const maintenanceRoutes = require('./maintenance');
 const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
 const checkAuctionState = require('./middleware/checkAuctionState')(
     db,
-    { ttlSeconds: 2 } 
- );
+    { ttlSeconds: 2 }
+);
 
 // this text is used to trim the maint log display
 log('General', logLevels.INFO, '~~ Starting up Auction backend ~~');
@@ -48,8 +55,12 @@ if (validLogLevels.includes(normalizedLevel)) {
     setLogLevel("INFO");
 }
 
-// CORS is needed if the frontend and backend are separated
-// 
+
+//--------------------------------------------------------------------------
+// CORS
+// Needed if the frontend and backend are separated
+//--------------------------------------------------------------------------
+
 // Add CORS headers before the routes are defined
 // app.use(function (req, res, next) {
 
@@ -92,7 +103,7 @@ const upload = multer({
 const outputsDir = path.join(__dirname, 'outputs');
 
 if (!fs.existsSync(outputsDir)) {
-  fs.mkdirSync(outputsDir, { recursive: true });
+    fs.mkdirSync(outputsDir, { recursive: true });
 }
 
 
@@ -106,73 +117,77 @@ if (!fs.existsSync(outputsDir)) {
  * @returns {import('express').RequestHandler}
  */
 function authenticateRole(acceptedRoles) {
-  // ------------- parameter normalisation & validation -------------
-  const roleList = Array.isArray(acceptedRoles)
-    ? [...acceptedRoles]                       // copy to avoid surprises
-    : [acceptedRoles];                         // preserve backward compatibility
+    // ------------- parameter normalisation & validation -------------
+    const roleList = Array.isArray(acceptedRoles)
+        ? [...acceptedRoles]                       // copy to avoid surprises
+        : [acceptedRoles];                         // preserve backward compatibility
 
-  // defensive input checks – fail fast on bad config
-  roleList.forEach(role => {
-    if (!VALID_ROLES.has(role)) {
-      const msg = `authenticateRole(): invalid role "${role}" supplied`;
-      // Prefer throwing during app start-up so a bad route fails loudly
-      /* istanbul ignore next */               // easier testing
-      throw new TypeError(msg);
-    }
-  });
-
-  const roleSet = new Set(roleList);           // O(1) look-ups later
-
-  // ------------------ actual middleware ------------------
-  return function authenticateRoleMw(req, res, next) {
-    const token = req.headers['authorization'];
-
-    if (!token) {
-      logFromRequest(req, logLevels.ERROR, 'No JWT supplied in Authorization header');
-      return res.status(403).json({ error: 'Access denied' });
-    }
-
-    jwt.verify(token, SECRET_KEY, (err, decoded) => {
-      if (err) {
-        logFromRequest(
-          req,
-          logLevels.DEBUG,
-          `Invalid token – ${err.name}…`
-        );
-        return res.status(403).json({ error: 'Session expired' });
-      }
-
-      if (!roleSet.has(decoded.role)) {
-        logFromRequest(
-          req,
-          logLevels.WARN,
-          `Role mismatch. Allowed: ${[...roleSet].join(', ')}, got ${decoded.role}`
-        );
-        return res.status(403).json({ error: 'Unauthorized' });
-      }
-
-      // Success – attach user to request and continue
-      req.user = decoded;
-      next();
+    // defensive input checks – fail fast on bad config
+    roleList.forEach(role => {
+        if (!VALID_ROLES.has(role)) {
+            const msg = `authenticateRole(): invalid role "${role}" supplied`;
+            // Prefer throwing during app start-up so a bad route fails loudly
+            /* istanbul ignore next */               // easier testing
+            throw new TypeError(msg);
+        }
     });
-  };
+
+    const roleSet = new Set(roleList);           // O(1) look-ups later
+
+    // ------------------ actual middleware ------------------
+    return function authenticateRoleMw(req, res, next) {
+        const token = req.headers['authorization'];
+
+        if (!token) {
+            logFromRequest(req, logLevels.ERROR, 'No JWT supplied in Authorization header');
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        jwt.verify(token, SECRET_KEY, (err, decoded) => {
+            if (err) {
+                logFromRequest(
+                    req,
+                    logLevels.DEBUG,
+                    `Invalid token – ${err.name}…`
+                );
+                return res.status(403).json({ error: 'Session expired' });
+            }
+
+            if (!roleSet.has(decoded.role)) {
+                logFromRequest(
+                    req,
+                    logLevels.WARN,
+                    `Role mismatch. Allowed: ${[...roleSet].join(', ')}, got ${decoded.role}`
+                );
+                return res.status(403).json({ error: 'Unauthorized' });
+            }
+
+            // Success – attach user to request and continue
+            req.user = decoded;
+            next();
+        });
+    };
 }
 
 
 // right below the authenticateRole definition
 require('./phase1-patch')(app, authenticateRole);
 
-// API to validate token. Used to check if there is a need to login
+//--------------------------------------------------------------------------
+// POST /validate
+// API to validate token. Used to check if stored session is valid
+//--------------------------------------------------------------------------
+
 app.post('/validate', async (req, res) => {
     const { token } = req.body;
     if (!token) {
-        logFromRequest(req, logLevels.WARN, `Token not provided`);
+        logFromRequest(req, logLevels.ERROR, `Token not provided`);
 
         return res.status(403).json({ error: "No stored session" });
     }
     jwt.verify(token, SECRET_KEY, (err, decoded) => {
         if (err) {
-            logFromRequest(req, logLevels.WARN, `Token invalid. session expired`);
+            logFromRequest(req, logLevels.INFO, `Token invalid. session expired`);
             return res.status(403).json({ error: "Session expired" });
         }
         req.user = decoded;
@@ -183,11 +198,15 @@ app.post('/validate', async (req, res) => {
     });
 })
 
-// Login route with role and db support
+//--------------------------------------------------------------------------
+// POST /login
+// Login route. Checks pw and returns a jwt
+//--------------------------------------------------------------------------
+
 app.post('/login', (req, res) => {
     const { password, role } = req.body;
     if (!password || !role) {
-        logFromRequest(req, logLevels.WARN, `No password provided`);
+        logFromRequest(req, logLevels.ERROR, `No password provided`);
         return res.status(400).json({ error: "Password required" });
     }
 
@@ -195,7 +214,7 @@ app.post('/login', (req, res) => {
 
         if (err) return res.status(500).json({ error: err.message });
         if (!row || row.password !== password) {
-            logFromRequest(req, logLevels.WARN, `invalid password`);
+            logFromRequest(req, logLevels.WARN, `Invalid password for role ${role} entered`);
             return res.status(401).json({ error: "Invalid password" });
         }
         const token = jwt.sign({ role }, SECRET_KEY, { expiresIn: "8h" });
@@ -207,7 +226,11 @@ app.post('/login', (req, res) => {
     });
 });
 
+//--------------------------------------------------------------------------
+// GET /slideshow-auth
 // Allows admin to retrieve slideshow credentials
+//--------------------------------------------------------------------------
+
 app.get('/slideshow-auth', authenticateRole("admin"), (req, res) => {
     const role = 'slideshow';
     const token = jwt.sign({ role }, SECRET_KEY, { expiresIn: "8h" });
@@ -223,169 +246,143 @@ function getNextItemNumber(auction_id, callback) {
     });
 }
 
+//--------------------------------------------------------------------------
+// POST /auctions/:auctionId/newitem
 // API to handle item submission
+//--------------------------------------------------------------------------
+
 app.post('/auctions/:auctionId/newitem', upload.single('photo'), checkAuctionState(['setup', 'locked']), async (req, res) => {
-// app.post('/submit', upload.single('photo'), async (req, res) => {
-
-
-//    logFromRequest(req, logLevels.DEBUG, `Request received`);
-
+    //    logFromRequest(req, logLevels.DEBUG, `Request received`);
     try {
 
-// Check item count first
-db.get("SELECT COUNT(*) AS count FROM items", [], (err, row) => {
-    if (err) return res.status(500).json({ error: "Database error." });
+        // Check item count first
+        db.get("SELECT COUNT(*) AS count FROM items", [], (err, row) => {
+            if (err) return res.status(500).json({ error: "Database error." });
 
-    if (row.count >= MAX_ITEMS) {
-        logFromRequest(req, logLevels.WARN, `Item limit reached. Maximum allowed is ${MAX_ITEMS}.`);
-      return res.status(400).json({ error: `Server item limit reached` });
-    }
+            if (row.count >= MAX_ITEMS) {
+                logFromRequest(req, logLevels.WARN, `Item limit reached. Maximum allowed is ${MAX_ITEMS}.`);
+                return res.status(400).json({ error: `Server item limit reached` });
+            }
 
-        let photoPath = req.file ? req.file.filename : null;
-//        const { description, contributor, artist, notes, auction_id, auth } = req.body;
-        const { description, contributor, artist, notes} = req.body;
-        const auth = req.header(`Authorization`);
-        const auction_id   = Number(req.params.auctionId);
+            let photoPath = req.file ? req.file.filename : null;
+            const { description, contributor, artist, notes } = req.body;
+            const auth = req.header(`Authorization`);
+            const auction_id = Number(req.params.auctionId);
 
-        logFromRequest(req, logLevels.DEBUG, `New item being added to auction id ${auction_id}`);
+            logFromRequest(req, logLevels.DEBUG, `New item being added to auction id ${auction_id}`);
 
-        if (!auction_id) {
-            logFromRequest(req, logLevels.ERROR, `Missing auction ID`);
-            return res.status(400).json({ error: "Missing auction ID" });
-            
-        } else if ( !description || !contributor ) {
-            logFromRequest(req, logLevels.ERROR, `Missing item description or contributor`);
-            return res.status(400).json({ error: "Missing item description or contributor" });
-        }
+            if (!auction_id) {
+                logFromRequest(req, logLevels.ERROR, `Missing auction ID`);
+                return res.status(400).json({ error: "Missing auction ID" });
 
-        // See if we were called from the admin page - if so, they sent a token
-        var is_admin = false;
-        if (auth) {
+            } else if (!description || !contributor) {
+                logFromRequest(req, logLevels.ERROR, `Missing item description or contributor`);
+                return res.status(400).json({ error: "Missing item description or contributor" });
+            }
+
+            // See if we were called from the admin page - if so, they sent a token
+            var is_admin = false;
+            if (auth) {
 
                 jwt.verify(auth, SECRET_KEY, (err, decoded) => {
-                if (!err) {
-                    is_admin = true;
-                    logFromRequest(req, logLevels.DEBUG, `Add req has provided admin credentials`);
-                }
-        })}
-
-
-        // Check that the auction is active
-        db.get("SELECT status FROM auctions WHERE id = ?", [auction_id], async (err, row) => {
-            //     console.log(row.is_active);
-            if (err) {
-                logFromRequest(req, logLevels.ERROR, `Error checking auction status ${err.message}`);
-                //    console.error("Submit: Error checking auction status", err.message);
-                return res.status(500).json({ error: "Database error" });
-            }
-
-            if (!row) {
-                return res.status(404).json({ error: "Auction not found" });
-            }
-
-  //       if (row.is_active !== 1 && is_admin === false) {
-
-  //        checkAuctionState() has already checked for scenarios which shouldn't happen, so the test here is simpler
-            if (row.status === "locked" && is_admin === false) {
-
-                logFromRequest(req, logLevels.WARN, `Public submission rejected. Auction ${auction_id} is locked`);
-
-                //   logFromRequest(req, logLevels.INFO, `submission rejected. Auction ${auction_id} is not active`);
-                return res.status(403).json({ error: "This auction is not currently accepting submissions." });
+                    if (!err) {
+                        is_admin = true;
+                        logFromRequest(req, logLevels.DEBUG, `Add req has provided admin credentials`);
+                    }
+                })
             }
 
 
-
-            if (photoPath) {
-                const resizedPath = `./uploads/resized_${photoPath}`;
-                const previewPath = `./uploads/preview_resized_${photoPath}`;
-
-              await sharp(req.file.path).metadata(); // Will throw if not an image
-
-                await sharp(req.file.path)
-                    .resize(2000, 2000, {
-                        fit: 'inside',
-                    })
-                    .jpeg({ quality: 90 })
-                    .toFile(resizedPath);
-
-                await sharp(req.file.path)
-                    .resize(400, 400, {
-                        fit: 'inside'
-                    })
-                    .jpeg({ quality: 70 })
-                    .toFile(previewPath);
-
-                fs.unlinkSync(req.file.path);
-                photoPath = `resized_${photoPath}`;
-                logFromRequest(req, logLevels.INFO, `Photo captured and saved`);
-
-            }
-
-
-            // get the next item number
-            getNextItemNumber(auction_id, (err, itemNumber) => {
+            // Check that the auction is active
+            db.get("SELECT status FROM auctions WHERE id = ?", [auction_id], async (err, row) => {
                 if (err) {
+                    logFromRequest(req, logLevels.ERROR, `Error checking auction status ${err.message}`);
                     return res.status(500).json({ error: "Database error" });
                 }
 
+                if (!row) {
+                    return res.status(404).json({ error: "Auction not found" });
+                }
 
-                //        db.run(`INSERT INTO items (description, contributor, artist, photo) VALUES (?, ?, ?, ?)`,
-                db.run(`INSERT INTO items (item_number, description, contributor, artist, notes, photo, auction_id, date) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%d-%m-%Y %H:%M', 'now'))`,
-                    [itemNumber, description, contributor, artist, notes, photoPath, auction_id],
-                    function (err) {
-                        if (err) {
-                            logFromRequest(req, logLevels.ERROR, `Database error ${err.message}`);
-                            return res.status(500).json({ error: err.message });
+                // checkAuctionState() has already checked for scenarios which shouldn't happen, so the test here is simpler
+                if (row.status === "locked" && is_admin === false) {
+
+                    logFromRequest(req, logLevels.WARN, `Public submission rejected. Auction ${auction_id} is locked`);
+                    return res.status(403).json({ error: "This auction is not currently accepting submissions." });
+                }
+
+
+
+                if (photoPath) {
+                    const resizedPath = `./uploads/resized_${photoPath}`;
+                    const previewPath = `./uploads/preview_resized_${photoPath}`;
+
+                    await sharp(req.file.path).metadata(); // Will throw if not an image
+
+                    await sharp(req.file.path)
+                        .resize(2000, 2000, {
+                            fit: 'inside',
+                        })
+                        .jpeg({ quality: 90 })
+                        .toFile(resizedPath);
+
+                    await sharp(req.file.path)
+                        .resize(400, 400, {
+                            fit: 'inside'
+                        })
+                        .jpeg({ quality: 70 })
+                        .toFile(previewPath);
+
+                    fs.unlinkSync(req.file.path);
+                    photoPath = `resized_${photoPath}`;
+                    logFromRequest(req, logLevels.INFO, `Photo captured and saved`);
+
+                }
+
+
+                // get the next item number
+                getNextItemNumber(auction_id, (err, itemNumber) => {
+                    if (err) {
+                        return res.status(500).json({ error: "Database error" });
+                    }
+
+                    db.run(`INSERT INTO items (item_number, description, contributor, artist, notes, photo, auction_id, date) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%d-%m-%Y %H:%M', 'now'))`,
+                        [itemNumber, description, contributor, artist, notes, photoPath, auction_id],
+                        function (err) {
+                            if (err) {
+                                logFromRequest(req, logLevels.ERROR, `Database error ${err.message}`);
+                                return res.status(500).json({ error: err.message });
+
+                            }
+                            res.json({ id: this.lastID, description, contributor, artist, photo: photoPath });
+                            logFromRequest(req, logLevels.INFO, `Item ${this.lastID} stored for auction ${auction_id} as item #${itemNumber}`);
+                            const user = is_admin ? "admin" : "public";
+                            audit(user, 'new item', 'item', this.lastID, { description: description, initial_number: itemNumber });
 
                         }
-                        res.json({ id: this.lastID, description, contributor, artist, photo: photoPath });
-                        logFromRequest(req, logLevels.INFO, `Item ${this.lastID} stored for auction ${auction_id} as item #${itemNumber}`);
-                        const user = is_admin ? "admin" : "public";
-                        audit(user, 'new item', 'item', this.lastID, { description: description, initial_number: itemNumber });
-
-                    }
-                );
-            })
-        });
-    })
+                    );
+                })
+            });
+        })
 
     } catch (error) {
         return res.status(500).json({ error: error.message });
     }
 });
 
-// API to get all auction items
-// app.post('/items', authenticateRole("admin"), (req, res) => {
-//     const { auction_id } = req.body;
-
-//     if (!auction_id) {
-//         return res.status(400).json({ error: "Missing auction_id" });
-//     }
-
-//     db.all('SELECT * FROM items WHERE auction_id = ? ORDER BY item_number DESC', [auction_id], (err, rows) => {
-//         if (err) {
-//             //       logFromRequest(req, logLevels.INFO, `Get Items: Error ${err.message}`);
-//             logFromRequest(req, logLevels.ERROR, `Error fetching items ${err.message}`);
-//             return res.status(500).json({ error: err.message });
-//         }
-//         res.json(rows);
-//     });
-// });
-
+//--------------------------------------------------------------------------
+// GET /auctions/:auctionId/items
 // API to get all auction items. Accepts optional sort and direction
+//--------------------------------------------------------------------------
 
 app.get('/auctions/:auctionId/items', authenticateRole("admin"), (req, res) => {
- const auction_id   = Number(req.params.auctionId);
- const sort = (req.query.sort || "asc").toUpperCase();
- const field = req.query.field || "item_number";
+    const auction_id = Number(req.params.auctionId);
+    const sort = (req.query.sort || "asc").toUpperCase();
+    const field = req.query.field || "item_number";
 
-const allowedFields = ["item_number", "paddle_number", "hammer_price", "description", "contributor", "artist"];
-const sortField = allowedFields.includes(field) ? field : "item_number";
-const sortOrder = sort.toUpperCase() === "DESC" ? "DESC" : "ASC";
-
-// app.post('/items', authenticateRole("admin"), (req, res) => {
-//    const { auction_id } = req.body;
+    const allowedFields = ["item_number", "paddle_number", "hammer_price", "description", "contributor", "artist"];
+    const sortField = allowedFields.includes(field) ? field : "item_number";
+    const sortOrder = sort.toUpperCase() === "DESC" ? "DESC" : "ASC";
 
     if (!auction_id) {
         return res.status(400).json({ error: "Missing auction_id" });
@@ -411,14 +408,6 @@ const sortOrder = sort.toUpperCase() === "DESC" ? "DESC" : "ASC";
     ORDER BY ${sortField} COLLATE NOCASE ${sortOrder}, item_number ${sortOrder}
   `;
 
-    // db.all(LIST_ITEMS_SQL, [auction_id], (err, rows) => {
-    //     if (err) {
-    //         logFromRequest(req, logLevels.ERROR, `Error fetching items ${err.message}`);
-    //         return res.status(500).json({ error: err.message });
-    //     }
-    //     res.json(rows);
-    // });
-    
     try {
         const stmt = db.prepare(LIST_ITEMS_SQL);
         const items = stmt.all(auction_id);
@@ -446,20 +435,19 @@ const sortOrder = sort.toUpperCase() === "DESC" ? "DESC" : "ASC";
         res.status(500).json({ error: "Failed to load items." + err.message });
     }
 
-  
+
 });
 
-// API to update an item. Includes moving an item to a new auction
+//--------------------------------------------------------------------------
+// POST /auctions/:auctionId/items/:id/update
+// API to update an item, including photo. Includes moving an item to a new auction
+//--------------------------------------------------------------------------
 
 app.post('/auctions/:auctionId/items/:id/update', upload.single('photo'), authenticateRole("admin"), checkAuctionState(['setup', 'locked']), (req, res) => {
-      const auction_id   = Number(req.params.auctionId);
-      const id = Number(req.params.id);
-      const target_auction_id = req.body.target_auction_id;
+    const auction_id = Number(req.params.auctionId);
+    const id = Number(req.params.id);
+    const target_auction_id = req.body.target_auction_id;
 
-
-
-// app.post("/update", upload.single('photo'), authenticateRole("admin"), async (req, res) => {
-//     const { id, auction_id } = req.body;
     logFromRequest(req, logLevels.DEBUG, `Request received to update item ${id}`);
 
     db.get('SELECT photo, auction_id FROM items WHERE id = ?', [id], async (err, row) => {
@@ -483,38 +471,38 @@ app.post('/auctions/:auctionId/items/:id/update', upload.single('photo'), authen
 
             try {
 
-            await sharp(req.file.path).metadata(); // Will throw if not an image
+                await sharp(req.file.path).metadata(); // Will throw if not an image
 
 
-            await sharp(req.file.path)
-                .resize(2000, 2000, { fit: 'inside' })
-                .jpeg({ quality: 90 })
-                .toFile(resizedPath);
+                await sharp(req.file.path)
+                    .resize(2000, 2000, { fit: 'inside' })
+                    .jpeg({ quality: 90 })
+                    .toFile(resizedPath);
 
-            await sharp(req.file.path)
-                .resize(400, 400, { fit: 'inside' })
-                .jpeg({ quality: 70 })
-                .toFile(previewPath);
+                await sharp(req.file.path)
+                    .resize(400, 400, { fit: 'inside' })
+                    .jpeg({ quality: 70 })
+                    .toFile(previewPath);
 
-            fs.unlinkSync(req.file.path);
+                fs.unlinkSync(req.file.path);
 
-            if (row.photo && row.photo !== targetFilename) {
-                const oldFull = `./uploads/${row.photo}`;
-                const oldPreview = `./uploads/preview_${row.photo}`;
-                if (fs.existsSync(oldFull)) fs.unlinkSync(oldFull);
-                if (fs.existsSync(oldPreview)) fs.unlinkSync(oldPreview);
-            }
+                if (row.photo && row.photo !== targetFilename) {
+                    const oldFull = `./uploads/${row.photo}`;
+                    const oldPreview = `./uploads/preview_${row.photo}`;
+                    if (fs.existsSync(oldFull)) fs.unlinkSync(oldFull);
+                    if (fs.existsSync(oldPreview)) fs.unlinkSync(oldPreview);
+                }
 
-            photoPath = targetFilename;
-            logFromRequest(req, logLevels.INFO, `Photo updated → ${targetFilename}`);
+                photoPath = targetFilename;
+                logFromRequest(req, logLevels.INFO, `Photo updated → ${targetFilename}`);
 
-        }    catch (err) {
+            } catch (err) {
                 logFromRequest(req, logLevels.ERROR, `Image procesing failed`);
 
                 fs.unlinkSync(req.file.path); // cleanup
                 res.status(400).json({ error: 'Invalid image file' });
                 return;
-  }
+            }
         }
 
         // Only collect fields that are provided (and not undefined/null)
@@ -573,7 +561,7 @@ app.post('/auctions/:auctionId/items/:id/update', upload.single('photo'), authen
                         }
                         logFromRequest(req, logLevels.DEBUG, `Renumbered ${count} items in old auction ${oldAuctionId}`);
                     });
-                           audit(req.user.role, 'moved auction', 'item', id, { old_auction : oldAuctionId, new_auction : newAuctionId, new_no : newNumber });
+                    audit(req.user.role, 'moved auction', 'item', id, { old_auction: oldAuctionId, new_auction: newAuctionId, new_no: newNumber });
 
                     res.json({ message: 'Item moved and updated', item_number: newNumber, photo: photoPath });
                 });
@@ -591,18 +579,21 @@ app.post('/auctions/:auctionId/items/:id/update', upload.single('photo'), authen
                 }
                 res.json({ message: 'Item updated', photo: photoPath });
                 logFromRequest(req, logLevels.INFO, `Update item completed for ${id}`);
-                audit(req.user.role, 'updated', 'item', id, { });
+                audit(req.user.role, 'updated', 'item', id, {});
 
             });
         }
     });
 });
 
+//--------------------------------------------------------------------------
+// DELETE /items/:id
+// API to delete an item, including photos
+//--------------------------------------------------------------------------
 
-// API to delete an item
 app.delete('/items/:id', authenticateRole("admin"), checkAuctionState(['setup', 'locked']), (req, res) => {
     const { id } = req.params;
-    
+
     logFromRequest(req, logLevels.DEBUG, `Delete: Request Recieved for ${id}`);
 
     db.get('SELECT photo, auction_id FROM items WHERE id = ?', [id], (err, row) => {
@@ -647,8 +638,11 @@ app.delete('/items/:id', authenticateRole("admin"), checkAuctionState(['setup', 
     });
 });
 
-
+//--------------------------------------------------------------------------
+// POST /generate-pptx
 // API to generate PowerPoint presentation for all items using a master slide template
+//--------------------------------------------------------------------------
+
 app.post('/generate-pptx', authenticateRole("admin"), async (req, res) => {
     const { auction_id } = req.body;
     logFromRequest(req, logLevels.DEBUG, 'Slide generation started for auction ' + auction_id);
@@ -706,7 +700,6 @@ app.post('/generate-pptx', authenticateRole("admin"), async (req, res) => {
         }
 
         const filePath = './outputs/auction_presentation.pptx';
-        //       await pptx.writeFile(filePath);
         await pptx.writeFile({ fileName: filePath });
 
         logFromRequest(req, logLevels.INFO, 'Slide file created for auction ' + auction_id);
@@ -718,7 +711,12 @@ app.post('/generate-pptx', authenticateRole("admin"), async (req, res) => {
 
     }
 });
+
+//--------------------------------------------------------------------------
+// POST /generate-cards
 // API to generate item cards
+//--------------------------------------------------------------------------
+
 app.post('/generate-cards', authenticateRole("admin"), async (req, res) => {
     const { auction_id } = req.body;
 
@@ -768,20 +766,23 @@ app.post('/generate-cards', authenticateRole("admin"), async (req, res) => {
 
         const filePath = './outputs/auction_cards.pptx';
 
-        //  await pptx.writeFile(filePath);
         await pptx.writeFile({ fileName: filePath });
         logFromRequest(req, logLevels.INFO, 'Item cards generated for auction ' + auction_id);
 
         res.download(filePath);
     } catch (error) {
         res.status(500).json({ error: error.message });
-                logFromRequest(req, logLevels.ERROR, `card gen for auction ${auction_id} failed: ` + error.message);
+        logFromRequest(req, logLevels.ERROR, `card gen for auction ${auction_id} failed: ` + error.message);
 
 
     }
 });
 
-// API to export data to CSV
+//--------------------------------------------------------------------------
+// POST /export-csv
+// API to export all items from the selected auction to CSV
+//--------------------------------------------------------------------------
+
 app.post('/export-csv', authenticateRole("admin"), (req, res) => {
     const { auction_id } = req.body;
 
@@ -789,7 +790,6 @@ app.post('/export-csv', authenticateRole("admin"), (req, res) => {
         return res.status(400).json({ error: "Missing auction_id" });
     }
     logFromRequest(req, logLevels.INFO, 'CSV export requested for auction ' + auction_id);
-// SELECT * FROM items WHERE auction_id = ? ORDER BY item_number ASC
     db.all(`
         
         SELECT 
@@ -800,23 +800,28 @@ app.post('/export-csv', authenticateRole("admin"), (req, res) => {
         WHERE i.auction_id = ?
         ORDER BY i.item_number ASC;`
         , [auction_id], (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
+            if (err) {
+                return res.status(500).json({ error: err.message });
+            }
 
-        const parser = new Parser({ fields: ['id', 'description', 'contributor', 'artist', 'photo', 'date', 'notes', 'mod_date', 'auction_id', 'item_number', 'paddle_number', 'hammer_price'] });
-        const csv = parser.parse(rows);
-        const filePath = './outputs/auction_data.csv';
-        fs.writeFileSync(filePath, csv);
-        logFromRequest(req, logLevels.INFO, 'CSV file generated for auction ' + auction_id);
+            const parser = new Parser({ fields: ['id', 'description', 'contributor', 'artist', 'photo', 'date', 'notes', 'mod_date', 'auction_id', 'item_number', 'paddle_number', 'hammer_price'] });
+            const csv = parser.parse(rows);
+            const filePath = './outputs/auction_data.csv';
+            fs.writeFileSync(filePath, csv);
+            logFromRequest(req, logLevels.INFO, 'CSV file generated for auction ' + auction_id);
 
-        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-        res.setHeader("Content-Disposition", `attachment; filename=auction_${auction_id}_items.csv`);
-        res.end('\uFEFF' + csv);
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader("Content-Disposition", `attachment; filename=auction_${auction_id}_items.csv`);
+            res.end('\uFEFF' + csv);
 
-    
-    });
+
+        });
 });
+
+//--------------------------------------------------------------------------
+// POST /rotate-photo
+// API to rotate a photo
+//--------------------------------------------------------------------------
 
 
 app.post('/rotate-photo', authenticateRole("admin"), async (req, res) => {
@@ -855,34 +860,31 @@ app.post('/rotate-photo', authenticateRole("admin"), async (req, res) => {
                 }
 
                 res.json({ message: 'Image rotated' });
-
                 logFromRequest(req, logLevels.INFO, `Rotate: ${photoFilename} rotated ${angle} degrees`);
             });
 
         } catch (error) {
             logFromRequest(req, logLevels.ERROR, `Image rotation failed for item ${id}: ${error.message}`);
-
             res.status(500).json({ error: 'Rotation failed' });
         }
     });
 });
 
-// Public endpoint to fetch items with photos only. Used for slideshow display
+//--------------------------------------------------------------------------
+// GET /auctions/:auctionId/slideshow-items
+// API to fetch items with photos only. Used for slideshow display
 // return only items that have an associated photo
+//--------------------------------------------------------------------------
+
 app.get('/auctions/:auctionId/slideshow-items', authenticateRole("slideshow"), (req, res) => {
-  const auction_id   = Number(req.params.auctionId);
+    const auction_id = Number(req.params.auctionId);
 
-// app.post("/public-items", authenticateRole("slideshow"), (req, res) => {
-//     const { auction_id } = req.body;
-
-    // ── validate input ─────────────────────────────────────
     if (!auction_id || isNaN(Number(auction_id))) {
         logFromRequest(req, logLevels.ERROR, "Missing or invalid auction ID");
         return res.status(400).json({ error: "Missing or invalid auction_id" });
     }
 
     try {
-        // ── synchronous query ────────────────────────────────
         const rows = db.all(
             `SELECT id,
                 description,
@@ -904,7 +906,11 @@ app.get('/auctions/:auctionId/slideshow-items', authenticateRole("slideshow"), (
     }
 });
 
-// Get current pptx config
+//--------------------------------------------------------------------------
+// GET /config/pptx
+// API to get current pptx config
+//--------------------------------------------------------------------------
+
 app.get('/config/pptx', authenticateRole("maintenance"), (req, res) => {
     logFromRequest(req, logLevels.DEBUG, `Current PPTX config requested`);
     fs.readFile('./pptxConfig.json', 'utf8', (err, data) => {
@@ -913,7 +919,11 @@ app.get('/config/pptx', authenticateRole("maintenance"), (req, res) => {
     });
 });
 
-// Save pptx config
+//--------------------------------------------------------------------------
+// POST /config/pptx
+// API to save pptx config
+//--------------------------------------------------------------------------
+
 app.post('/config/pptx', authenticateRole("maintenance"), (req, res) => {
     try {
         const newConfig = JSON.stringify(req.body, null, 2); // Pretty print
@@ -932,7 +942,11 @@ app.post('/config/pptx', authenticateRole("maintenance"), (req, res) => {
     }
 });
 
-// Check whether the publically entered auction id exists and is active
+//--------------------------------------------------------------------------
+// POST /validate-auction
+// API to check whether the publically entered auction id exists and is active
+//--------------------------------------------------------------------------
+
 app.post("/validate-auction", async (req, res) => {
     const { short_name } = req.body;
     logFromRequest(req, logLevels.DEBUG, `Auction name received: ${short_name}`);
@@ -953,19 +967,8 @@ app.post("/validate-auction", async (req, res) => {
             }
             if (!row) {
                 logFromRequest(req, logLevels.WARN, `Auction name "${short_name}" not in database`);
-
-                //      return res.json({ valid: false });
                 return res.status(403).json({ error: "Auction name not found" });
-
             }
-            // This case is allowed to pass as the slideshow feature does not need  the auction to be open.
-    //        if (row.is_active !== 1) {
-      //      if (row.status !== "setup") {
-
-        //        logFromRequest(req, logLevels.DEBUG, `Auction ${row.id} ${short_name} state ${row.status}`);
-                //         return res.status(403).json({ error: "This auction is not currently accepting submissions." });
-          //  }
-
 
             res.json({ valid: true, id: row.id, short_name: row.short_name, full_name: row.full_name, status: row.status, logo: row.logo });
         }
@@ -977,30 +980,16 @@ app.post("/validate-auction", async (req, res) => {
 });
 
 
-// app.post("/list-auctions", async (req, res) => {
-//     logFromRequest(req, logLevels.DEBUG, `Auction list (admin) requested`);
-
-//     db.all('SELECT id, short_name, full_name, is_active, status FROM auctions', [], (err, rows) => {
-//         if (err) {
-//             logFromRequest(req, logLevels.ERROR, `Failed to get auction list: ${err}`);
-//             res.status(500).json({ error: "Failed to retrieve auctions" });
-//         }
-//         res.json(rows);
-
-//     });
-// });
-
 // -----------------------------------------------------------------------------
 // POST /list-auctions
 // Optional body parameter:  { status : "live" | "settlement" | ... }
 // – If `status` is omitted, returm all
 // – If `status` is supplied, only auctions with that status are returned.
 // -----------------------------------------------------------------------------
-app.post("/list-auctions", authenticateRole(["maintenance","admin","cashier"]), async (req, res) => {
-//    logFromRequest(req, logLevels.DEBUG, "Auction list (admin) requested");
+app.post("/list-auctions", authenticateRole(["maintenance", "admin", "cashier"]), async (req, res) => {
+    //    logFromRequest(req, logLevels.DEBUG, "Auction list (admin) requested");
 
-    // -------------------- 1. Validate ----------------------------------------
-    const status          = req.body?.status;             // undefined if not sent
+    const status = req.body?.status;             // undefined if not sent
     const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"]; // update if needed
 
     if (status !== undefined && !allowedStatuses.includes(status)) {
@@ -1009,10 +998,10 @@ app.post("/list-auctions", authenticateRole(["maintenance","admin","cashier"]), 
         return res.status(400).json({ error: "Invalid status parameter" });
     }
 
-    let   sql    = "SELECT id, short_name, full_name, status FROM auctions";
+    let sql = "SELECT id, short_name, full_name, status FROM auctions";
     const params = [];
     if (status !== undefined) {           // filter only when caller asked for it
-        sql    += " WHERE status = ?";
+        sql += " WHERE status = ?";
         params.push(status);
     }
 
@@ -1029,72 +1018,63 @@ app.post("/list-auctions", authenticateRole(["maintenance","admin","cashier"]), 
 
     }
 
-    // db.all(sql, params, (err, rows) => {
-    //     if (err) {
-    //         logFromRequest(req, logLevels.ERROR,
-    //             `Failed to get auction list: ${err.message}`);
-    //         return res.status(500).json({ error: "Failed to retrieve auctions" });
-    //     }
-    //     res.json(rows);                    // unchanged response shape
-    // });
 });
 
-// move an item so it appears directly after another one (or to top if after_id null)
+//--------------------------------------------------------------------------
+// POST /auctions/:auctionId/items/:id/move-after/:after_id
+// API to move an item so it appears directly after another one (or to top if after_id null)
+//--------------------------------------------------------------------------
+
 app.post('/auctions/:auctionId/items/:id/move-after/:after_id', authenticateRole("admin"), checkAuctionState(['setup', 'locked']), (req, res) => {
-      const auctionId   = Number(req.params.auctionId);
-      const id = Number(req.params.id);
-      const afterId = req.params.after_id ? Number(req.params.after_id) : null;
+    const auctionId = Number(req.params.auctionId);
+    const id = Number(req.params.id);
+    const afterId = req.params.after_id ? Number(req.params.after_id) : null;
 
-// app.post("/items/move-after", authenticateRole("admin"), (req, res) => {
-//         const id = Number(req.body.id);         // item we move
-//         const afterId = req.body.after_id ? Number(req.body.after_id) : null;
-//         const auctionId = Number(req.body.auction_id);
+    if (!id || !auctionId)
+        return res.status(400).json({ error: "Missing or invalid ids" });
 
-        if (!id || !auctionId)
-            return res.status(400).json({ error: "Missing or invalid ids" });
+    try {
+        // 1. fetch current list (ordered)
+        const rows = db.all(
+            "SELECT id FROM items WHERE auction_id = ? ORDER BY item_number ASC",
+            [auctionId]
+        );
+        if (!rows.length) return res.status(404).json({ error: "Auction empty" });
 
-        try {
-            // 1. fetch current list (ordered)
-            const rows = db.all(
-                "SELECT id FROM items WHERE auction_id = ? ORDER BY item_number ASC",
-                [auctionId]
-            );
-            if (!rows.length) return res.status(404).json({ error: "Auction empty" });
+        const movingIdx = rows.findIndex(r => r.id === id);
+        if (movingIdx === -1) return res.status(404).json({ error: "Item not found" });
 
-            const movingIdx = rows.findIndex(r => r.id === id);
-            if (movingIdx === -1) return res.status(404).json({ error: "Item not found" });
+        // 2. build new order
+        const remaining = rows.filter(r => r.id !== id);
+        const insertPos = afterId
+            ? remaining.findIndex(r => r.id === afterId) + 1
+            : 0;
 
-            // 2. build new order
-            const remaining = rows.filter(r => r.id !== id);
-            const insertPos = afterId
-                ? remaining.findIndex(r => r.id === afterId) + 1
-                : 0;
+        if (insertPos === 0 && afterId) return res.status(404).json({ error: "after_id not found" });
 
-            if (insertPos === 0 && afterId) return res.status(404).json({ error: "after_id not found" });
+        const reordered = [
+            ...remaining.slice(0, insertPos),
+            { id },                              // moving item
+            ...remaining.slice(insertPos)
+        ];
 
-            const reordered = [
-                ...remaining.slice(0, insertPos),
-                { id },                              // moving item
-                ...remaining.slice(insertPos)
-            ];
+        // 3. renumber in a single transaction
+        const update = db.prepare("UPDATE items SET item_number = ? WHERE id = ?");
+        const renumber = db.transaction(list => {
+            list.forEach((item, idx) => update.run(idx + 1, item.id));
+        });
+        renumber(reordered);
 
-            // 3. renumber in a single transaction
-            const update = db.prepare("UPDATE items SET item_number = ? WHERE id = ?");
-            const renumber = db.transaction(list => {
-                list.forEach((item, idx) => update.run(idx + 1, item.id));
-            });
-            renumber(reordered);
-
-            logFromRequest(
-                req,
-                logLevels.INFO,
-                `Moved item ${id} to after ${afterId} in auction ${auctionId}`
-            );
-            res.json({ message: "Item moved and renumbered" });
-        } catch (err) {
-            res.status(500).json({ error: "Failed to update item numbers" });
-        }
+        logFromRequest(
+            req,
+            logLevels.INFO,
+            `Moved item ${id} to after ${afterId} in auction ${auctionId}`
+        );
+        res.json({ message: "Item moved and renumbered" });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to update item numbers" });
     }
+}
 );
 
 
@@ -1144,20 +1124,25 @@ function renumberAuctionItems(auctionId, callback) {
     );
 }
 
-// app.get('/api/auction-status', authenticateRole('admin'), (req,res)=>{
-//     const row = db.get('SELECT status FROM auctions ORDER BY id DESC LIMIT 1');
-//     res.json({ status: row ? row.status : 'live' });
-//   });
+//--------------------------------------------------------------------------
+// POST /auction-status
+// API to get the status of an auction
+//--------------------------------------------------------------------------
 
-  app.post('/auction-status', authenticateRole('admin'), (req, res) => {
+app.post('/auction-status', authenticateRole('admin'), (req, res) => {
     const id = Number(req.body.auction_id);
     const row = id
-      ? db.get('SELECT status FROM auctions WHERE id = ?', [id])
-      : db.get('SELECT status FROM auctions ORDER BY id DESC LIMIT 1');
+        ? db.get('SELECT status FROM auctions WHERE id = ?', [id])
+        : db.get('SELECT status FROM auctions ORDER BY id DESC LIMIT 1');
     res.json({ status: row ? row.status : 'live' });
-  });
+});
 
-  app.get("/items/:id/history", authenticateRole(["admin", "maintenance"]), (req, res) => {
+//--------------------------------------------------------------------------
+// GET /items/:id/history
+// API to get the audit logs. Accpets an optional item ID
+//--------------------------------------------------------------------------
+
+app.get("/items/:id/history", authenticateRole(["admin", "maintenance"]), (req, res) => {
     const itemId = parseInt(req.params.id, 10);
 
     try {
@@ -1175,21 +1160,20 @@ function renumberAuctionItems(auctionId, callback) {
     }
 });
 
-  //--------------------------------------------------------------------------
-  // Record audit events
-  //--------------------------------------------------------------------------
-  function audit (user, action, type, id, details = {}) {
+//--------------------------------------------------------------------------
+// API to record audit events
+//--------------------------------------------------------------------------
+function audit(user, action, type, id, details = {}) {
     db.run(
-      `INSERT INTO audit_log (user, action, object_type, object_id, details)
+        `INSERT INTO audit_log (user, action, object_type, object_id, details)
        VALUES (?,?,?,?,?)`,
-      [user, action, type, id, JSON.stringify(details)]
+        [user, action, type, id, JSON.stringify(details)]
     );
-  }
-
-app.use('/resources', express.static(CONFIG_IMG_DIR));
+}
 
 // Serve uploaded images
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/resources', express.static(CONFIG_IMG_DIR));
 
 // Mount maintenance features (role protected)
 app.use('/maintenance', authenticateRole("maintenance"), (req, res, next) => {
@@ -1200,7 +1184,6 @@ app.use('/maintenance', authenticateRole("maintenance"), (req, res, next) => {
 
 log('General', logLevels.INFO, 'Server startup complete and listening on port ' + port);
 app.listen(port, () => {
-
 
 });
 

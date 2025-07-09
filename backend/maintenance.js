@@ -1,4 +1,10 @@
-// maintenance.js
+/**
+ * @file        maintenance.js
+ * @description Provides maintenance functions which are called by the maintenance GUI
+ * @author      Chris Staples
+ * @license     GPL3
+ */
+
 const express = require("express");
 const path = require("path");
 const fs = require("fs");
@@ -13,7 +19,7 @@ const { CONFIG_IMG_DIR, SAMPLE_DIR, UPLOAD_DIR, DB_PATH, BACKUP_DIR, MAX_UPLOADS
 const CONFIG_PATH = path.join(__dirname, "./pptx-config/pptxConfig.json");
 const CARD_PATH = path.join(__dirname, "./pptx-config/cardConfig.json");
 const archiver = require("archiver");
-const logFilePath = path.join(__dirname, 'server.log'); 
+const logFilePath = path.join(__dirname, 'server.log');
 const logLines = 500;
 const CONFIG_PATHS = {
   pptx: './pptx-config/pptxConfig.json',
@@ -24,8 +30,10 @@ const maintenanceRoutes = require('./maintenance');
 const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
 
 const checkAuctionState = require('./middleware/checkAuctionState')(
-    db, { ttlSeconds: 2 }   // optional – default is 5
- );
+  db, { ttlSeconds: 2 }   // optional – default is 5
+);
+
+const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
 
 
 if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR);
@@ -33,8 +41,11 @@ if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR);
 // const CONFIG_IMG_DIR = path.join(__dirname, "resources");
 if (!fs.existsSync(CONFIG_IMG_DIR)) fs.mkdirSync(CONFIG_IMG_DIR);
 
+//--------------------------------------------------------------------------
+// POST /backup
+// API to backup database file to a folder on the server
+//--------------------------------------------------------------------------
 
-// Backup database file
 router.post("/backup", (req, res) => {
   const backupPath = path.join(BACKUP_DIR, `auction_backup_${Date.now()}.db`);
   fs.copyFileSync(DB_PATH, backupPath);
@@ -42,12 +53,20 @@ router.post("/backup", (req, res) => {
   logFromRequest(req, logLevels.INFO, `Database backup created ${backupPath}`);
 });
 
-// Download full DB
+//--------------------------------------------------------------------------
+// GET /download-db
+// API to download full DB
+//--------------------------------------------------------------------------
+
 router.get("/download-db", (req, res) => {
   res.download(DB_PATH);
 });
 
-// Restore DB
+//--------------------------------------------------------------------------
+// POST /restore
+// API to restore full DB from an uploaded copy
+//--------------------------------------------------------------------------
+
 router.post("/restore", upload.single("backup"), (req, res) => {
   try {
     fs.copyFileSync(req.file.path, DB_PATH);
@@ -59,10 +78,12 @@ router.post("/restore", upload.single("backup"), (req, res) => {
   }
 });
 
- // Reset auction (clear items, bids, payments)
- // Requires explicit password
+//--------------------------------------------------------------------------
+// POST /reset
+// API to reset auction (clear items, bids, payments). Requires explicit password
+//--------------------------------------------------------------------------
 
-router.post("/reset", checkAuctionState(['setup','archived']), (req, res) => {
+router.post("/reset", checkAuctionState(['setup', 'archived']), (req, res) => {
   const { auction_id, password } = req.body;
 
   if (!auction_id || !password) {
@@ -106,9 +127,11 @@ router.post("/reset", checkAuctionState(['setup','archived']), (req, res) => {
   }
 })
 
+//--------------------------------------------------------------------------
+// GET /export
+// API to export items to CSV
+//--------------------------------------------------------------------------
 
-
-// Export items to CSV
 router.get("/export", (req, res) => {
   db.all("SELECT * FROM items", [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -120,23 +143,24 @@ router.get("/export", (req, res) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader("Content-Disposition", `attachment; filename=bulk_items.csv`);
     res.end('\uFEFF' + csv);
- //   res.download(filePath);
+    //   res.download(filePath);
     logFromRequest(req, logLevels.INFO, `Bulk CSV export complete`);
   });
 });
 
 
-
-
-// Import items from simplified CSV (retaining existing data)
+//--------------------------------------------------------------------------
+// POST /import
+// API to Import items from simplified CSV (retaining existing data)
+//--------------------------------------------------------------------------
 
 router.post("/import", upload.single("csv"), (req, res) => {
   logFromRequest(req, logLevels.INFO, "Bulk CSV import requested");
 
   try {
     // ── 1. Read CSV ──────────────────────────────────────────────────────────
-    const csv     = fs.readFileSync(req.file.path, "utf-8");
-    const lines   = csv.split("\n").filter(Boolean);
+    const csv = fs.readFileSync(req.file.path, "utf-8");
+    const lines = csv.split("\n").filter(Boolean);
     const headers = lines.shift().split(",").map(h => h.trim().toLowerCase());
 
     const expected = ["description", "artist", "contributor", "notes", "auction_id"];
@@ -157,7 +181,7 @@ router.post("/import", upload.single("csv"), (req, res) => {
     }
 
     // ── 3. Validate auction IDs in one go  ───────────────────────────────────
-    const auctionIds     = [...new Set(items.map(r => Number(r.auction_id)))];
+    const auctionIds = [...new Set(items.map(r => Number(r.auction_id)))];
     const validAuctionId = new Set(
       db.prepare("SELECT id FROM auctions WHERE id IN (" + auctionIds.map(() => "?").join(",") + ")")
         .all(...auctionIds)
@@ -194,7 +218,7 @@ router.post("/import", upload.single("csv"), (req, res) => {
         const aid = Number(row.auction_id);
         insertStmt.run({
           ...row,
-          auction_id : aid,
+          auction_id: aid,
           item_number: nextNumber[aid]++
         });
       }
@@ -212,18 +236,26 @@ router.post("/import", upload.single("csv"), (req, res) => {
     logFromRequest(req, logLevels.ERROR, `Bulk CSV import failed: ${err.message}`);
   } finally {
     // clean up temp upload
-    try { fs.unlinkSync(req.file.path); } catch {}
+    try { fs.unlinkSync(req.file.path); } catch { }
   }
 });
 
+//--------------------------------------------------------------------------
+// GET /photo-report
+// API to get a Photo storage report
+//--------------------------------------------------------------------------
 
-// Photo storage report
 router.get("/photo-report", (req, res) => {
   const files = fs.readdirSync("./uploads");
   const totalSize = files.reduce((sum, file) => sum + fs.statSync(path.join("./uploads", file)).size, 0);
   res.json({ count: files.length, totalSize });
-  logFromRequest(req, logLevels.INFO, `${files.length} photos stored, ${totalSize/1024/1024} occupied`);
+  logFromRequest(req, logLevels.INFO, `${files.length} photos stored, ${totalSize / 1024 / 1024} occupied`);
 });
+
+//--------------------------------------------------------------------------
+// GET /check-integrity
+// API to do some basic database checks. Mostly deprecated by database engine protections.......
+//--------------------------------------------------------------------------
 
 
 router.get("/check-integrity", (req, res) => {
@@ -256,7 +288,7 @@ router.get("/check-integrity", (req, res) => {
 
       const invalidItemDetails = items.map(item => {
         const issues = [];
-      
+
         if (item.photo && !fs.existsSync(path.join(__dirname, "uploads", item.photo))) {
           issues.push("Missing photo");
         }
@@ -273,9 +305,9 @@ router.get("/check-integrity", (req, res) => {
         if (!item.item_number) {
           issues.push("Missing item number");
         }
-      
+
         if (issues.length === 0) return null;
-      
+
         return {
           id: item.id,
           auction_id: item.auction_id,
@@ -286,24 +318,24 @@ router.get("/check-integrity", (req, res) => {
           issues
         };
       }).filter(Boolean);
-      
+
       res.json({
         total: items.length,
         invalidItems: invalidItemDetails
       });
 
       // Log all invalid items with details
-if (invalidItemDetails.length > 0) {
-  const logLines = invalidItemDetails.map(item => {
-    return `Item ID ${item.id} (Auction ${item.auction_id}) Issues: ${item.issues.join(", ")}`;
-  }).join(" | ");
+      if (invalidItemDetails.length > 0) {
+        const logLines = invalidItemDetails.map(item => {
+          return `Item ID ${item.id} (Auction ${item.auction_id}) Issues: ${item.issues.join(", ")}`;
+        }).join(" | ");
 
-  logFromRequest(req, logLevels.WARN,  `Integrity check flagged ${invalidItemDetails.length} invalid item(s): ${logLines}`);
-}
-else {
-  logFromRequest(req, logLevels.INFO,  `Integrity check complete, no errors found`);
+        logFromRequest(req, logLevels.WARN, `Integrity check flagged ${invalidItemDetails.length} invalid item(s): ${logLines}`);
+      }
+      else {
+        logFromRequest(req, logLevels.INFO, `Integrity check complete, no errors found`);
 
-}
+      }
     });
   });
 });
@@ -311,7 +343,7 @@ else {
 router.post("/check-integrity/delete", (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
-    logFromRequest(req, logLevels.ERROR,  `No item IDs provided for deletion`);
+    logFromRequest(req, logLevels.ERROR, `No item IDs provided for deletion`);
     return res.status(400).json({ error: "No item IDs provided for deletion" });
   }
 
@@ -324,6 +356,10 @@ router.post("/check-integrity/delete", (req, res) => {
   });
 });
 
+//--------------------------------------------------------------------------
+// POST /change-password
+// API to change passwords
+//--------------------------------------------------------------------------
 
 router.post("/change-password", (req, res) => {
   const { role, newPassword } = req.body;
@@ -350,8 +386,11 @@ router.post("/change-password", (req, res) => {
   );
 });
 
+//--------------------------------------------------------------------------
+// POST /restart
+// API to Restart the server
+//--------------------------------------------------------------------------
 
-// Restart the server
 router.post("/restart", (req, res) => {
   res.json({ message: "Restarting server..." });
   logFromRequest(req, logLevels.INFO, `Server restart requested`);
@@ -362,8 +401,10 @@ router.post("/restart", (req, res) => {
   }, 1000);
 });
 
-// Get recent server logs
-
+//--------------------------------------------------------------------------
+// GET /logs
+// API to get recent server logs
+//--------------------------------------------------------------------------
 
 
 router.get("/logs", (req, res) => {
@@ -389,29 +430,10 @@ router.get("/logs", (req, res) => {
   });
 });
 
-// Change the admin password
-// Maintainter password can only be set from the command line
-router.post("/change-password", (req, res) => {
-  const { newPassword } = req.body;
-  const role = "admin"; // fixed to admin only
-
-  if (!newPassword || newPassword.length < 5) {
-    return res.status(400).json({ error: "Minimum length: 5" });
-  }
-
-  db.run(
-    `UPDATE passwords SET password = ? WHERE role = ?`,
-    [newPassword, role],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) return res.status(404).json({ error: "Admin role not found" });
-      res.json({ message: "Admin password updated" });
-      logFromRequest(req, logLevels.INFO, `Password for ${role} updated`);
-    }
-  );
-});
-
-
+//--------------------------------------------------------------------------
+// GET /download-full
+// API to download a zip file containing the database and all images
+//--------------------------------------------------------------------------
 
 router.get("/download-full", (req, res) => {
   logFromRequest(req, logLevels.DEBUG, `Full download requested`);
@@ -422,16 +444,16 @@ router.get("/download-full", (req, res) => {
   const filename = `auction_backup_${timestamp}.zip`;
 
 
-res.setHeader("Content-Type", "application/zip");
-res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Type", "application/zip");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
 
 
-archive.pipe(res);
+  archive.pipe(res);
 
   // Add DB file
   archive.file(DB_PATH, { name: "auction.db" });
-  
+
   // Add referenced photos
   db.all("SELECT photo FROM items WHERE photo IS NOT NULL", [], (err, rows) => {
     if (err) {
@@ -449,17 +471,17 @@ archive.pipe(res);
     }
 
 
-// Include additional image resources from CONFIG_IMG_DIR
-const extraResources = fs.readdirSync(CONFIG_IMG_DIR).filter(f =>
-  [".jpg", ".jpeg", ".png"].includes(path.extname(f).toLowerCase())
-);
+    // Include additional image resources from CONFIG_IMG_DIR
+    const extraResources = fs.readdirSync(CONFIG_IMG_DIR).filter(f =>
+      [".jpg", ".jpeg", ".png"].includes(path.extname(f).toLowerCase())
+    );
 
-for (const resource of extraResources) {
-  const resourcePath = path.join(CONFIG_IMG_DIR, resource);
-  if (fs.existsSync(resourcePath)) {
-    archive.file(resourcePath, { name: `resources/${resource}` });
-  }
-}
+    for (const resource of extraResources) {
+      const resourcePath = path.join(CONFIG_IMG_DIR, resource);
+      if (fs.existsSync(resourcePath)) {
+        archive.file(resourcePath, { name: `resources/${resource}` });
+      }
+    }
 
 
     archive.finalize();
@@ -467,6 +489,11 @@ for (const resource of extraResources) {
 
   });
 });
+
+//--------------------------------------------------------------------------
+// GET /orphan-photos
+// API to find photos without an owner
+//--------------------------------------------------------------------------
 
 
 router.get("/orphan-photos", (req, res) => {
@@ -521,15 +548,12 @@ router.post("/cleanup-orphan-photos", (req, res) => {
   });
 });
 
-
-
-
 // Simple shuffle function
-function shuffleArray(arr) {
-  return arr.map(value => ({ value, sort: Math.random() }))
-            .sort((a, b) => a.sort - b.sort)
-            .map(({ value }) => value);
-}
+// function shuffleArray(arr) {
+//   return arr.map(value => ({ value, sort: Math.random() }))
+//     .sort((a, b) => a.sort - b.sort)
+//     .map(({ value }) => value);
+// }
 
 function getNextItemNumber(auction_id, callback) {
   db.get(`SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ?`, [auction_id], (err, row) => {
@@ -548,13 +572,19 @@ function getNextItemNumberAsync(auction_id) {
   });
 }
 
+//--------------------------------------------------------------------------
+// POST /generate-test-data
+// API to generate test items based on sample-items.json
+//--------------------------------------------------------------------------
+
+
 router.post("/generate-test-data", checkAuctionState(['setup']), async (req, res) => {
   const count = parseInt(req.body.count, 10);
   const { auction_id } = req.body;
   if (!count || count < 1 || count > 1000 || !auction_id) {
     logFromRequest(req, logLevels.ERROR, `Invalid number of test items requested, or no auction id`);
     return res.status(400).json({ error: "Please enter a valid count (1–1000) and auction" });
-    
+
   }
   logFromRequest(req, logLevels.INFO, `Request to generate ${count} items for ID ${auction_id}`);
 
@@ -584,7 +614,7 @@ router.post("/generate-test-data", checkAuctionState(['setup']), async (req, res
   function getRandom(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
   }
-  
+
   const items = Array.from({ length: count }, () => ({
     description: getRandom(sampleData.descriptions),
     contributor: getRandom(sampleData.contributors),
@@ -596,7 +626,7 @@ router.post("/generate-test-data", checkAuctionState(['setup']), async (req, res
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
- //   const srcPath = path.join(SAMPLE_DIR, photos[i % photos.length]);
+    //   const srcPath = path.join(SAMPLE_DIR, photos[i % photos.length]);
     const srcPath = path.join(SAMPLE_DIR, photos[Math.floor(Math.random() * photos.length)]);
 
     const baseFilename = `sample_${Date.now()}_${i}.jpg`;
@@ -622,23 +652,23 @@ router.post("/generate-test-data", checkAuctionState(['setup']), async (req, res
     }
 
 
-    
+
     let itemNumber;
-  try {
-    itemNumber = await getNextItemNumberAsync(auction_id);
-  } catch (err) {
-    return res.status(500).json({ error: "Database error getting item number" });
-  }
+    try {
+      itemNumber = await getNextItemNumberAsync(auction_id);
+    } catch (err) {
+      return res.status(500).json({ error: "Database error getting item number" });
+    }
 
     const taggedNote = `[TEST DATA] ${item.notes || ""}`;
     const result = stmt.run(item.description, item.contributor, item.artist, taggedNote.trim(), resizedFilename, auction_id, itemNumber);
 
     const itemId = result.lastInsertRowid;
 
- audit(req.user.role, 'new item (test)', 'item', itemId, { description: item.description, initial_number: itemNumber });
+    audit(req.user.role, 'new item (test)', 'item', itemId, { description: item.description, initial_number: itemNumber });
 
   }
-  
+
 
   stmt.finalize();
   res.json({ message: `${items.length} randomized test item(s) inserted.` });
@@ -646,6 +676,13 @@ router.post("/generate-test-data", checkAuctionState(['setup']), async (req, res
 
 });
 
+//--------------------------------------------------------------------------
+// GET /get-pptx-config/:name
+// POST /save-pptx-config/:name
+// POST /pptx-config/reset
+//
+// API trio to get, save and reset to default, the pptx configs
+//--------------------------------------------------------------------------
 
 
 
@@ -656,11 +693,11 @@ router.get('/get-pptx-config/:name', (req, res) => {
     return res.status(400).json({ error: 'Invalid config name' });
   }
   fs.readFile(file, 'utf8', (err, data) => {
-      if (err) {
-        logFromRequest(req, logLevels.ERROR, `Unable to read config`);
-        return res.status(500).json({ error: 'Unable to read config' });
-      }
-      res.type('application/json').send(data);
+    if (err) {
+      logFromRequest(req, logLevels.ERROR, `Unable to read config`);
+      return res.status(500).json({ error: 'Unable to read config' });
+    }
+    res.type('application/json').send(data);
   });
 });
 
@@ -672,17 +709,17 @@ router.post('/save-pptx-config/:name', (req, res) => {
   }
   let json;
   try {
-      json = JSON.stringify(req.body, null, 2);
+    json = JSON.stringify(req.body, null, 2);
   } catch (err) {
     logFromRequest(req, logLevels.WARN, `PPTX config rejected, invalid JSON`);
 
-      return res.status(400).json({ error: 'Invalid JSON' });
+    return res.status(400).json({ error: 'Invalid JSON' });
   }
 
   fs.writeFile(file, json, 'utf8', err => {
-      if (err) return res.status(500).json({ error: 'Unable to save config' });
-      res.json({ message: 'Configuration updated successfully.' });
-      logFromRequest(req, logLevels.INFO, `PPTX config file ${file} updated`);
+    if (err) return res.status(500).json({ error: 'Unable to save config' });
+    res.json({ message: 'Configuration updated successfully.' });
+    logFromRequest(req, logLevels.INFO, `PPTX config file ${file} updated`);
 
   });
 });
@@ -691,7 +728,7 @@ router.post("/pptx-config/reset", (req, res) => {
   const { configType } = req.body;
 
   if (!configType || !["pptx", "card"].includes(configType)) {
-    logFromRequest(req, logLevels.ERROR,`Invalid config type:` + configType);
+    logFromRequest(req, logLevels.ERROR, `Invalid config type:` + configType);
     return res.status(400).json({ error: "Invalid config type." });
   }
 
@@ -700,21 +737,26 @@ router.post("/pptx-config/reset", (req, res) => {
 
   try {
     if (!fs.existsSync(defaultPath)) {
-      logFromRequest(req, logLevels.ERROR,`Default config not found:` + defaultPath);
+      logFromRequest(req, logLevels.ERROR, `Default config not found:` + defaultPath);
 
       return res.status(500).json({ error: "Default config not found." });
-      
+
     }
 
     fs.copyFileSync(defaultPath, livePath);
-    logFromRequest(req, logLevels.INFO,`Reset ${configType}Config.json to default.`);
+    logFromRequest(req, logLevels.INFO, `Reset ${configType}Config.json to default.`);
     res.json({ message: `${configType}Config.json reset to default.` });
   } catch (err) {
-    logFromRequest(req, logLevels.ERROR,`Error resetting config:` + err.message);
+    logFromRequest(req, logLevels.ERROR, `Error resetting config:` + err.message);
 
     res.status(500).json({ error: "Failed to reset config." });
   }
 });
+
+//--------------------------------------------------------------------------
+// POST /auctions/delete
+// API to delete auctions. Includes database full reset on final delete
+//--------------------------------------------------------------------------
 
 
 router.post("/auctions/delete", (req, res) => {
@@ -759,7 +801,7 @@ router.post("/auctions/delete", (req, res) => {
               db.prepare("DELETE FROM auctions").run();
               logFromRequest(req, logLevels.DEBUG, `Auctions tablecleared`);
 
-               db.prepare("DELETE FROM bidders").run();
+              db.prepare("DELETE FROM bidders").run();
               logFromRequest(req, logLevels.DEBUG, `Bidders table cleared`);
 
               db.prepare("DELETE FROM items").run();
@@ -802,6 +844,11 @@ router.post("/auctions/delete", (req, res) => {
   });
 });
 
+//--------------------------------------------------------------------------
+// POST /auctions/create
+// API to add an auction
+//--------------------------------------------------------------------------
+
 router.post("/auctions/create", (req, res) => {
   const { short_name, full_name, logo } = req.body;
 
@@ -810,7 +857,7 @@ router.post("/auctions/create", (req, res) => {
     return res.status(400).json({ error: "Missing short_name or full_name" });
 
 
-  
+
   if (/\s/.test(short_name))
     return res.status(400).json({ error: "Short name must not contain spaces." });
 
@@ -826,15 +873,15 @@ router.post("/auctions/create", (req, res) => {
         .json({ error: "Short name must be unique. This one already exists." });
 
 
-        db.get("SELECT COUNT(*) AS count FROM auctions", [], (err, row) => {
-          if (err) return res.status(500).json({ error: err.message });
-      
-          if (row.count >= MAX_AUCTIONS) {
-              logFromRequest(req, logLevels.WARN, `Auction limit reached. Maximum allowed is ${MAX_AUCTIONS}.`);
-            
-            return res.status(400).json({ error: `Cannot create more than ${MAX_AUCTIONS} auctions.` });
-          }
-        })
+    db.get("SELECT COUNT(*) AS count FROM auctions", [], (err, row) => {
+      if (err) return res.status(500).json({ error: err.message });
+
+      if (row.count >= MAX_AUCTIONS) {
+        logFromRequest(req, logLevels.WARN, `Auction limit reached. Maximum allowed is ${MAX_AUCTIONS}.`);
+
+        return res.status(400).json({ error: `Cannot create more than ${MAX_AUCTIONS} auctions.` });
+      }
+    })
 
     // 3. Insert (remember: params go in ONE array)
     db.run(
@@ -842,7 +889,7 @@ router.post("/auctions/create", (req, res) => {
       [short_name.trim().toLowerCase(), full_name.trim(), logo || "default_logo.png"]
     );
 
-    logFromRequest(req, logLevels.INFO,`Created new auction: ${short_name} with logo: ${logo}`);
+    logFromRequest(req, logLevels.INFO, `Created new auction: ${short_name} with logo: ${logo}`);
     res.json({ message: "Auction created." });
   } catch (err) {
     logFromRequest(req, logLevels.ERROR, `Create auction error: ${err}`);
@@ -850,11 +897,15 @@ router.post("/auctions/create", (req, res) => {
   }
 });
 
+//--------------------------------------------------------------------------
+// POST /auctions/list
+// API to list auctions
+//--------------------------------------------------------------------------
 
 router.post("/auctions/list", async (req, res) => {
- // logFromRequest(req, logLevels.DEBUG, `Auction list (maint) requested`);
+  // logFromRequest(req, logLevels.DEBUG, `Auction list (maint) requested`);
 
-    const sql = `
+  const sql = `
     SELECT a.id, a.short_name, a.full_name, a.logo, a.status,
            COUNT(i.id) AS item_count
     FROM auctions a
@@ -873,6 +924,12 @@ router.post("/auctions/list", async (req, res) => {
     res.json(rows);
   });
 });
+
+//--------------------------------------------------------------------------
+// POST /resources/upload
+// API to upload image assets
+//--------------------------------------------------------------------------
+
 
 router.post("/resources/upload", upload.array("images", MAX_UPLOADS), async (req, res) => {
   if (!req.files || req.files.length === 0) {
@@ -896,27 +953,27 @@ router.post("/resources/upload", upload.array("images", MAX_UPLOADS), async (req
   const savedFiles = [];
 
   for (const file of incoming) {
-    
+
     const ext = path.extname(file.originalname).toLowerCase();
     if (!allowedExtensions.includes(ext)) {
-          logFromRequest(req, logLevels.WARN, `Rejected file "${file.originalname}": invalid ext`);
+      logFromRequest(req, logLevels.WARN, `Rejected file "${file.originalname}": invalid ext`);
 
       fs.unlinkSync(file.path);
       continue;
     }
 
-  // Step 2: Content validation using sharp
-  let isValidImage = true;
-  try {
-    await sharp(file.path).metadata(); // throws if not a valid image
-  } catch (err) {
-    console.warn(`Rejected file "${file.originalname}": invalid image`);
-    logFromRequest(req, logLevels.WARN, `Rejected file "${file.originalname}": invalid image`);
+    // Step 2: Content validation using sharp
+    let isValidImage = true;
+    try {
+      await sharp(file.path).metadata(); // throws if not a valid image
+    } catch (err) {
+      console.warn(`Rejected file "${file.originalname}": invalid image`);
+      logFromRequest(req, logLevels.WARN, `Rejected file "${file.originalname}": invalid image`);
 
-    fs.unlinkSync(file.path);
-    isValidImage = false;
-  }
-  if (!isValidImage) continue;
+      fs.unlinkSync(file.path);
+      isValidImage = false;
+    }
+    if (!isValidImage) continue;
 
     const safeName = file.originalname.replace(/[^a-z0-9_\-.]/gi, "_");
     const destPath = path.join(CONFIG_IMG_DIR, safeName);
@@ -944,6 +1001,11 @@ router.post("/resources/upload", upload.array("images", MAX_UPLOADS), async (req
   }
 });
 
+//--------------------------------------------------------------------------
+// GET /resources
+// API to get a list of image assets
+//--------------------------------------------------------------------------
+
 router.get("/resources", (req, res) => {
   try {
     const files = fs.readdirSync(CONFIG_IMG_DIR)
@@ -961,7 +1023,7 @@ router.get("/resources", (req, res) => {
         return { name: f, size };
       });
 
- //   logFromRequest(req, logLevels.DEBUG, `Listed image resources (${files.length} file(s)).`);
+    //   logFromRequest(req, logLevels.DEBUG, `Listed image resources (${files.length} file(s)).`);
     res.json({ files });
 
   } catch (err) {
@@ -970,7 +1032,10 @@ router.get("/resources", (req, res) => {
   }
 });
 
-
+//--------------------------------------------------------------------------
+// POST /resources/DELETE
+// API to delete image assets. Blocks delete of things which are being used
+//--------------------------------------------------------------------------
 
 router.post("/resources/delete", (req, res) => {
   const { filename } = req.body;
@@ -1026,10 +1091,14 @@ router.post("/resources/delete", (req, res) => {
   });
 });
 
+//--------------------------------------------------------------------------
+// POST /auctions/update-status
+// API to update the status of an auction
+//--------------------------------------------------------------------------
+
 
 router.post("/auctions/update-status", (req, res) => {
   const { auction_id, status } = req.body;
-  const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
 
   if (!auction_id || typeof status !== "string") {
     return res.status(400).json({ error: "Missing auction ID or invalid status." });
@@ -1050,7 +1119,12 @@ router.post("/auctions/update-status", (req, res) => {
   });
 });
 
-router.post("/generate-bids", checkAuctionState(['live','settlement']), (req, res) => {
+//--------------------------------------------------------------------------
+// POST /generate-bids
+// API to generate random bids. #bidders and #bids are both configurable
+//--------------------------------------------------------------------------
+
+router.post("/generate-bids", checkAuctionState(['live', 'settlement']), (req, res) => {
   const { auction_id, num_bids, num_bidders } = req.body;
 
   if (!auction_id || !Number.isInteger(num_bids) || !Number.isInteger(num_bidders)) {
@@ -1067,63 +1141,53 @@ router.post("/generate-bids", checkAuctionState(['live','settlement']), (req, re
     if (num_bids < 1 || num_bids > availableItems.length) {
       return res.status(400).json({ error: `Number of bids must be between 1 and ${availableItems.length}` });
     }
-    
-  //  if (num_bids > availableItems.length) { num_bids = availableItems.length; }
 
-    // db.all("SELECT id FROM bidders WHERE auction_id = ?", [auction_id], (err, bidders) => {
-    //   if (err) return res.status(500).json({ error: err.message });
+    const shuffledItems = availableItems.sort(() => 0.5 - Math.random()).slice(0, num_bids);
+    const bidders = [];
 
-    //   const availableBidders = bidders.map(b => b.id);
-    //   if (availableBidders.length === 0 && num_bidders < 1) return res.status(400).json({ error: "No bidders in auction." });
+    while (bidders.length < num_bidders) {
+      const paddle = Math.floor(Math.random() * 150) + 1;
+      if (bidders.find(b => b.paddle === paddle)) continue;
 
-   
-   const shuffledItems = availableItems.sort(() => 0.5 - Math.random()).slice(0, num_bids);
+      let existing = db.prepare('SELECT id FROM bidders WHERE paddle_number = ? AND auction_id = ?')
+        .get(paddle, auction_id);
 
-const bidders = [];
+      if (!existing) {
+        const info = db.prepare('INSERT INTO bidders (paddle_number, auction_id) VALUES (?, ?)')
+          .run(paddle, auction_id);
+        existing = { id: info.lastInsertRowid };
+      }
 
-while (bidders.length < num_bidders) {
-  const paddle = Math.floor(Math.random() * 150) + 1;
-  if (bidders.find(b => b.paddle === paddle)) continue;
+      bidders.push({ id: existing.id, paddle });
+    }
 
-  let existing = db.prepare('SELECT id FROM bidders WHERE paddle_number = ? AND auction_id = ?')
-                   .get(paddle, auction_id);
-
-  if (!existing) {
-    const info = db.prepare('INSERT INTO bidders (paddle_number, auction_id) VALUES (?, ?)')
-                   .run(paddle, auction_id);
-    existing = { id: info.lastInsertRowid };
-  }
-
-  bidders.push({ id: existing.id, paddle });
-}
-
-const logLines = [];
+    const logLines = [];
 
 
-for (const itemId of shuffledItems) {
-  const selected = bidders[Math.floor(Math.random() * bidders.length)];
-  const price = Math.floor(Math.random() * 500) + 10;
-  const testBid = 1;
+    for (const itemId of shuffledItems) {
+      const selected = bidders[Math.floor(Math.random() * bidders.length)];
+      const price = Math.floor(Math.random() * 500) + 10;
+      const testBid = 1;
 
-  db.prepare('UPDATE items SET winning_bidder_id = ?, hammer_price = ?, test_bid = ? WHERE id = ?')
-    .run(selected.id, price, testBid, itemId);
+      db.prepare('UPDATE items SET winning_bidder_id = ?, hammer_price = ?, test_bid = ? WHERE id = ?')
+        .run(selected.id, price, testBid, itemId);
 
-  logLines.push(`Item ${itemId} → Paddle ${selected.paddle} → £${price}`);
-    audit(req.user.role, 'finalize (test)', 'item', itemId, { bidder: selected.paddle, price });
+      logLines.push(`Item ${itemId} → Paddle ${selected.paddle} → £${price}`);
+      audit(req.user.role, 'finalize (test)', 'item', itemId, { bidder: selected.paddle, price });
 
-}
+    }
+    logFromRequest(req, logLevels.INFO, `Generated ${num_bids} test bid(s) for auction ${auction_id}:\n` + logLines.join("\n"));
+    res.json({ message: `${num_bids} bids added to auction ${auction_id}` });
 
-logFromRequest(req, logLevels.INFO, `Generated ${num_bids} test bid(s) for auction ${auction_id}:\n` + logLines.join("\n"));
-
-     //   logFromRequest(req, logLevels.INFO, `Generated ${num_bids} test bids using dynamic bidders for auction ${auction_id}`);
-        res.json({ message: `${num_bids} bids added to auction ${auction_id}` });
-  
- //   });
   });
 });
 
-// Deletes all test bids from a specific auction, and prunes unused bidders
-router.post("/delete-test-bids", checkAuctionState(['live','settlement']), (req, res) => {
+//--------------------------------------------------------------------------
+// POST /delete-test-bids
+// API to delete all test bids from a specific auction, and prunes unused bidders
+//--------------------------------------------------------------------------
+
+router.post("/delete-test-bids", checkAuctionState(['live', 'settlement']), (req, res) => {
   const { auction_id } = req.body;
 
   if (!auction_id) {
@@ -1157,7 +1221,11 @@ router.post("/delete-test-bids", checkAuctionState(['live','settlement']), (req,
   }
 });
 
-// View audit log with item details
+//--------------------------------------------------------------------------
+// GET /audit-log
+// API to view audit log with item details
+//--------------------------------------------------------------------------
+
 router.get("/audit-log", (req, res) => {
   const { object_id } = req.query;
 
@@ -1193,7 +1261,11 @@ LEFT JOIN auctions ON items.auction_id = auctions.id
   }
 });
 
-// Export audit log to CSV
+//--------------------------------------------------------------------------
+// GET /audit-log/export
+// API to Export audit log to CSV
+//--------------------------------------------------------------------------
+
 router.get("/audit-log/export", (req, res) => {
   try {
     const rows = db.prepare(`
@@ -1217,9 +1289,9 @@ router.get("/audit-log/export", (req, res) => {
     const csvContent = [header, ...csvData].join("\n");
 
     res.setHeader("Content-Disposition", "attachment; filename=audit_log.csv");
- //   res.setHeader("Content-Type", "text/csv");
-//    res.send(csvContent);
-    
+    //   res.setHeader("Content-Type", "text/csv");
+    //    res.send(csvContent);
+
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.end('\uFEFF' + csvContent);
 
@@ -1229,15 +1301,15 @@ router.get("/audit-log/export", (req, res) => {
   }
 });
 
-  //--------------------------------------------------------------------------
-  // Record audit events
-  //--------------------------------------------------------------------------
-  function audit (user, action, type, id, details = {}) {
-    db.run(
-      `INSERT INTO audit_log (user, action, object_type, object_id, details)
+//--------------------------------------------------------------------------
+// function to Record audit events
+//--------------------------------------------------------------------------
+function audit(user, action, type, id, details = {}) {
+  db.run(
+    `INSERT INTO audit_log (user, action, object_type, object_id, details)
        VALUES (?,?,?,?,?)`,
-      [user, action, type, id, JSON.stringify(details)]
-    );
-  }
+    [user, action, type, id, JSON.stringify(details)]
+  );
+}
 
 module.exports = router;

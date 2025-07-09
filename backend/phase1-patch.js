@@ -1,23 +1,18 @@
-// -----------------------------
-// Phase 1 Implementation Patch – v1.1
-// -----------------------------
-// Adds in finalise and payment functions
-//
+/**
+ * @file        phase1-patch.js
+ * @description Phase 1 upgrade patch. Adds in finalise and payment functions
+ * @author      Chris Staples
+ * @license     GPL3
+ */
+
 // Usage (in backend.js **AFTER** the authenticateRole function is declared):
 //   require('./phase1-patch')(app, authenticateRole);
-// ---------------------------------------------------------------------------
 
 const express = require('express');
 const db       = require('./db');
-// const {
-//   logLevels,
-//   log
-// } = require('./logger');
-
 const checkAuctionState = require('./middleware/checkAuctionState')(
     db, { ttlSeconds: 2 }   // optional – default is 5
  );
-
 
 const { CONFIG_IMG_DIR, SAMPLE_DIR, UPLOAD_DIR, DB_PATH, BACKUP_DIR, MAX_UPLOADS, allowedExtensions, MAX_AUCTIONS, LOG_LEVEL } = require('./config');
 

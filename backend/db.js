@@ -1,4 +1,10 @@
-// db.js
+/**
+ * @file        db.js
+ * @description Database support function. Includes db schema and wrapper to support transition from sqlite3 to better-sqlite3.
+ * @author      Chris Staples
+ * @license     GPL3
+ */
+
 const Database = require('better-sqlite3');
 const path     = require('path');
 

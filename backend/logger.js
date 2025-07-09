@@ -1,3 +1,10 @@
+/**
+ * @file        logger.js
+ * @description Basic logging framework. Supports 4 loglevels and log rotation
+ * @author      Chris Staples
+ * @license     GPL3
+ */
+
 const fs = require('fs');
 const path = require('path');
 
