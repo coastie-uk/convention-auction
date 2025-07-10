@@ -9,7 +9,6 @@ document.addEventListener("DOMContentLoaded", function () {
     let latestFile = null;
     let selectedAuctionId = null;
     let selectedAuctionName = null;
-  //  const API = "https://drive.icychris.co.uk";
     const API = "/api";
     const auctionGate = document.getElementById("auction-gate");
     const submissionSection = document.getElementById("submission-section");

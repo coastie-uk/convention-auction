@@ -1,19 +1,13 @@
-// Admin Finalize‑Lot Add‑on  (drop into /scripts/finalize-lot.js or merge into admin-script.js)
+// Admin Finalize‑Lot Add‑on
 // ---------------------------------------------------------------------------
 //  • Adds a FINALIZE button to each row when auction.status === 'live'
 //  • Pops a mini‑modal to capture Paddle # (3‑digit) and Hammer £
 //  • Calls POST /api/lots/:id/finalize with admin token
 //  • Disables itself automatically if auction status is not 'live'
 //
-// Requirements:
-//   – backend phase1-patch.js must be loaded (provides /api/lots endpoints)
-//   – admin token stored in localStorage as 'adminToken' (same as existing)
-//   – global variable AUCTION_ID set elsewhere (if needed). Adjust if your
-//     admin page already knows the current auction id.
 // ---------------------------------------------------------------------------
 
 (() => {
-  //  const API = "https://drive.icychris.co.uk";
 const API = "/api"
 
     const TABLE_BODY    = document.getElementById('items-table-body');

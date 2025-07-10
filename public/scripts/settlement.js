@@ -1,6 +1,5 @@
 
 (()=>{
-  //  const API = "https://drive.icychris.co.uk";
 const API = "/api"
 
 const API_ROOT = `${API}/settlement`;
@@ -44,16 +43,6 @@ const API_ROOT = `${API}/settlement`;
   async function fetchBidders(){
     const res = await fetch(`${API_ROOT}/bidders?auction_id=${AUCTION_ID}`, { headers:{ Authorization:token }});
     bidders = await res.json();
-
-            // Check for 403 (unauthorized)
-        // if (res.status === 403) {
-        //     showMessage("Session expired. Please log in again.", "info");
-        //     localStorage.removeItem("cashierToken");
-        //     setTimeout(() => {
-        //         window.location.reload();
-        //     }, 1500);
-        //     return;
-        // }
 
     renderBidders();
     if(selBidder){
@@ -204,7 +193,6 @@ overlay.querySelector('#amt').focus();
       overlay.remove();fetchBidders();}; }
 
   async function delPayment(id) {
-  //  if (!confirm('Delete payment?')) return;
 
        const modal = await DayPilot.Modal.confirm("Are you sure you want to delete this payment?");
         if (modal.canceled) {
@@ -241,8 +229,6 @@ overlay.querySelector('#amt').focus();
   }
   }
 
-  // CSV
-  // document.getElementById('csv').onclick=()=>{ window.location.href=`${API_ROOT}/export.csv?auction_id=${AUCTION_ID}`; };
 
     /* ---------- CSV download with auth header ---------- */
     document.getElementById('csv').onclick = async () => {

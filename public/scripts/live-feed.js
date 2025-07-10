@@ -8,15 +8,9 @@
 
 (async () => {
   // ---------- config & auth ---------------------------------------------------
-  // const API_ROOT     = 'https://drive.icychris.co.uk';
 const API_ROOT = "/api"
-
   const API   = `${API_ROOT}/cashier/live`;
   const VALIDATE   = `${API_ROOT}/validate`;
-
- // for legacy reasons, the admin token is called "token"
-// let token = localStorage.getItem('token') || localStorage.getItem('cashierToken');
-
   const params = new URLSearchParams(location.search);
   const AUCTION_ID = Number(params.get('auctionId'));
   const AUCTION_STATUS = (params.get('auctionStatus') || '').toLowerCase();
@@ -25,11 +19,8 @@ const API_ROOT = "/api"
 
   const REFRESH_MS = AUCTION_STATUS === 'live' ? 5000 : 60000;
 
-  // console.log(REFRESH_MS);
-
   if (!Number.isInteger(AUCTION_ID) || AUCTION_ID <= 0) {
     alert('This page must be opened with ?auctionId=<number>');
- //   location.href = '/admin.html';
     return;
   }
 
@@ -38,8 +29,6 @@ const API_ROOT = "/api"
   const statusEl = document.getElementById('status');
   const chkUnsold = document.getElementById('showUnsold');
   const applyFilter = document.getElementById('btnApply');
-
-  
 
   // ---------- state -----------------------------------------------------------
   const rowsMap = new Map(); // rowid -> <tr>
@@ -122,7 +111,6 @@ async function getSessionToken() {
 const token = await getSessionToken();
 if (!token) {
   alert('Session expired. Please log in again.');
-//  location.href = '/cashier-login.html';
   throw new Error('no valid token');
 }
 
@@ -134,14 +122,8 @@ if (!token) {
 
   async function poll(){
     try{
-      // const body = {
-      //   auction_id: AUCTION_ID,
-      //   include_unsold: chkUnsold.checked
-      // };
       const res = await fetch(`${API}/${AUCTION_ID}?unsold=${chkUnsold.checked}`, {
-   //     method:'POST',
         headers:{ 'Content-Type':'application/json', Authorization: token }
-  //      body: JSON.stringify(body)
       });
       if(!res.ok) throw 0;
       const rows = await res.json();
@@ -161,7 +143,6 @@ if (!token) {
             tbody.prepend(existing);
           }
 
-   //       renderRowContent(existing, r); // update content / style
         } else {
           const tr = makeRow(r);
           rowsMap.set(r.rowid, tr);
@@ -184,7 +165,6 @@ if (!token) {
             if (document.visibilityState === "visible") {
                 poll();
                             } else {
-     //           console.log("Page not visible — skipping refresh");
             }
         }, REFRESH_MS);
     }
@@ -192,11 +172,9 @@ if (!token) {
   // initial draw & polling loop ----------------------------------------------
   poll();
   startAutoRefresh();
- // setInterval(poll, REFRESH_MS);
 
     document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
- //           console.log("Page became visible — refreshing now");
   poll();
         }
       })

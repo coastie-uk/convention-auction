@@ -40,8 +40,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const fmtPrice = v => `£${Number(v).toFixed(2)}`;
 
-    //  const API = "https://moments.icychris.co.uk:3001";
-  //  const API = "https://drive.icychris.co.uk";
 const API = "/api"
 
 
@@ -76,8 +74,6 @@ const API = "/api"
     const auctionSelect = document.getElementById("auction-select");
     const orderSelect = document.getElementById("sort-order");
     const sortSelect = document.getElementById("sort-field");
-
-    //  let selectedAuctionId = null;
 
     async function loadAuctions() {
         const token = localStorage.getItem("token");
@@ -117,7 +113,6 @@ const API = "/api"
 
         selectedAuctionId = parseInt(auctionSelect.value, 10);
         sessionStorage.setItem("auction_id", selectedAuctionId);
-        //      console.log(selectedAuctionId);
 
         if (window.refreshAuctionStatus) {        // get status first
             await window.refreshAuctionStatus();
@@ -132,7 +127,6 @@ const API = "/api"
         sessionStorage.setItem("auction_id", selectedAuctionId);
         await window.refreshAuctionStatus();
         loadItems();
-        //    updateAddButtonState();
         if (window.refreshAuctionStatus) window.refreshAuctionStatus();
 
     });
@@ -155,7 +149,6 @@ const API = "/api"
         const response = await fetch(`${API}/login`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            // body: JSON.stringify({ password })
             body: JSON.stringify({ password, role: "admin" })
         });
         document.getElementById("admin-password").value = "";
@@ -168,7 +161,6 @@ const API = "/api"
             loadAuctions();
             loadItems();
             startAutoRefresh();
-            //            console.log(localStorage.getItem("token"));
         } else {
             showMessage("Login failed: " + data.error, "error");
             document.getElementById("error-message").innerText = data.error;
@@ -177,9 +169,6 @@ const API = "/api"
 
     logoutButton.addEventListener("click", function () {
         logout();
-        //   localStorage.removeItem("token");
-        //   showMessage("Returning to public page", "info");
-        //   window.location.href = '/index.html';
 
     })
 
@@ -210,24 +199,14 @@ const API = "/api"
     }
 
 
-
-
-
     async function loadItems() {
         const token = localStorage.getItem("token");
         if (!token) return logout();
-
-        //  const showBidCols = window.currentAuctionStatus === 'live';
         const showBidCols = showBidStates.includes(window.currentAuctionStatus);
-
         const auctionId = parseInt(selectedAuctionId, 10);
-        //  console.log("Selected auction ID:", auctionId);
-
         if (!auctionId || isNaN(auctionId)) {
-            //      console.log("Skipping loadItems: selectedAuctionId is invalid:", selectedAuctionId);
             return;
         }
-
 
         try {
 
@@ -248,7 +227,6 @@ const API = "/api"
                 throw new Error(error.error || "Failed to load items");
             }
 
-            // const data = await response.json();
             const { items, totals } = await response.json();
 
             // build the summary text
@@ -431,7 +409,6 @@ const API = "/api"
 
      window.closeHistoryModal = function closeHistoryModal() {
 
-// function closeHistoryModal() {
     document.getElementById("history-modal").style.display = "none";
 }
 
@@ -538,7 +515,6 @@ function formatHistoryDetails(details) {
                     throw new Error(data.error || "Unknown error");
                 }
 
-                //        alert("Item added successfully");
                 showMessage("Item added successfully", "success");
                 loadItems();
                 document.getElementById("add-description").value = "";
@@ -567,7 +543,6 @@ function formatHistoryDetails(details) {
                 loadItems();
                 loadAuctions();
             } else {
-                //           console.log("Page not visible — skipping refresh");
             }
         }, 30000);
     }
@@ -763,13 +738,7 @@ function formatHistoryDetails(details) {
                     const data = await res.json();
                     throw new Error(data.error || "Unknown error");
                 }
-
-                //   .then(() => {
-                //   alert("Item updated successfully");
                 showMessage("Item updated successfully", "success");
-
-                //			form.reset();
-
                 const now = new Date().getTime();
                 modifiedImages[currentEditId] = now;
 
@@ -800,7 +769,6 @@ function formatHistoryDetails(details) {
                 method: "DELETE",
                 headers: { "Authorization": token }
             })
-  //              .then(() => {
                 .then(async res => {
                 if (!res.ok) {
                     const data = await res.json();
@@ -885,13 +853,10 @@ function formatHistoryDetails(details) {
             cropper = null;
         }
         cropModal.style.display = "none";
-        //   editSection.style.display = "block";
-        //   adminSection.style.display = "none";
     })
 
 
     applyCropButton.addEventListener("click", async function () {
-        //    if (confirm("Are you sure you want to crop? (This isn't reversable!)")) {
         const modal = await DayPilot.Modal.confirm("Are you sure you want to crop? Change is applied immediately");
         if (modal.canceled) {
             showMessage("Delete cancelled", "info");
@@ -907,15 +872,9 @@ function formatHistoryDetails(details) {
                 formData.append("contributor", document.getElementById("edit-contributor").value.trim() || "");
                 formData.append("artist", document.getElementById("edit-artist").value.trim() || "");
                 formData.append("notes", document.getElementById("edit-notes").value.trim() || "");
-                //       formData.append("auction_id", parseInt(document.getElementById("edit-auction").value, 10))
                 formData.append("photo", blob, "cropped.jpg");
 
                 const token = localStorage.getItem("token");
-                // fetch(`${API}/update`, {
-                //     method: "POST",
-                //     body: formData,
-                //     headers: { "Authorization": token }
-                // })
 
                 fetch(`${API}/auctions/${auctionId}/items/${currentEditId}/update`, {
                     method: "POST",
@@ -941,7 +900,6 @@ function formatHistoryDetails(details) {
                         }
                     })
                     .catch(err => {
-                        //                    console.log("caught");
                         cropper.destroy();
                         cropModal.style.display = "none";
                         showMessage("Cropping failed: " + err.message, "error");
@@ -959,9 +917,6 @@ function formatHistoryDetails(details) {
 
         window.open(`/cashier/live-feed.html?auctionId=${selectedAuctionId}&auctionStatus=${status}`, '_blank').focus();
 
-
-        //       frame.src = `${path}?auctionId=${auctionId}&auctionStatus=${status}`;
-
     })
 
     // Button to open the public page
@@ -975,7 +930,6 @@ function formatHistoryDetails(details) {
 
     document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
-            //           console.log("Page became visible — refreshing now");
             loadItems();
         }
 
@@ -984,13 +938,5 @@ function formatHistoryDetails(details) {
 
 
     });
-
-    // document.getElementById("auction-select").addEventListener("change", function () {
-    //     selectedAuctionId = parseInt(this.value, 10);
-    //     loadItems(); // reload items
-    //     updateAddButtonState();
-    // });
-
-
 
 });

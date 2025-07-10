@@ -1,6 +1,3 @@
-//document.addEventListener("DOMContentLoaded", function () {
-// const API = "https://moments.icychris.co.uk:3001";
-// const API = "https://drive.icychris.co.uk";
 const API = "/api"
 
 const output = document.getElementById("output");
@@ -34,7 +31,6 @@ checkToken();
 // Check if maint is already authenticated
 async function checkToken() {
   const token = localStorage.getItem("maintenanceToken");
-  //   console.log(token);
   if (token) {
     const response = await fetch(`${API}/validate`, {
       method: "POST",
@@ -68,7 +64,6 @@ document.getElementById("login-button").addEventListener("click", async () => {
   const data = await res.json();
   if (res.ok) {
     localStorage.setItem("maintenanceToken", data.token);
-//    console.log(localStorage.getItem("maintenanceToken"));
     loginSection.style.display = "none";
     maintenanceSection.style.display = "block";
     refreshAuctions();
@@ -87,10 +82,6 @@ document.getElementById("backup-db").onclick = async () => {
   showMessage(data.message);
 };
 
-// document.getElementById("download-db").onclick = async () => {
-//          window.location.href = `${API}/maintenance/download-db?authorization=${token}`;
-
-// };
 
 document.getElementById("download-db").onclick = async () => {
   const res = await fetch(`${API}/maintenance/download-full`, {
@@ -131,7 +122,7 @@ document.getElementById("download-db").onclick = async () => {
 
 document.getElementById("restore-db").onclick = async () => {
   const fileInput = document.getElementById("restore-file");
-  if (!fileInput.files.length) return alert("Select a file first");
+  if (!fileInput.files.length) return showMessage("Select a file", "info");
   const formData = new FormData();
   formData.append("backup", fileInput.files[0]);
   const res = await fetch(`${API}/maintenance/restore`, {
@@ -140,7 +131,13 @@ document.getElementById("restore-db").onclick = async () => {
     body: formData
   });
   const data = await res.json();
-  showMessage(data.message);
+
+    if (res.ok) {
+    showMessage(data.message, "success");
+  } else {
+    showMessage(data.error || "Restore failed", "error");
+  }
+
 };
 
 document.getElementById("export-csv").onclick = async () => {
@@ -161,7 +158,7 @@ document.getElementById("export-csv").onclick = async () => {
 
 document.getElementById("import-csv-btn").onclick = async () => {
   const fileInput = document.getElementById("import-csv");
-  if (!fileInput.files.length) return alert("Select a CSV file");
+  if (!fileInput.files.length) return showMessage("Select a file", "info");
   const formData = new FormData();
   formData.append("csv", fileInput.files[0]);
   const res = await fetch(`${API}/maintenance/import`, {
@@ -170,7 +167,11 @@ document.getElementById("import-csv-btn").onclick = async () => {
     body: formData
   });
   const data = await res.json();
-  showMessage(data.message);
+      if (res.ok) {
+    showMessage(data.message || "Import complete", "success");
+  } else {
+    showMessage(data.error || "Import failed", "error");
+  }
 };
 
 document.getElementById("photo-report").onclick = async () => {
@@ -247,16 +248,10 @@ async function loadLogs() {
   });
   const data = await res.json();
   if (res.ok) {
-    // document.getElementById("server-logs").value = data.log;
 
     const logBox = document.getElementById("server-logs");
     logBox.innerHTML = formatLogs(data.log);
     logBox.scrollTop = logBox.scrollHeight;
-
-
-    //         const logBox = document.getElementById("server-logs");
-    // logBox.value = data.log;
-    // logBox.scrollTop = logBox.scrollHeight;
 
   } else {
     showMessage(data.error || "Failed to load logs", true);
@@ -509,28 +504,6 @@ async function refreshAuctions() {
     <td> <button class="reset-auction-btn" data-id="${auction.id}" ${(auction.status !== "archived" && auction.status !== "setup") ? 'disabled title="Only auctions in state setup or archived may be reset"' : ''}>Reset</button></td>
   `;
 
-
-    // Hook up toggle
-    // const checkbox = row.querySelector("input[type='checkbox']");
-    // checkbox.onchange = async () => {
-    //   const res = await fetch(`${API}/maintenance/auctions/set-status`, {
-    //     method: "POST",
-    //     headers: {
-    //       Authorization: token,
-    //       "Content-Type": "application/json"
-    //     },
-    //     body: JSON.stringify({ id: auction.id, is_active: checkbox.checked })
-    //   });
-
-    //   const data = await res.json();
-    //   if (res.ok) {
-    //     showMessage(data.message, "success");
-    //     row.classList.toggle("auction-inactive", !checkbox.checked);
-    //   } else {
-    //     showMessage(data.error || "Failed to update status", "error");
-    //   }
-    // };
-
     // Hook up delete
     const deleteBtn = row.querySelector("button");
     deleteBtn.onclick = async () => {
@@ -561,8 +534,6 @@ async function refreshAuctions() {
 
   if (!confirmed) return;
 
-  //    if (!confirm(`Delete auction "${auction.full_name}"?`)) return;
-
       const res = await fetch(`${API}/maintenance/auctions/delete`, {
         method: "POST",
         headers: {
@@ -582,31 +553,7 @@ async function refreshAuctions() {
       }
     };
     
-// hook up auction status dropdown
-
-    // document.querySelectorAll(".status-select").forEach(select => {
-    //   select.addEventListener("change", async (e) => {
-    //     const auctionId = e.target.getAttribute("data-id");
-    //     const newStatus = e.target.value;
-    
-    //     const res = await fetch(`${API}/maintenance/auctions/update-status`, {
-    //       method: "POST",
-    //       headers: {
-    //         Authorization: token,
-    //         "Content-Type": "application/json"
-    //       },
-    //       body: JSON.stringify({ auction_id: auctionId, status: newStatus })
-    //     });
-    
-    //     const data = await res.json();
-    //     if (res.ok) {
-    //       showMessage("Status updated", "success");
-    //     } else {
-    //       showMessage(data.error || "Failed to update status", "error");
-    //     }
-    //   });
-    // });
-    
+ 
 
     tableBody.appendChild(row);
   });

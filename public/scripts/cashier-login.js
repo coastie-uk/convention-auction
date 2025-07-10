@@ -1,10 +1,8 @@
 /* /scripts/cashier-script.js  (v2 – auto-refresh + live→settlement hand-off) */
-// document.addEventListener("DOMContentLoaded", function () {
 (() => {
     "use strict";
   
     // ---------- Config ---------------------------------------------------------
-  //  const API = "https://drive.icychris.co.uk";    
 const API = "/api"                                 
     const REFRESH_MS   = 10000;           
   
@@ -18,7 +16,6 @@ const API = "/api"
       pwInput      : $("cashier-password"),
       error        : $("error-message"),
       liveSel      : $("live-select"),
-   //   settleSel    : $("settle-select"),
       openLiveBtn  : $("open-live"),
       openSettleBtn: $("open-settle"),
       logoutBtn    : $("logout"),
@@ -52,17 +49,10 @@ const API = "/api"
   async function applyLastView() {
   const { screen, auctionId } = loadLastView();
 
- // if (auctionId && document.querySelector(`#liveSel option[value="${auctionId}"]`)) {
-  //   pre-select the saved auction in both dropdowns
-  //  document.getElementById('liveSel').value   = auctionId;
-  //  document.getElementById('settleSel').value = auctionId;
-
     // auto-open the saved screen
     if (screen === 'settlement') {
-  //    document.getElementById('settleSel').value = auctionId;
       loadIntoViewport('/cashier/settlement.html', auctionId);
     } else if (screen === 'live') {
-  //    document.getElementById('liveSel').value   = auctionId;
       loadIntoViewport('/cashier/live-feed.html', auctionId);
     }
 // }
@@ -109,7 +99,6 @@ function loadLastView() {
 
       els.viewport.innerHTML = "";
       const frame = document.createElement("iframe");
- //     frame.src   = `${path}?auctionId=${auctionId}`;
       frame.src = `${path}?auctionId=${auctionId}&auctionStatus=${status}`;
 
       frame.width = "100%";
@@ -155,11 +144,9 @@ function loadLastView() {
       try {
         const [live] = await Promise.all([
           fetchAuctions(),
-    //      fetchAuctions("settlement")
         ]);
   
         populateSelect(els.liveSel, live);
-    //    populateSelect(els.settleSel, live);
         log("Auctions refreshed", { live: live.length
           
          });
@@ -172,20 +159,21 @@ function loadLastView() {
     }
   
     // ---------- Intelligent hand-off ------------------------------------------
-    function autoSwitchIfNeeded(liveAuctions, settlementAuctions) {
-      if (currentScreen !== "live" || !currentAuctionId) return; // nothing to do
+    // 
+    // function autoSwitchIfNeeded(liveAuctions, settlementAuctions) {
+    //   if (currentScreen !== "live" || !currentAuctionId) return; // nothing to do
   
-      const stillLive = liveAuctions.some(a => a.id === Number(currentAuctionId));
-      if (stillLive) return;                                     // stay put
+    //   const stillLive = liveAuctions.some(a => a.id === Number(currentAuctionId));
+    //   if (stillLive) return;                                     // stay put
   
-      const nowSettlement = settlementAuctions.some(a => a.id === Number(currentAuctionId));
-      if (nowSettlement) {
-        showMessage(`Auction ${currentAuctionId} moved from live → settlement; switching view`, "info");
+    //   const nowSettlement = settlementAuctions.some(a => a.id === Number(currentAuctionId));
+    //   if (nowSettlement) {
+    //     showMessage(`Auction ${currentAuctionId} moved from live → settlement; switching view`, "info");
 
-        log(`Auction ${currentAuctionId} moved from live → settlement; switching`);
-        loadIntoViewport("/settlement.html", currentAuctionId);
-      }
-    }
+    //     log(`Auction ${currentAuctionId} moved from live → settlement; switching`);
+    //     loadIntoViewport("/settlement.html", currentAuctionId);
+    //   }
+    // }
   
 
     
@@ -201,17 +189,11 @@ function loadLastView() {
       const done = await refreshAuctionLists();
       applyLastView();
       startAutoRefresh();
-      
-
-      // clearInterval(refreshTimer);
-      // refreshTimer = setInterval(refreshAuctionLists, REFRESH_MS);
-  
+ 
       els.openLiveBtn  .onclick = () => loadIntoViewport("/cashier/live-feed.html", els.liveSel.value);
       els.openSettleBtn.onclick = () => loadIntoViewport("/cashier/settlement.html", els.liveSel.value);
       els.logoutBtn    .onclick = () => { localStorage.removeItem("cashierToken"); location.reload(); };
     }
-  
-
    
     async function doLogin() {
       const pwd = els.pwInput.value.trim();
@@ -236,7 +218,6 @@ function loadLastView() {
 
         document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
- //           console.log("Page became visible — refreshing now");
         refreshAuctionLists();
         }
       });
@@ -246,10 +227,8 @@ function loadLastView() {
             if (document.visibilityState === "visible") {
         refreshAuctionLists();
                             } else {
-     //           console.log("Page not visible — skipping refresh");
             }
         }, REFRESH_MS);
     }
 
   })();
-// });
