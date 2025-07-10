@@ -251,9 +251,12 @@ function getNextItemNumber(auction_id, callback) {
 // API to handle item submission
 //--------------------------------------------------------------------------
 
-app.post('/auctions/:auctionId/newitem', upload.single('photo'), checkAuctionState(['setup', 'locked']), async (req, res) => {
+app.post('/auctions/:auctionId/newitem', checkAuctionState(['setup', 'locked']), async (req, res) => {
     //    logFromRequest(req, logLevels.DEBUG, `Request received`);
     try {
+
+    await awaitMiddleware(upload.single('photo'))(req, res);
+
 
         // Check item count first
         db.get("SELECT COUNT(*) AS count FROM items", [], (err, row) => {
@@ -443,12 +446,16 @@ app.get('/auctions/:auctionId/items', authenticateRole("admin"), (req, res) => {
 // API to update an item, including photo. Includes moving an item to a new auction
 //--------------------------------------------------------------------------
 
-app.post('/auctions/:auctionId/items/:id/update', upload.single('photo'), authenticateRole("admin"), checkAuctionState(['setup', 'locked']), (req, res) => {
+app.post('/auctions/:auctionId/items/:id/update', authenticateRole("admin"), checkAuctionState(['setup', 'locked']), async (req, res) => {
     const auction_id = Number(req.params.auctionId);
     const id = Number(req.params.id);
     const target_auction_id = req.body.target_auction_id;
 
     logFromRequest(req, logLevels.DEBUG, `Request received to update item ${id}`);
+
+try {
+    
+  await awaitMiddleware(upload.single('photo'))(req, res);
 
     db.get('SELECT photo, auction_id FROM items WHERE id = ?', [id], async (err, row) => {
         if (err) {
@@ -584,6 +591,12 @@ app.post('/auctions/:auctionId/items/:id/update', upload.single('photo'), authen
             });
         }
     });
+}
+catch {
+        logFromRequest(req, logLevels.ERROR, "Error editing: " + err.message);
+        res.status(500).json({ error: err.message });
+}
+
 });
 
 //--------------------------------------------------------------------------
@@ -1159,6 +1172,16 @@ app.get("/items/:id/history", authenticateRole(["admin", "maintenance"]), (req, 
         res.status(500).json({ error: "Failed to fetch audit history" });
     }
 });
+
+function awaitMiddleware(middleware) {
+  return (req, res) =>
+    new Promise((resolve, reject) => {
+      middleware(req, res, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+}
 
 //--------------------------------------------------------------------------
 // API to record audit events

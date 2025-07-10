@@ -67,16 +67,54 @@ router.get("/download-db", (req, res) => {
 // API to restore full DB from an uploaded copy
 //--------------------------------------------------------------------------
 
-router.post("/restore", upload.single("backup"), (req, res) => {
+// router.post("/restore", async (req, res) => {
+//   try {
+//     await awaitMiddleware(upload.single('backup'))(req, res);
+
+//     fs.copyFileSync(req.file.path, DB_PATH);
+//     fs.unlinkSync(req.file.path);
+//     res.json({ message: "Database restored." });
+//     logFromRequest(req, logLevels.INFO, `Database restored`);
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+
+const Database = require("better-sqlite3");
+
+router.post("/restore", async (req, res) => {
   try {
-    fs.copyFileSync(req.file.path, DB_PATH);
-    fs.unlinkSync(req.file.path);
-    res.json({ message: "Database restored." });
+    await awaitMiddleware(upload.single("backup"))(req, res);
+
+    if (!req.file || !req.file.path) {
+      return res.status(400).json({ error: "No file uploaded." });
+    }
+
+    const filePath = req.file.path;
+
+    //  Try opening the uploaded DB
+    try {
+      const testDB = new Database(filePath, { readonly: true });
+      testDB.pragma("user_version"); // simple test query
+      testDB.close();
+    } catch (dbErr) {
+      fs.unlinkSync(filePath);
+          logFromRequest(req, logLevels.ERROR, `Database restore failed. mot a database`);
+        return res.status(400).json({ error: "Uploaded file is not a valid SQLite database." });
+    }
+
+    //  Valid DB – restore it
+    fs.copyFileSync(filePath, DB_PATH);
+    fs.unlinkSync(filePath);
+
     logFromRequest(req, logLevels.INFO, `Database restored`);
+    res.json({ message: "Database restored." });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 //--------------------------------------------------------------------------
 // POST /reset
@@ -154,10 +192,13 @@ router.get("/export", (req, res) => {
 // API to Import items from simplified CSV (retaining existing data)
 //--------------------------------------------------------------------------
 
-router.post("/import", upload.single("csv"), (req, res) => {
+router.post("/import", async (req, res) => {
   logFromRequest(req, logLevels.INFO, "Bulk CSV import requested");
 
   try {
+
+      await awaitMiddleware(upload.single('csv'))(req, res);
+
     // ── 1. Read CSV ──────────────────────────────────────────────────────────
     const csv = fs.readFileSync(req.file.path, "utf-8");
     const lines = csv.split("\n").filter(Boolean);
@@ -931,7 +972,12 @@ router.post("/auctions/list", async (req, res) => {
 //--------------------------------------------------------------------------
 
 
-router.post("/resources/upload", upload.array("images", MAX_UPLOADS), async (req, res) => {
+router.post("/resources/upload", async (req, res) => {
+
+try {
+
+        await awaitMiddleware(upload.array("images", MAX_UPLOADS))(req, res);
+
   if (!req.files || req.files.length === 0) {
     logFromRequest(req, logLevels.ERROR, `No files uploaded`);
     return res.status(400).json({ error: "No files uploaded" });
@@ -998,6 +1044,12 @@ router.post("/resources/upload", upload.array("images", MAX_UPLOADS), async (req
   });
   if (savedFiles.length > 0) {
     logFromRequest(req, logLevels.INFO, `Uploaded ${savedFiles.length} image resource(s): ${savedFiles.join(", ")}`);
+  }
+  } catch {
+          logFromRequest(req, logLevels.ERROR, "Error editing: " + err.message);
+        res.status(500).json({ error: err.message });
+
+  
   }
 });
 
@@ -1310,6 +1362,16 @@ function audit(user, action, type, id, details = {}) {
        VALUES (?,?,?,?,?)`,
     [user, action, type, id, JSON.stringify(details)]
   );
+}
+
+function awaitMiddleware(middleware) {
+  return (req, res) =>
+    new Promise((resolve, reject) => {
+      middleware(req, res, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
 }
 
 module.exports = router;
