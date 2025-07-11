@@ -1,6 +1,7 @@
-**Deployment Guide (Linux Mint / Ubuntu Server)**
+**Deployment Guide**
 
 This guide explains how to deploy the Auction App backend and frontend using Node.js, Apache, PM2, and Let's Encrypt for free HTTPS certificates.
+If your installation requires different paths, remember to update the configuration accordingly and set the correct permissions.
 
 ---
 
@@ -26,12 +27,12 @@ Verify:
 
 ---
 
-## **Step 2: Set Up Your Project Directory**
+## **Set Up Your Project Directory and install dependancies**
 
 Clone or copy your project to the server:
 
     git clone https://github.com/coastie-uk/convention-auction 
-    cd convention-auction
+    cd convention-auction/backend
 
 Install Node dependencies:
 
@@ -40,6 +41,7 @@ Install Node dependencies:
 ---
 
 ## **Step 3: Use PM2 to Run the Backend**
+PM2 is not required, but it provides a convenient method to manage the backend and also allows the maintenance GUI to restart the server.
 
 Install PM2 globally:
 
@@ -57,6 +59,10 @@ Enable startup on boot:
 
     pm2 startup  
 \# Follow the printed instructions to enable startup
+
+To view console output:
+
+    pm2 logs auction  
 
 To remove a site:
 
