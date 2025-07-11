@@ -152,8 +152,8 @@ Restart Apache if changes don’t take effect:
 
 Additional changes
 
-Set SECRET_KEY in config.json
-If required, update front-end icon (/images/favicon.png)
+Set SECRET_KEY in config.json then restart the backend ("pm2 restart auction")
+If required, update front-end browser icon (/images/favicon.png)
 If required, Update default auction logo (/resources/default_logo.png)
 
 ---
@@ -161,7 +161,7 @@ If required, Update default auction logo (/resources/default_logo.png)
 The default setup assumes that frontend and backend are running on the same server- /api/ is proxied to the backend on localhost, port 3000\. If this is not the case, the following changes will be needed:
 
 * If a port other than 3000 is needed, edit the port setting in config.json.
-* Update the $API constant in each frontend script file to point to the correct backend server  
+* Update the $API constant in each frontend script file to point to the correct backend server and port 
 * Update the Apache site .conf file as required  
 * The backend will require CORS to prevent browsers blocking the cross-domain traffic. The code required for this is present in [backend.js] but will need to be uncommented and configured for your use.
 
