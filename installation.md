@@ -27,7 +27,7 @@ Verify:
 
 ---
 
-## **Set Up Your Project Directory and install dependancies**
+## **Setup Your Project Directory and install dependancies**
 
 Clone or copy your project to the server:
 
@@ -40,7 +40,9 @@ Install Node dependencies:
 
 ---
 
-## **Step 3: Use PM2 to Run the Backend**
+Open config.json and update the SECRET_KEY with a value of your choice
+
+## **Setup PM2 to Run the Backend**
 PM2 is not required, but it provides a convenient method to manage the backend and also allows the maintenance GUI to restart the server.
 
 Install PM2 globally:
@@ -72,7 +74,7 @@ To remove a site:
 
 ---
 
-## **Step 4: Install and Configure Apache**
+## **Install and Configure Apache**
 
 Install Apache:
 
@@ -130,7 +132,7 @@ Enable the site:
 
 ---
 
-## **Step 5: Install HTTPS via Let's Encrypt**
+## **Install HTTPS via Let's Encrypt with CertBot**
 
 Install Certbot:
 
@@ -149,10 +151,10 @@ Test automatic renewal:
 Restart Apache if changes don’t take effect:  
     sudo systemctl restart apache2
 
+To test your installation, go to /maint and enter the default password "m1234". For futher instructions, see quickstart.md
 
 Additional changes
 
-Set SECRET_KEY in config.json then restart the backend ("pm2 restart auction")
 If required, update front-end browser icon (/images/favicon.png)
 If required, Update default auction logo (/resources/default_logo.png)
 
