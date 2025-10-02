@@ -947,7 +947,7 @@ router.post("/auctions/list", async (req, res) => {
   // logFromRequest(req, logLevels.DEBUG, `Auction list (maint) requested`);
 
   const sql = `
-    SELECT a.id, a.short_name, a.full_name, a.logo, a.status,
+    SELECT a.id, a.short_name, a.full_name, a.logo, a.status, a.admin_can_change_state,
            COUNT(i.id) AS item_count
     FROM auctions a
     LEFT JOIN items i ON i.auction_id = a.id
@@ -1143,32 +1143,38 @@ router.post("/resources/delete", (req, res) => {
   });
 });
 
+
+
+
 //--------------------------------------------------------------------------
-// POST /auctions/update-status
-// API to update the status of an auction
+// POST /auctions/set-admin-state-permission
+// API to update the "admin can set state" permission on the auction
 //--------------------------------------------------------------------------
 
+router.post('/auctions/set-admin-state-permission', async (req, res) => {
+  const { auction_id, admin_can_change_state } = req.body;
+  const enabled = !!admin_can_change_state ? 1 : 0;
 
-router.post("/auctions/update-status", (req, res) => {
-  const { auction_id, status } = req.body;
+  logFromRequest(req, logLevels.DEBUG, `State perm request for ${auction_id} to: ${admin_can_change_state}`);
 
-  if (!auction_id || typeof status !== "string") {
-    return res.status(400).json({ error: "Missing auction ID or invalid status." });
+
+  if (!auction_id) {
+
+    return res.status(400).json({ error: "Missing auction ID." });
   }
 
-  const normalizedStatus = status.toLowerCase();
+  try {
 
-  if (!allowedStatuses.includes(normalizedStatus)) {
-    return res.status(400).json({ error: `Invalid status: "${status}"` });
+    db.run(`UPDATE auctions SET admin_can_change_state = ? WHERE id = ?`, [enabled, auction_id]);
+
+    logFromRequest(req, logLevels.INFO, `Updated admin state control for auction ${auction_id} to: ${enabled}`);
+
+    return res.json({ message: `Auction ${auction_id} admin state control updated` });
+
+  } catch (err) {
+    logger.error({ err, auction_id, body: req.body }, 'set-admin-state-permission failed');
+    return res.status(500).json({ error: 'Internal error' });
   }
-
-  db.run("UPDATE auctions SET status = ? WHERE id = ?", [normalizedStatus, auction_id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    logFromRequest(req, logLevels.INFO, `Updated status for auction ${auction_id} to: ${normalizedStatus}`);
-    // clear the auction state cache
-    checkAuctionState.auctionStateCache.del(auction_id);
-    res.json({ message: `Auction ${auction_id} status updated to ${normalizedStatus}` });
-  });
 });
 
 //--------------------------------------------------------------------------

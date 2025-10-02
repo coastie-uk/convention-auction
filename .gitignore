@@ -156,3 +156,5 @@ backend/*.db-wal
 backend/auction.db
 backend/package-lock.json
 backend/package-lock.json
+deploy-dev.sh
+package-lock.json

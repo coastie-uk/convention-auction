@@ -40,6 +40,7 @@ const checkAuctionState = require('./middleware/checkAuctionState')(
     db,
     { ttlSeconds: 2 }
 );
+const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
 
 // this text is used to trim the maint log display
 log('General', logLevels.INFO, '~~ Starting up Auction backend ~~');
@@ -1011,7 +1012,7 @@ app.post("/list-auctions", authenticateRole(["maintenance", "admin", "cashier"])
         return res.status(400).json({ error: "Invalid status parameter" });
     }
 
-    let sql = "SELECT id, short_name, full_name, status FROM auctions";
+    let sql = "SELECT id, short_name, full_name, status, admin_can_change_state FROM auctions";
     const params = [];
     if (status !== undefined) {           // filter only when caller asked for it
         sql += " WHERE status = ?";
@@ -1193,6 +1194,56 @@ function audit(user, action, type, id, details = {}) {
         [user, action, type, id, JSON.stringify(details)]
     );
 }
+
+//--------------------------------------------------------------------------
+// POST /auctions/update-status
+// API to update the status of an auction
+// Usable by admin user provided that required flag has been set
+//--------------------------------------------------------------------------
+
+
+app.post("/auctions/update-status", authenticateRole(["admin", "maintenance"]), async (req, res) => {
+    const { auction_id, status } = req.body;
+
+    if (!auction_id || typeof status !== "string") {
+        return res.status(400).json({ error: "Missing auction ID or invalid status." });
+    }
+
+    try {
+        const auction = await db.get(`SELECT id, admin_can_change_state FROM auctions WHERE id = ?`, [auction_id]);
+
+        // If admin, check auction settings
+        const role = req.user?.role;
+        if ((role === "admin" && auction.admin_can_change_state === 0)) {
+            logFromRequest(req, logLevels.ERROR, `${role} is not allowed to change state of ${auction_id}`);
+
+            return res.status(403).json({ error: 'State change not allowed. Check auction settings' });
+        }
+
+        const normalizedStatus = status.toLowerCase();
+
+        if (!allowedStatuses.includes(normalizedStatus)) {
+            return res.status(400).json({ error: `Invalid status: "${status}"` });
+        }
+
+        db.run("UPDATE auctions SET status = ? WHERE id = ?", [normalizedStatus, auction_id], function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+
+            logFromRequest(req, logLevels.INFO, `Updated status for auction ${auction_id} to: ${normalizedStatus}`);
+// TODO fix auction state change audit entry
+            audit(role, 'state change', 'auction', "0", { auction: auction_id, new_state: normalizedStatus });
+            // clear the auction state cache
+            checkAuctionState.auctionStateCache.del(auction_id);
+            res.json({ message: `Auction ${auction_id} status updated to ${normalizedStatus}` });
+        });
+
+    } catch (err) {
+        logFromRequest(req, logLevels.ERROR, `Status update for auction ${auction_id} failed:` + err);
+        return res.status(500).json({ error: `Status update for auction ${auction_id} failed` });
+    }
+
+
+});
 
 // Serve uploaded images
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));

@@ -77,6 +77,9 @@ try {
     // create uniqueness on (auction_id, paddle_number)
     db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_bidder_auction_paddle ON bidders(auction_id, paddle_number)");
 
+    // Add admin_state_change
+    db.exec("ALTER TABLE auctions ADD COLUMN admin_can_change_state INTEGER NOT NULL DEFAULT 0; -- 0=false, 1=true");
+
 // one-time default passwords
 const defaultPasswords = [
   { role: "admin",       password: "a1234" },

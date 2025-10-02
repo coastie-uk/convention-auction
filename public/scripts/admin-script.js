@@ -22,13 +22,15 @@ document.addEventListener("DOMContentLoaded", function () {
     const refreshButton = document.getElementById("refresh");
     const liveFeedButton = document.getElementById("livefeed");
     const publicButton = document.getElementById("public");
+    const selectAuctionState = document.getElementById('auctionState');
 
-    
+    const statusOptions = ["setup", "locked", "live", "settlement", "archived"];
 
     let currentEditId = null;
     let modifiedImages = {};
     let auctions = [];
     let selectedAuctionId = null;
+    let selectedAuctionCanChangeState = 0;
     let selectedOrder = sessionStorage.getItem("item_sort_order") || "asc";
     let selectedSort = sessionStorage.getItem("item_sort_field") || "item_number";
 
@@ -40,7 +42,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const fmtPrice = v => `£${Number(v).toFixed(2)}`;
 
-const API = "/api"
+    const API = "/api"
 
 
 
@@ -87,10 +89,10 @@ const API = "/api"
         auctions = await res.json();
 
         if (auctions.length === 0) {
-        showMessage("No auctions defined. Use the maintenance interface to add one", "info");
-        return;
-}
-
+            showMessage("No auctions defined. Use the maintenance interface to add one", "info");
+            return;
+        }
+        // build a list of auctions for the selector
         auctionSelect.innerHTML = "";
 
         auctions.forEach(auction => {
@@ -117,15 +119,52 @@ const API = "/api"
         if (window.refreshAuctionStatus) {        // get status first
             await window.refreshAuctionStatus();
         }
-        loadItems();                              // now build the table
+        loadItems();    // now build the table
+        checkStatusChange();   // now update the change state control      
 
 
     }
+
+    function checkStatusChange() {
+        // Get the selected auction ID, current state and state change permisison setting
+        const selectedAuction = auctions.find(a => a.id === selectedAuctionId);
+        selectedAuctionCanChangeState = selectedAuction?.admin_can_change_state;
+        const currentStatus = selectedAuction?.status;
+        console.log(selectedAuctionCanChangeState, currentStatus);
+
+        const select = document.getElementById("auctionState");
+        select.innerHTML = statusOptions.map(opt =>
+            `<option value="${opt}" ${opt === currentStatus ? "selected" : ""}>${opt}</option>`
+        ).join("");
+
+        const stateChanger = document.getElementById('stateChanger');
+
+        const hint = document.getElementById("stateHint");
+
+        if (!selectedAuctionCanChangeState) {
+            select.disabled = true;
+            select.title = "Admin state change disabled for this auction (toggle in Maintenance ▶ Auctions).";
+        } else {
+            select.disabled = false;
+            select.title = "Change auction state";
+        }
+
+        // if (!selectedAuctionCanChangeState) {
+        //     stateChanger.hidden = true;
+        // } else {stateChanger.hidden = false;
+        //     stateChanger.value = currentStatus;
+
+        // }
+
+    }
+
+
 
     auctionSelect.addEventListener("change", async () => {
         selectedAuctionId = parseInt(auctionSelect.value, 10);
         sessionStorage.setItem("auction_id", selectedAuctionId);
         await window.refreshAuctionStatus();
+        checkStatusChange(); //update the auction state control
         loadItems();
         if (window.refreshAuctionStatus) window.refreshAuctionStatus();
 
@@ -369,30 +408,30 @@ const API = "/api"
             });
         });
 
-     window.showItemHistory = async function editItem(itemId) {
+        window.showItemHistory = async function editItem(itemId) {
 
-    const token = localStorage.getItem("token");
-    const modal = document.getElementById("history-modal");
-    const tbody = document.getElementById("history-table-body");
+            const token = localStorage.getItem("token");
+            const modal = document.getElementById("history-modal");
+            const tbody = document.getElementById("history-table-body");
 
-    tbody.innerHTML = `<tr><td colspan="4" style="padding:6px;">Loading...</td></tr>`;
-    modal.style.display = "flex";
+            tbody.innerHTML = `<tr><td colspan="4" style="padding:6px;">Loading...</td></tr>`;
+            modal.style.display = "flex";
 
-    try {
-        const res = await fetch(`${API}/items/${itemId}/history`, {
-            headers: { Authorization: token }
-        });
+            try {
+                const res = await fetch(`${API}/items/${itemId}/history`, {
+                    headers: { Authorization: token }
+                });
 
-        if (!res.ok) throw new Error("Failed to load history");
+                if (!res.ok) throw new Error("Failed to load history");
 
-        const history = await res.json();
+                const history = await res.json();
 
-        if (!Array.isArray(history) || history.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="4" style="padding:6px;">No history found for this item.</td></tr>`;
-            return;
-        }
+                if (!Array.isArray(history) || history.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="4" style="padding:6px;">No history found for this item.</td></tr>`;
+                    return;
+                }
 
-        tbody.innerHTML = history.map(record => `
+                tbody.innerHTML = history.map(record => `
             <tr>
                 <td style="padding:6px;">${record.created_at}</td>
                 <td style="padding:6px;">${record.user || "?"}</td>
@@ -401,26 +440,26 @@ const API = "/api"
             </tr>
         `).join("");
 
-    } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="4" style="padding:6px; color:red;">Error: ${err.message}</td></tr>`;
-    }
-}
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="4" style="padding:6px; color:red;">Error: ${err.message}</td></tr>`;
+            }
+        }
 
 
-     window.closeHistoryModal = function closeHistoryModal() {
+        window.closeHistoryModal = function closeHistoryModal() {
 
-    document.getElementById("history-modal").style.display = "none";
-}
+            document.getElementById("history-modal").style.display = "none";
+        }
 
-function formatHistoryDetails(details) {
-    if (!details) return "";
+        function formatHistoryDetails(details) {
+            if (!details) return "";
 
-    return String(details)
-        .replace(/^{|}$/g, "")       // remove surrounding { and }
-        .replace(/"/g, "")           // remove quotes
-        .replace(/,/g, ", ")         // add space after commas
-        .replace(/:/g, ": ");        // add space after colons
-}
+            return String(details)
+                .replace(/^{|}$/g, "")       // remove surrounding { and }
+                .replace(/"/g, "")           // remove quotes
+                .replace(/,/g, ", ")         // add space after commas
+                .replace(/:/g, ": ");        // add space after colons
+        }
 
     }
 
@@ -770,10 +809,10 @@ function formatHistoryDetails(details) {
                 headers: { "Authorization": token }
             })
                 .then(async res => {
-                if (!res.ok) {
-                    const data = await res.json();
-                    throw new Error(data.error || "Unknown error");
-                }
+                    if (!res.ok) {
+                        const data = await res.json();
+                        throw new Error(data.error || "Unknown error");
+                    }
 
                     showMessage(`Item deleted successfully`, "success");
                     loadItems();
@@ -933,10 +972,41 @@ function formatHistoryDetails(details) {
             loadItems();
         }
 
-
-
-
-
     });
+
+
+    document.getElementById('auctionState')?.addEventListener('change', async () => {
+        var token = localStorage.getItem("token");
+        if (!token) return logout();
+
+
+
+        const newStatus = selectAuctionState.value;
+
+        try {
+            const res = await fetch(`${API}/auctions/update-status`, {
+                method: 'POST',
+                headers: {
+                    Authorization: token,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ auction_id: selectedAuctionId, status: newStatus })
+            });
+
+            const data = await res.json();
+            if (res.ok) {
+                showMessage(data.message || `Status updated`, "success");
+                loadItems();
+                loadAuctions();
+            } else {
+                showMessage(data.error || "Failed to update status", "error");
+            }
+
+        } catch (e) {
+            console.error('Change state error', e);
+            alert('Network error while changing auction state.');
+        }
+    });
+
 
 });

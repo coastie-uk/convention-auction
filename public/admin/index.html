@@ -51,6 +51,14 @@
                             <option value="desc">Descending</option>
                         </select>
 
+                        <div id="stateChanger" class="state-changer">
+                            <label for="auctionState" style="font-weight:bold;">State:</label>
+                            <select id="auctionState" class="js-auction-state">
+
+                            </select>
+                        </div>
+
+
                         <div id="auction-total">
                             Total : £0.00
                         </div>
@@ -71,12 +79,13 @@
                         </div>
                     </div>
 
-                     <div class="dropdown">
+                    <div class="dropdown">
                         <button>Other pages</button>
                         <div class="dropdown-content">
                             <button id="public">Public form</button>
                             <button id="livefeed">Live Feed</button>
-                            <a href="/maint/index.html" target="_blank"><button>Maintenance (login required)</button></a>
+                            <a href="/maint/index.html" target="_blank"><button>Maintenance (login
+                                    required)</button></a>
                             <a href="/cashier/index.html" target="_blank"><button>Cashier (login required)</button></a>
                             <a href="/slideshow/index.html" target="_blank"><button>Slideshow (will logout)</button></a>
 
@@ -210,25 +219,27 @@
             </form>
         </section>
 
-<div id="history-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.7); z-index:9999; justify-content:center; align-items:center;">
-  <div style="background:white; padding:20px; border-radius:8px; max-width:700px; max-height:80vh; overflow:auto;">
-    <h3>Item History</h3>
-    <table style="width:100%; border-collapse: collapse; font-size: 0.9em;">
-      <thead>
-        <tr style="background:#f0f0f0;">
-          <th style="text-align:left; padding: 6px;">Timestamp</th>
-          <th style="text-align:left; padding: 6px;">User</th>
-          <th style="text-align:left; padding: 6px;">Action</th>
-          <th style="text-align:left; padding: 6px;">Details</th>
-        </tr>
-      </thead>
-      <tbody id="history-table-body"></tbody>
-    </table>
-    <div style="text-align:right; margin-top:10px;">
-      <button onclick="closeHistoryModal()">Close</button>
-    </div>
-  </div>
-</div>
+        <div id="history-modal"
+            style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.7); z-index:9999; justify-content:center; align-items:center;">
+            <div
+                style="background:white; padding:20px; border-radius:8px; max-width:700px; max-height:80vh; overflow:auto;">
+                <h3>Item History</h3>
+                <table style="width:100%; border-collapse: collapse; font-size: 0.9em;">
+                    <thead>
+                        <tr style="background:#f0f0f0;">
+                            <th style="text-align:left; padding: 6px;">Timestamp</th>
+                            <th style="text-align:left; padding: 6px;">User</th>
+                            <th style="text-align:left; padding: 6px;">Action</th>
+                            <th style="text-align:left; padding: 6px;">Details</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-table-body"></tbody>
+                </table>
+                <div style="text-align:right; margin-top:10px;">
+                    <button onclick="closeHistoryModal()">Close</button>
+                </div>
+            </div>
+        </div>
 
     </main>
     <script src="/scripts/admin-script.js"></script>

@@ -4,6 +4,8 @@ const output = document.getElementById("output");
 const loginSection = document.getElementById("login-section");
 const maintenanceSection = document.getElementById("maintenance-section");
 
+var isRendering = false;
+
 // Create a message banner
 const messageBanner = document.createElement("div");
 messageBanner.id = "message-banner";
@@ -132,7 +134,7 @@ document.getElementById("restore-db").onclick = async () => {
   });
   const data = await res.json();
 
-    if (res.ok) {
+  if (res.ok) {
     showMessage(data.message, "success");
   } else {
     showMessage(data.error || "Restore failed", "error");
@@ -167,7 +169,7 @@ document.getElementById("import-csv-btn").onclick = async () => {
     body: formData
   });
   const data = await res.json();
-      if (res.ok) {
+  if (res.ok) {
     showMessage(data.message || "Import complete", "success");
   } else {
     showMessage(data.error || "Import failed", "error");
@@ -470,8 +472,9 @@ async function refreshAuctions() {
 
   const auctions = await res.json();
 
-
-  
+try {
+  isRendering = true; // Prevent the table listener firing while we render the table
+ 
   const tableBody = document.getElementById("auction-table-body");
   tableBody.innerHTML = "";
 
@@ -481,10 +484,11 @@ async function refreshAuctions() {
     //   row.classList.add("auction-inactive");
     // }
     const logoSrc = auction.logo ? `${API}/resources/${encodeURIComponent(auction.logo)}` : "/pptx-resources/default_logo.png";
-    
-    const statusOptions = ["setup", "locked", "live", "settlement", "archived"]; //  statuses
 
-// removed -->     <td style="text-align:center;"><input type="checkbox" ${auction.is_active ? "checked" : ""}></td>
+    const statusOptions = ["setup", "locked", "live", "settlement", "archived"]; //  statuses
+    const allowAdmin = !!auction.admin_can_change_state;
+
+    // removed -->     <td style="text-align:center;"><input type="checkbox" ${auction.is_active ? "checked" : ""}></td>
 
     row.innerHTML = `
     <td>${auction.id}</td>
@@ -494,45 +498,61 @@ async function refreshAuctions() {
     <td>${auction.item_count}</td>
     <td> <select class="status-select" data-id="${auction.id}">
         ${statusOptions.map(opt =>
-        `<option value="${opt}" ${auction.status === opt ? "selected" : ""}>${opt}</option>`
-        ).join("")}
+      `<option value="${opt}" ${auction.status === opt ? "selected" : ""}>${opt}</option>`
+    ).join("")}
         </select>
     </td>
+
+  <td>
+    <label class="toggle">
+      <input
+        type="checkbox"
+        class="js-admin-state-permission"
+        data-id="${auction.id}" 
+        ${allowAdmin ? "checked" : ""}
+        aria-label="Allow admin to change state for this auction"
+      >
+
+    </label>
+  </td>
+
      <td><button class="delete-auction-btn" 
      data-id="${auction.id}" ${auction.item_count > 0 ? 'disabled title="Cannot delete auction with items"' : ''}>Delete</button>
     </td>
     <td> <button class="reset-auction-btn" data-id="${auction.id}" ${(auction.status !== "archived" && auction.status !== "setup") ? 'disabled title="Only auctions in state setup or archived may be reset"' : ''}>Reset</button></td>
   `;
 
+    
+
     // Hook up delete
     const deleteBtn = row.querySelector("button");
     deleteBtn.onclick = async () => {
 
-// Find out how many auctions are left
+      // Find out how many auctions are left
 
-  const res1 = await fetch(`${API}/maintenance/auctions/list`, {
-    method: "POST",
-    headers: {
-      Authorization: token,
-      "Content-Type": "application/json"
-    }
-  });
+      const res1 = await fetch(`${API}/maintenance/auctions/list`, {
+        method: "POST",
+        headers: {
+          Authorization: token,
+          "Content-Type": "application/json"
+        }
+      });
 
-  const auctions = await res1.json();
-  if (!res1.ok || !Array.isArray(auctions)) {
-    showMessage("Unable to fetch auction list", "error");
-    return;
-  }
+      const auctions = await res1.json();
+      if (!res1.ok || !Array.isArray(auctions)) {
+        showMessage("Unable to fetch auction list", "error");
+        return;
+      }
 
-  const isLast = auctions.length === 1;
+      const isLast = auctions.length === 1;
 
-    const confirmed = confirm(
-    isLast
-      ? `⚠️ WARNING: This is the last auction and deleting it will reset internal counters and clear all tables, including the audit trail. Proceed?`
-      : `Are you sure you want to delete auction ${auction.full_name}?`
-  );
+      const confirmed = confirm(
+        isLast
+          ? `⚠️ WARNING: This is the last auction and deleting it will reset internal counters and clear all tables, including the audit trail. Proceed?`
+          : `Are you sure you want to delete auction ${auction.full_name}?`
+      );
 
-  if (!confirmed) return;
+      if (!confirmed) return;
 
       const res = await fetch(`${API}/maintenance/auctions/delete`, {
         method: "POST",
@@ -552,36 +572,80 @@ async function refreshAuctions() {
         showMessage(result.error || "Failed to delete", "error");
       }
     };
-    
- 
+
+
 
     tableBody.appendChild(row);
   });
-
+} finally {
+isRendering = false;
+}
 
   // Attached event listener for auction status dropdowns
-document.getElementById("auction-table-body").addEventListener("change", async (e) => {
-  if (e.target.classList.contains("status-select")) {
-    const auctionId = e.target.dataset.id;
-    const newStatus = e.target.value.toLowerCase();
+  document.getElementById("auction-table-body").addEventListener("change", async (e) => {
 
-    const res = await fetch(`${API}/maintenance/auctions/update-status`, {
-      method: "POST",
-      headers: {
-        Authorization: token,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ auction_id: auctionId, status: newStatus })
-    });
+    if (isRendering) return; // Stop the listener while we render the table
+    if (e.target.classList.contains("status-select")) {
+      const auctionId = e.target.dataset.id;
+      const newStatus = e.target.value.toLowerCase();
 
-    const data = await res.json();
-    if (res.ok) {
-      showMessage(data.message || `Status updated`, "success");
-    } else {
-      showMessage(data.error || "Failed to update status", "error");
+      const res = await fetch(`${API}/auctions/update-status`, {
+        method: "POST",
+        headers: {
+          Authorization: token,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ auction_id: auctionId, status: newStatus })
+      });
+
+      isRendering = true; // Stop dupliate triggers of the listener
+
+      const data = await res.json();
+      if (res.ok) {
+        showMessage(data.message || `Status updated`, "success");
+      } else {
+        showMessage(data.error || "Failed to update status", "error");
+      }
+      isRendering = false;
     }
-  }
-});
+    else if (e.target.classList.contains("js-admin-state-permission")) {
+      const auctionId = e.target.dataset.id;
+      const newStatus = e.target.checked;
+      console.log(auctionId);
+      e.target.disabled = true;
+      try {
+        const res = await fetch(`${API}/maintenance/auctions/set-admin-state-permission`, {
+          method: 'POST',
+          headers: {
+            Authorization: token,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ auction_id: auctionId, admin_can_change_state: newStatus })
+        });
+        isRendering = true;
+        const data = await res.json();
+        if (res.ok) {
+          showMessage(data.message || `Status updated`, "success");
+        } else {
+          showMessage(data.error || "Failed to update control", "error");
+          e.target.checked = !e.target.checked;
+        }
+
+
+      } catch (e) {
+        e.target.checked = !e.target.checked;
+        showMessage(`Error occurred:` + e || "Failed to update control", "error");
+
+      } finally {
+        e.target.disabled = false;
+      }
+
+isRendering = false;
+
+    }
+
+
+  });
 
 
   // populate the test data dropdown
@@ -840,9 +904,9 @@ async function loadPptxImageList() {
 
     tableBody.appendChild(tr);
   }
-// also populate the create auction dropdown - saves an api call!
+  // also populate the create auction dropdown - saves an api call!
 
-const select = document.getElementById("auction-logo-select");
+  const select = document.getElementById("auction-logo-select");
   select.innerHTML = "";
 
   // Always offer the default option first
@@ -921,7 +985,7 @@ document.getElementById("reset-pptx-config").onclick = async () => {
 
 document.getElementById("fetch-audit-log").onclick = async () => {
 
-    const filterId = document.getElementById("audit-filter-id").value;
+  const filterId = document.getElementById("audit-filter-id").value;
   const query = filterId ? `?object_id=${filterId}` : "";
 
   const res = await fetch(`${API}/maintenance/audit-log${query}`, {
@@ -948,7 +1012,7 @@ document.getElementById("fetch-audit-log").onclick = async () => {
       <td style="padding: 4px;">${formatHistoryDetails(log.details)}</td>
 
       <td style="padding: 4px;">${log.user}</td>
-      <td style="padding: 4px;">${log.description || "(Item no longer exists)"}</td>
+      <td style="padding: 4px;">${log.description || "(Not available)"}</td>
       <td style="padding: 4px;">${log.short_name ?? ""}</td>
       <td style="padding: 4px;">${log.item_number ?? ""}</td>
     `;
@@ -963,13 +1027,13 @@ document.getElementById("fetch-audit-log").onclick = async () => {
 }
 
 function formatHistoryDetails(details) {
-    if (!details) return "";
+  if (!details) return "";
 
-    return String(details)
-        .replace(/^{|}$/g, "")       // remove surrounding { and }
-        .replace(/"/g, "")           // remove quotes
-        .replace(/,/g, ", ")         // add space after commas
-        .replace(/:/g, ": ");        // add space after colons
+  return String(details)
+    .replace(/^{|}$/g, "")       // remove surrounding { and }
+    .replace(/"/g, "")           // remove quotes
+    .replace(/,/g, ", ")         // add space after commas
+    .replace(/:/g, ": ");        // add space after colons
 }
 
 document.getElementById("export-audit-log").onclick = async () => {
@@ -997,21 +1061,21 @@ document.getElementById("export-audit-log").onclick = async () => {
 
 function startAutoRefresh() {
   setInterval(() => {
-      if (document.visibilityState === "visible") {
-        refreshAuctions();
-        loadPptxImageList();
+    if (document.visibilityState === "visible") {
+      refreshAuctions();
+      loadPptxImageList();
 
-      } else {
-    //       console.log("Page not visible — skipping refresh");
-      }
+    } else {
+      //       console.log("Page not visible — skipping refresh");
+    }
   }, 30000);
 }
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
- //          console.log("Page became visible — refreshing now");
-      refreshAuctions();
-      loadPptxImageList();
+    //          console.log("Page became visible — refreshing now");
+    refreshAuctions();
+    loadPptxImageList();
 
   }
 });
