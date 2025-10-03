@@ -7,6 +7,14 @@
 
 const Database = require('better-sqlite3');
 const path     = require('path');
+const schemaVersion = '2.1';
+
+// Schema Version history
+// 1.0   Initial version using sqlite3. Items only
+// 1.1   Switch to better-sqlite3. Add passwords table
+// 2.0   Adds auctions, bidders, payments and audit tables to align with convention-auction 1.0
+// 2.1   Add admin_can_change_state to auctions table
+//
 
 const db = new Database(path.join(__dirname, 'auction.db'));
 
@@ -125,6 +133,7 @@ function callCb(cb, err, rowsOrInfo) {
 }
 
 module.exports = {
+  schemaVersion,
   /** run() – INSERT / UPDATE / DELETE */
   run(sql, params = [], cb) {
     try {

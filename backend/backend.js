@@ -40,10 +40,17 @@ const checkAuctionState = require('./middleware/checkAuctionState')(
     db,
     { ttlSeconds: 2 }
 );
+// collect up version info
+const { version } = require('./package.json'); // get version from package.json
+const backendVersion = version || '0.0.0';
+const { schemaVersion } = require('./db'); // get schema version from db.js
+
+
 const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
 
 // this text is used to trim the maint log display
 log('General', logLevels.INFO, '~~ Starting up Auction backend ~~');
+log('General', logLevels.INFO, `Backend version: ${backendVersion}, DB schema version: ${schemaVersion}`);
 
 const validLogLevels = ["DEBUG", "INFO", "WARN", "ERROR"];
 const normalizedLevel = LOG_LEVEL.toUpperCase();
@@ -173,6 +180,18 @@ function authenticateRole(acceptedRoles) {
 
 // right below the authenticateRole definition
 require('./phase1-patch')(app, authenticateRole);
+
+//--------------------------------------------------------------------------
+// get /version
+// API to get the backend and schema versions
+//--------------------------------------------------------------------------
+
+app.get('/version', (_req, res) => {
+  res.json({
+    backend: backendVersion,
+    schema: schemaVersion,
+  });
+});
 
 //--------------------------------------------------------------------------
 // POST /validate

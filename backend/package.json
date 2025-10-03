@@ -1,6 +1,6 @@
 {
     "name": "charity-auction-backend",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Backend for Charity Auction Submission Management",
     "main": "backend.js",
     "scripts": {
