@@ -493,7 +493,14 @@ document.addEventListener("DOMContentLoaded", () => {
       <li><strong>Create New Auction:</strong> Define a full display name and a short URL tag (e.g. <code>?auction=fof2026</code>).</li>
       <li><strong>Select Logo:</strong> Choose a logo from the uploaded image set for branding & PowerPoint slides.</li>
       <li><strong>Existing Auctions Table:</strong> Lists all auctions, showing ID, name, tag, logo, item count, and status. 
-        Actions include: Setting auction status, Delete (if empty), Reset: Remove all items. Deleting the last auction will delete the audit history and reset all counters in the database</li>
+        <ul>
+          <li>Set auction state</li>
+          <li>Allow admin to change auction state. If enabled, a state dropdown is provided on the admin interface </li>
+          <li>Reset - Remove all items from the auction. Only available in state "setup" or "archive"</li> 
+          <li>Delete - Only if empty. Deleting the last auction will delete the audit history and reset all counters in the database</li>, 
+        
+          
+        </ul></li>
     </ul>
 
     <h3>Database</h3>
@@ -520,7 +527,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     <h3>Security</h3>
     <ul>
-      <li><strong>Change Password:</strong> Update password for Admin, Cashier, or Maintenance roles.</li>
+      <li><strong>Change Password:</strong> Update password for Admin, Cashier, or Maintenance roles </li>
+      <li>If the maintenance password is lost, it will need to be reset by running <code>node set-maint-pw.js</code> on the server</li>
     </ul>
 
     <h3>Generate Test Data</h3>
