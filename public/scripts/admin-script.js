@@ -661,7 +661,7 @@ document.addEventListener("DOMContentLoaded", function () {
             window.URL.revokeObjectURL(url);
         } catch (err) {
             console.error("Slide export error:", err);
-            showMessage("Failed to generate slides:" + err, "error");
+            showMessage(`Failed to generate slides: ${err}`, "error");
         }
     });
 
@@ -699,7 +699,7 @@ document.addEventListener("DOMContentLoaded", function () {
             window.URL.revokeObjectURL(url);
         } catch (err) {
             console.error("Card export error:", err);
-            showMessage("Failed to generate cards", "error");
+            showMessage(`Failed to generate cards: ${err}`, "error");
         }
     });
 

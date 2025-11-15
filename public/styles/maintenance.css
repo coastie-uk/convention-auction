@@ -194,3 +194,10 @@ button:disabled {
 .login-container button:hover {
     background: #005fa3;
 }
+
+.error-box { border:1px solid #c33; background:#fee; color:#600; padding:.6rem; margin:.5rem 0; border-radius:6px; }
+.error-list { margin:.25rem 0 0 1rem; padding:0; list-style: disc; color:#600; }
+.error-list li { margin:.25rem 0; }
+.error-path { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.error-reason { font-weight: 600; }
+.error-value { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; opacity:.85; }

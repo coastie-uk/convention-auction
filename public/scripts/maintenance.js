@@ -7,26 +7,26 @@ const maintenanceSection = document.getElementById("maintenance-section");
 var isRendering = false;
 
 // Create a message banner
-const messageBanner = document.createElement("div");
-messageBanner.id = "message-banner";
-document.body.appendChild(messageBanner);
+// const messageBanner = document.createElement("div");
+// messageBanner.id = "message-banner";
+// document.body.appendChild(messageBanner);
 
-// Function to show messages with different types
-function showMessage(message, type = "info") { // success, error, info
-  messageBanner.textContent = message;
-  messageBanner.className = `message-banner ${type}`;
-  messageBanner.style.display = "block";
-  messageBanner.style.opacity = "1";
+// // Function to show messages with different types
+// function showMessage(message, type = "info") { // success, error, info
+//   messageBanner.textContent = message;
+//   messageBanner.className = `message-banner ${type}`;
+//   messageBanner.style.display = "block";
+//   messageBanner.style.opacity = "1";
 
-  setTimeout(() => {
-    messageBanner.style.transition = "opacity 1s";
-    messageBanner.style.opacity = "0";
-  }, 3000);
+//   setTimeout(() => {
+//     messageBanner.style.transition = "opacity 1s";
+//     messageBanner.style.opacity = "0";
+//   }, 3000);
 
-  setTimeout(() => {
-    messageBanner.style.display = "none";
-  }, 3000);
-}
+//   setTimeout(() => {
+//     messageBanner.style.display = "none";
+//   }, 3000);
+// }
 
 checkToken();
 
@@ -434,8 +434,12 @@ document.getElementById('save-config').addEventListener('click', async () => {
   const result = await response.json();
   if (response.ok) {
     showMessage(result.message, 'success');
+   renderValidationErrors({ ok: true, message: result.message || 'Configuration updated successfully.' });
   } else {
-    errorBox.textContent = result.error || 'Unknown error';
+    // errorBox.textContent = result.error || 'Unknown error';
+    showMessage(result.error || 'Failed to save configuration', 'error');
+    renderValidationErrors(result);
+   // console.log('renderValidationErrors called', result);
   }
 });
 
@@ -1082,3 +1086,81 @@ document.addEventListener("visibilitychange", () => {
 
 //})
 
+(function () {
+  const errorBox  = document.getElementById('errorBox');
+  const errorList = document.getElementById('errorList');
+
+  function preview(val, max = 160) {
+    if (val == null) return '';
+    const s = String(val).replace(/\s+/g, ' ');
+    return s.length > max ? s.slice(0, max) + '…' : s;
+  }
+
+  // Pass the parsed JSON result from your POST to /save-pptx-config/:name
+  window.renderValidationErrors = function renderValidationErrors(result) {
+    // Reset UI
+    errorBox.textContent = '';
+    errorList.innerHTML = '';
+    errorList.hidden = true;
+
+    if (!result) {
+      errorBox.textContent = 'Unknown error';
+      return;
+    }
+
+    // Success path (optional)
+    if (result.ok || result.message) {
+      errorBox.textContent = result.message || 'OK';
+      errorBox.classList.remove('is-error');
+
+    errorBox.textContent = '';
+    errorList.innerHTML = '';
+    errorList.hidden = true;
+
+      return;
+    }
+
+    // Error summary
+    
+    const summary = result.error || 'Error';
+    const details = Array.isArray(result.details) ? result.details : [];
+
+    if (!details.length) {
+      // Fall back to whatever the server sent
+      errorBox.textContent = summary || 'Unknown error';
+      errorList.hidden = true;
+      return;
+    }
+
+    // Show summary with count
+    errorBox.textContent = `${summary} (${details.length})`;
+    errorBox.classList.add('is-error');
+
+    // Build list items: { jsonPath, value, error }
+    for (const e of details) {
+      const li = document.createElement('li');
+
+      const pathSpan = document.createElement('span');
+      pathSpan.className = 'error-path';
+      pathSpan.textContent = e?.jsonPath || '(unknown path)';
+
+      const reasonSpan = document.createElement('span');
+      reasonSpan.className = 'error-reason';
+      reasonSpan.textContent = ` – ${e?.error || 'Invalid value'}`;
+
+      const valueSpan = document.createElement('span');
+      valueSpan.className = 'error-value';
+      const value = typeof e?.value === 'string' ? e.value : JSON.stringify(e?.value);
+      valueSpan.textContent = value ? `  [${preview(value)}]` : '';
+
+      li.appendChild(pathSpan);
+      li.appendChild(reasonSpan);
+      li.appendChild(valueSpan);
+      errorList.appendChild(li);
+    }
+
+    errorList.hidden = false;
+  };
+
+
+})();

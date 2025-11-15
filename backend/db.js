@@ -8,6 +8,11 @@
 const Database = require('better-sqlite3');
 const path     = require('path');
 const schemaVersion = '2.1';
+const { logLevels, log } = require('./logger');
+const {
+    DB_PATH,
+    DB_NAME
+} = require('./config');
 
 // Schema Version history
 // 1.0   Initial version using sqlite3. Items only
@@ -15,10 +20,13 @@ const schemaVersion = '2.1';
 // 2.0   Adds auctions, bidders, payments and audit tables to align with convention-auction 1.0
 // 2.1   Add admin_can_change_state to auctions table
 //
+const dbPath = path.join(DB_PATH, DB_NAME);
 
-const db = new Database(path.join(__dirname, 'auction.db'));
+log('General', logLevels.INFO, 'Using database at ' + dbPath);
 
-const { logLevels, log } = require('./logger');
+// const db = new Database(path.join(DB_PATH, DB_NAME));
+const db = new Database(dbPath);
+
 
 try {
 

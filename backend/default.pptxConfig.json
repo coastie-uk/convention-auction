@@ -54,7 +54,7 @@
           "y": 4.2,
           "w": "100%",
           "h": 1.5,
-          "path": "resources/slide-banner-new.jpg"
+          "path": "/var/lib/auction/resources/banner.jpg"
         }
       }
     ]

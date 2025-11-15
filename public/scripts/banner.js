@@ -1,5 +1,5 @@
     const messageBanner = document.createElement("div");
-        const API = "/api"
+        const API2 = "/api"
 
     messageBanner.id = "message-banner";
     document.body.appendChild(messageBanner);
@@ -28,7 +28,7 @@
         if (!el) return; // nothing to do
 
         try {
-            const res = await fetch(`${API}/version`, { cache: 'no-store' });
+            const res = await fetch(`${API2}/version`, { cache: 'no-store' });
             const data = await res.json();
             el.textContent = `Server connected (v${data.backend}, db schema ${data.schema})`;
         } catch (e) {

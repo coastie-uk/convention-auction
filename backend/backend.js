@@ -20,7 +20,10 @@ const jwt = require('jsonwebtoken');
 const app = express();
 const fsp = require('fs').promises;
 const db = require('./db');
+
 const VALID_ROLES = new Set(['admin', 'maintenance', 'cashier', 'slideshow']);
+const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
+
 const {
     CONFIG_IMG_DIR,
     SAMPLE_DIR,
@@ -30,10 +33,13 @@ const {
     MAX_UPLOADS,
     allowedExtensions,
     SECRET_KEY,
-    port,
+    PORT,
     LOG_LEVEL,
-    MAX_ITEMS
+    MAX_ITEMS,
+    PPTX_CONFIG_DIR,
+    OUTPUT_DIR
 } = require('./config');
+
 const maintenanceRoutes = require('./maintenance');
 const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
 const checkAuctionState = require('./middleware/checkAuctionState')(
@@ -42,27 +48,15 @@ const checkAuctionState = require('./middleware/checkAuctionState')(
 );
 // collect up version info
 const { version } = require('./package.json'); // get version from package.json
-const backendVersion = version || '0.0.0';
+const backendVersion = version || 'Unknown';
 const { schemaVersion } = require('./db'); // get schema version from db.js
 
 
-const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
 
 // this text is used to trim the maint log display
 log('General', logLevels.INFO, '~~ Starting up Auction backend ~~');
 log('General', logLevels.INFO, `Backend version: ${backendVersion}, DB schema version: ${schemaVersion}`);
-
-const validLogLevels = ["DEBUG", "INFO", "WARN", "ERROR"];
-const normalizedLevel = LOG_LEVEL.toUpperCase();
-if (validLogLevels.includes(normalizedLevel)) {
-    setLogLevel(normalizedLevel);
-    log('Logger', logLevels.INFO, `Log level set to ${normalizedLevel}`);
-
-} else {
-    log('Logger', logLevels.WARN, `Invalid LOG_LEVEL ${LOG_LEVEL} in config. Defaulting to INFO.`);
-    setLogLevel("INFO");
-}
-
+setLogLevel(LOG_LEVEL.toUpperCase());
 
 //--------------------------------------------------------------------------
 // CORS
@@ -96,7 +90,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // Multer storage setup for file uploads
 const storage = multer.diskStorage({
-    destination: './uploads/',
+    destination: UPLOAD_DIR,
     filename: (req, file, cb) => {
         const uniqueName = `${uuidv4()}.jpg`;
         cb(null, uniqueName);
@@ -108,10 +102,10 @@ const upload = multer({
 });
 
 
-const outputsDir = path.join(__dirname, 'outputs');
+// Ensure OUTPUT_DIR exists - This one specifically as it's used for temporary output files)
 
-if (!fs.existsSync(outputsDir)) {
-    fs.mkdirSync(outputsDir, { recursive: true });
+if (!fs.existsSync(OUTPUT_DIR)) {
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true, mode: 0o755 });
 }
 
 
@@ -337,8 +331,11 @@ app.post('/auctions/:auctionId/newitem', checkAuctionState(['setup', 'locked']),
 
 
                 if (photoPath) {
-                    const resizedPath = `./uploads/resized_${photoPath}`;
-                    const previewPath = `./uploads/preview_resized_${photoPath}`;
+                    // const resizedPath = `./uploads/resized_${photoPath}`;
+                    // const previewPath = `./uploads/preview_resized_${photoPath}`;
+
+                    const resizedPath = path.join(UPLOAD_DIR, `resized_${photoPath}`);
+                    const previewPath = path.join(UPLOAD_DIR, `preview_resized_${photoPath}`);
 
                     await sharp(req.file.path).metadata(); // Will throw if not an image
 
@@ -493,8 +490,11 @@ try {
         if (req.file) {
             let targetFilename = row.photo?.startsWith("resized_") ? row.photo : `resized_${uuidv4()}.jpg`;
 
-            const resizedPath = `./uploads/${targetFilename}`;
-            const previewPath = `./uploads/preview_${targetFilename}`;
+            // const resizedPath = `./uploads/${targetFilename}`;
+            // const previewPath = `./uploads/preview_${targetFilename}`;
+
+           const resizedPath = path.join(UPLOAD_DIR, targetFilename);
+           const previewPath = path.join(UPLOAD_DIR, `preview_${targetFilename}`);
 
             try {
 
@@ -514,8 +514,13 @@ try {
                 fs.unlinkSync(req.file.path);
 
                 if (row.photo && row.photo !== targetFilename) {
-                    const oldFull = `./uploads/${row.photo}`;
-                    const oldPreview = `./uploads/preview_${row.photo}`;
+                    // const oldFull = `./uploads/${row.photo}`;
+                    // const oldPreview = `./uploads/preview_${row.photo}`;
+
+                    const oldFull = path.join(UPLOAD_DIR, row.photo);
+                    const oldPreview = path.join(UPLOAD_DIR, `preview_${row.photo}`);
+
+
                     if (fs.existsSync(oldFull)) fs.unlinkSync(oldFull);
                     if (fs.existsSync(oldPreview)) fs.unlinkSync(oldPreview);
                 }
@@ -638,12 +643,14 @@ app.delete('/items/:id', authenticateRole("admin"), checkAuctionState(['setup', 
         }
 
         if (row.photo) {
-            const photoPath = `./uploads/${row.photo}`;
+      //      const photoPath = `./uploads/${row.photo}`;
+            const photoPath = path.join(UPLOAD_DIR, row.photo);
             if (fs.existsSync(photoPath)) {
                 fs.unlinkSync(photoPath);
             }
 
-            const oldPreviewPath = `./uploads/preview_${row.photo}`;
+     //       const oldPreviewPath = `./uploads/preview_${row.photo}`;
+            const oldPreviewPath = path.join(UPLOAD_DIR, `preview_${row.photo}`);
             if (fs.existsSync(oldPreviewPath)) {
                 fs.unlinkSync(oldPreviewPath);
             }
@@ -682,8 +689,9 @@ app.post('/generate-pptx', authenticateRole("admin"), async (req, res) => {
 
     try {
 
-        const configPath = path.join(__dirname, './pptx-config/pptxConfig.json');
-        const configData = await fsp.readFile(configPath, 'utf-8');
+       // const configPath = path.join(__dirname, './pptx-config/pptxConfig.json');
+        const configPath = path.join(PPTX_CONFIG_DIR, 'pptxConfig.json');
+                const configData = await fsp.readFile(configPath, 'utf-8');
         const config = JSON.parse(configData);
 
         const rows = await new Promise((resolve, reject) => {
@@ -708,7 +716,8 @@ app.post('/generate-pptx', authenticateRole("admin"), async (req, res) => {
             slide.addText(`Creator: ${item.artist}`, config.artistStyle);
 
             if (item.photo) {
-                const imgPath = `./uploads/${item.photo}`;
+          //      const imgPath = `./uploads/${item.photo}`;
+                const imgPath = path.join(UPLOAD_DIR, item.photo);
                 if (fs.existsSync(imgPath)) {
                     const metadata = await sharp(imgPath).metadata();
                     const aspectRatio = metadata.width / metadata.height;
@@ -732,7 +741,8 @@ app.post('/generate-pptx', authenticateRole("admin"), async (req, res) => {
             }
         }
 
-        const filePath = './outputs/auction_presentation.pptx';
+     //   const filePath = './outputs/auction_presentation.pptx';
+        const filePath = path.join(OUTPUT_DIR, 'auction_presentation.pptx');
         await pptx.writeFile({ fileName: filePath });
 
         logFromRequest(req, logLevels.INFO, 'Slide file created for auction ' + auction_id);
@@ -757,7 +767,9 @@ app.post('/generate-cards', authenticateRole("admin"), async (req, res) => {
 
     try {
 
-        const configPath = path.join(__dirname, './pptx-config/cardConfig.json');
+   //     const configPath = path.join(__dirname, './pptx-config/cardConfig.json');
+        const configPath = path.join(PPTX_CONFIG_DIR, 'cardConfig.json');
+
         const configData = await fsp.readFile(configPath, 'utf-8');
         const cardconfig = JSON.parse(configData);
 
@@ -771,18 +783,19 @@ app.post('/generate-cards', authenticateRole("admin"), async (req, res) => {
         let pptx = new pptxgen();
 
         //define the slide master
-        pptx.defineSlideMaster({
-            title: "CARD_MASTER",
-            background: { color: "FFFFFF" },
-            objects: [
-                //   { line: { x: 3.5, y: 1.0, w: 6.0, line: { color: "0088CC", width: 5 } } },
-                //   { rect: { x: 0.0, y: 5.3, w: "100%", h: 0.75, fill: { color: "F1F1F1" } } },
-                //   { text: { text: "Test text", options: { x: 3.0, y: 5.3, w: 5.5, h: 0.75 } } },
-                //   { image: { x: 0, y: 4.2, w: "100%", h: 1.5, path: "slide-banner-new.jpg" } },
-                { image: { x: 4.6, y: 3.0, w: 0.8, h: 0.8, path: "logo.png" } },
-            ],
-            //   slideNumber: { x: 0.3, y: "80%" },
-        });
+        // pptx.defineSlideMaster({
+        //     title: "CARD_MASTER",
+        //     background: { color: "FFFFFF" },
+        //     objects: [
+        //         //   { line: { x: 3.5, y: 1.0, w: 6.0, line: { color: "0088CC", width: 5 } } },
+        //         //   { rect: { x: 0.0, y: 5.3, w: "100%", h: 0.75, fill: { color: "F1F1F1" } } },
+        //         //   { text: { text: "Test text", options: { x: 3.0, y: 5.3, w: 5.5, h: 0.75 } } },
+        //         //   { image: { x: 0, y: 4.2, w: "100%", h: 1.5, path: "slide-banner-new.jpg" } },
+        //         { image: { x: 4.6, y: 3.0, w: 0.8, h: 0.8, path: "logo.png" } },
+        //     ],
+        //     //   slideNumber: { x: 0.3, y: "80%" },
+        // });
+        pptx.defineSlideMaster(cardconfig.masterSlide);
 
         // Define page size as a6
         pptx.defineLayout({ name: 'A6', width: 5.8, height: 4.1 });
@@ -797,7 +810,8 @@ app.post('/generate-cards', authenticateRole("admin"), async (req, res) => {
             slide.addText(`Creator: ${item.artist}`, cardconfig.artistStyle);
         }
 
-        const filePath = './outputs/auction_cards.pptx';
+    //    const filePath = './outputs/auction_cards.pptx';
+    const filePath = path.join(OUTPUT_DIR, 'auction_cards.pptx');
 
         await pptx.writeFile({ fileName: filePath });
         logFromRequest(req, logLevels.INFO, 'Item cards generated for auction ' + auction_id);
@@ -839,7 +853,8 @@ app.post('/export-csv', authenticateRole("admin"), (req, res) => {
 
             const parser = new Parser({ fields: ['id', 'description', 'contributor', 'artist', 'photo', 'date', 'notes', 'mod_date', 'auction_id', 'item_number', 'paddle_number', 'hammer_price'] });
             const csv = parser.parse(rows);
-            const filePath = './outputs/auction_data.csv';
+        //    const filePath = './outputs/auction_data.csv';
+        const filePath = path.join(OUTPUT_DIR, 'auction_data.csv');
             fs.writeFileSync(filePath, csv);
             logFromRequest(req, logLevels.INFO, 'CSV file generated for auction ' + auction_id);
 
@@ -867,8 +882,10 @@ app.post('/rotate-photo', authenticateRole("admin"), async (req, res) => {
         }
 
         const photoFilename = row.photo;
-        const photoPath = `./uploads/${photoFilename}`;
-        const previewPath = `./uploads/preview_${photoFilename}`;
+     //   const photoPath = `./uploads/${photoFilename}`;
+        const photoPath = path.join(UPLOAD_DIR, photoFilename);
+     //   const previewPath = `./uploads/preview_${photoFilename}`;
+        const previewPath = path.join(UPLOAD_DIR, `preview_${photoFilename}`);
         const angle = direction === 'left' ? -90 : 90;
 
         try {
@@ -1265,7 +1282,8 @@ app.post("/auctions/update-status", authenticateRole(["admin", "maintenance"]), 
 });
 
 // Serve uploaded images
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static( UPLOAD_DIR ));
 app.use('/resources', express.static(CONFIG_IMG_DIR));
 
 // Mount maintenance features (role protected)
@@ -1275,8 +1293,8 @@ app.use('/maintenance', authenticateRole("maintenance"), (req, res, next) => {
 });
 
 // Start the server
-const server = app.listen(port, () => {
-    log('General', logLevels.INFO, 'Server startup complete and listening on port ' + port);
+const server = app.listen(PORT, () => {
+    log('General', logLevels.INFO, 'Server startup complete and listening on port ' + PORT);
 });
 
 server.on('error', (err) => {

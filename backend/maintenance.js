@@ -12,19 +12,29 @@ const multer = require("multer");
 const { Parser } = require("@json2csv/plainjs");
 const { exec } = require("child_process");
 const router = express.Router();
-const upload = multer({ dest: "uploads/" });
+const { CONFIG_IMG_DIR, SAMPLE_DIR, UPLOAD_DIR, DB_PATH, DB_NAME, BACKUP_DIR, MAX_UPLOADS, allowedExtensions, MAX_AUCTIONS, OUTPUT_DIR, LOG_LEVEL, PPTX_CONFIG_DIR, LOG_DIR, LOG_NAME } = require('./config');
+
+const { validateJsonPaths } = require('./security/json-path-validator');
+
+const upload = multer({ dest: UPLOAD_DIR });
 const sharp = require("sharp");
 const db = require('./db');
-const { CONFIG_IMG_DIR, SAMPLE_DIR, UPLOAD_DIR, DB_PATH, BACKUP_DIR, MAX_UPLOADS, allowedExtensions, MAX_AUCTIONS, LOG_LEVEL } = require('./config');
-const CONFIG_PATH = path.join(__dirname, "./pptx-config/pptxConfig.json");
-const CARD_PATH = path.join(__dirname, "./pptx-config/cardConfig.json");
+// const CONFIG_PATH = path.join(__dirname, "./pptx-config/pptxConfig.json");
+// const CARD_PATH = path.join(__dirname, "./pptx-config/cardConfig.json");
 const archiver = require("archiver");
-const logFilePath = path.join(__dirname, 'server.log');
+// const logFilePath = path.join(__dirname, 'server.log');
+const logFilePath = path.join(LOG_DIR, LOG_NAME);
 const logLines = 500;
+// const CONFIG_PATHS = {
+//   pptx: './pptx-config/pptxConfig.json',
+//   card: './pptx-config/cardConfig.json'
+// };
+
 const CONFIG_PATHS = {
-  pptx: './pptx-config/pptxConfig.json',
-  card: './pptx-config/cardConfig.json'
+  pptx: path.join(PPTX_CONFIG_DIR, 'pptxConfig.json'),
+  card: path.join(PPTX_CONFIG_DIR, 'cardConfig.json')
 };
+
 
 const maintenanceRoutes = require('./maintenance');
 const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
@@ -34,6 +44,7 @@ const checkAuctionState = require('./middleware/checkAuctionState')(
 );
 
 const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
+
 
 
 if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR);
@@ -48,7 +59,8 @@ if (!fs.existsSync(CONFIG_IMG_DIR)) fs.mkdirSync(CONFIG_IMG_DIR);
 
 router.post("/backup", (req, res) => {
   const backupPath = path.join(BACKUP_DIR, `auction_backup_${Date.now()}.db`);
-  fs.copyFileSync(DB_PATH, backupPath);
+  const databaseFile = path.join(DB_PATH, DB_NAME);
+  fs.copyFileSync(databaseFile, backupPath);
   res.json({ message: "Backup created", path: backupPath });
   logFromRequest(req, logLevels.INFO, `Database backup created ${backupPath}`);
 });
@@ -59,7 +71,7 @@ router.post("/backup", (req, res) => {
 //--------------------------------------------------------------------------
 
 router.get("/download-db", (req, res) => {
-  res.download(DB_PATH);
+  res.download(path.join(DB_PATH, DB_NAME));
 });
 
 //--------------------------------------------------------------------------
@@ -104,7 +116,7 @@ router.post("/restore", async (req, res) => {
     }
 
     //  Valid DB – restore it
-    fs.copyFileSync(filePath, DB_PATH);
+    fs.copyFileSync(filePath, path.join(DB_PATH, DB_NAME));
     fs.unlinkSync(filePath);
 
     logFromRequest(req, logLevels.INFO, `Database restored`);
@@ -175,7 +187,7 @@ router.get("/export", (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     const parser = new Parser();
     const csv = parser.parse(rows);
-    const filePath = path.join(__dirname, "outputs", "bulk_export.csv");
+    const filePath = path.join(OUTPUT_DIR, "bulk_export.csv");
     fs.writeFileSync(filePath, csv);
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -287,8 +299,9 @@ router.post("/import", async (req, res) => {
 //--------------------------------------------------------------------------
 
 router.get("/photo-report", (req, res) => {
-  const files = fs.readdirSync("./uploads");
-  const totalSize = files.reduce((sum, file) => sum + fs.statSync(path.join("./uploads", file)).size, 0);
+ // const files = fs.readdirSync("./uploads");
+  const files = fs.readdirSync( UPLOAD_DIR );
+  const totalSize = files.reduce((sum, file) => sum + fs.statSync(path.join(UPLOAD_DIR, file)).size, 0);
   res.json({ count: files.length, totalSize });
   logFromRequest(req, logLevels.INFO, `${files.length} photos stored, ${totalSize / 1024 / 1024} occupied`);
 });
@@ -306,7 +319,9 @@ router.get("/check-integrity", (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
 
     // Map of existing photo filenames
-    const missingPhotos = items.filter(item => item.photo && !fs.existsSync(path.join(__dirname, "uploads", item.photo)));
+    // const missingPhotos = items.filter(item => item.photo && !fs.existsSync(path.join(__dirname, "uploads", item.photo)));
+
+    const missingPhotos = items.filter(item => item.photo && !fs.existsSync(path.join(UPLOAD_DIR, item.photo)));
 
     // Find items with missing or invalid auction_id
     db.all("SELECT id FROM auctions", [], (err, auctions) => {
@@ -330,7 +345,7 @@ router.get("/check-integrity", (req, res) => {
       const invalidItemDetails = items.map(item => {
         const issues = [];
 
-        if (item.photo && !fs.existsSync(path.join(__dirname, "uploads", item.photo))) {
+        if (item.photo && !fs.existsSync(path.join(UPLOAD_DIR, item.photo))) {
           issues.push("Missing photo");
         }
         if (!validAuctionIds.has(item.auction_id)) {
@@ -493,7 +508,7 @@ router.get("/download-full", (req, res) => {
   archive.pipe(res);
 
   // Add DB file
-  archive.file(DB_PATH, { name: "auction.db" });
+  archive.file(path.join(DB_PATH, DB_NAME));
 
   // Add referenced photos
   db.all("SELECT photo FROM items WHERE photo IS NOT NULL", [], (err, rows) => {
@@ -505,9 +520,11 @@ router.get("/download-full", (req, res) => {
 
     const usedPhotos = new Set(rows.map(r => r.photo));
     for (const filename of usedPhotos) {
-      const filePath = path.join(__dirname, "uploads", filename);
+      const filePath = path.join(UPLOAD_DIR, filename);
       if (fs.existsSync(filePath)) {
-        archive.file(filePath, { name: `uploads/${filename}` });
+//        archive.file(filePath, { name: `uploads/${filename}` });
+        archive.file(filePath, { name: path.join(UPLOAD_DIR, filename) });
+
       }
     }
 
@@ -674,8 +691,11 @@ router.post("/generate-test-data", checkAuctionState(['setup']), async (req, res
     const resizedFilename = `resized_${baseFilename}`;
     const previewFilename = `preview_resized_${baseFilename}`;
 
-    const resizedPath = path.join(__dirname, "uploads", resizedFilename);
-    const previewPath = path.join(__dirname, "uploads", previewFilename);
+    // const resizedPath = path.join(__dirname, "uploads", resizedFilename);
+    // const previewPath = path.join(__dirname, "uploads", previewFilename);
+
+    const resizedPath = path.join(UPLOAD_DIR, resizedFilename);
+    const previewPath = path.join(UPLOAD_DIR, previewFilename);
 
     try {
       await sharp(srcPath)
@@ -742,27 +762,99 @@ router.get('/get-pptx-config/:name', (req, res) => {
   });
 });
 
-router.post('/save-pptx-config/:name', (req, res) => {
+// router.post('/save-pptx-config/:name', (req, res) => {
+//   const file = CONFIG_PATHS[req.params.name];
+//   if (!file) {
+//     logFromRequest(req, logLevels.WARN, `Unexpected file write requested`);
+//     return res.status(400).json({ error: `Invalid config name ${req.params.name}` });
+//   }
+//   let json;
+//   try {
+//     json = JSON.stringify(req.body, null, 2);
+//   } catch (err) {
+//     logFromRequest(req, logLevels.WARN, `PPTX config rejected, invalid JSON`);
+
+//     return res.status(400).json({ error: 'Invalid JSON' });
+//   }
+
+//   fs.writeFile(file, json, 'utf8', err => {
+//     if (err) return res.status(500).json({ error: 'Unable to save config' });
+//     res.json({ message: 'Configuration updated successfully.' });
+//     logFromRequest(req, logLevels.INFO, `PPTX config file ${file} updated`);
+
+//   });
+// });
+
+router.post('/save-pptx-config/:name', async (req, res) => {
   const file = CONFIG_PATHS[req.params.name];
   if (!file) {
     logFromRequest(req, logLevels.WARN, `Unexpected file write requested`);
     return res.status(400).json({ error: `Invalid config name ${req.params.name}` });
   }
-  let json;
-  try {
-    json = JSON.stringify(req.body, null, 2);
-  } catch (err) {
-    logFromRequest(req, logLevels.WARN, `PPTX config rejected, invalid JSON`);
 
+  // ensure we have a parsed JSON object
+  if (!req.body || typeof req.body !== 'object') {
+    logFromRequest(req, logLevels.WARN, `PPTX config rejected, missing/invalid JSON body`);
     return res.status(400).json({ error: 'Invalid JSON' });
   }
 
-  fs.writeFile(file, json, 'utf8', err => {
-    if (err) return res.status(500).json({ error: 'Unable to save config' });
-    res.json({ message: 'Configuration updated successfully.' });
-    logFromRequest(req, logLevels.INFO, `PPTX config file ${file} updated`);
+  try {
+    // 🔒 validate JSON paths BEFORE saving
+    const { ok, errors, normalizedJson } = await validateJsonPaths(req.body, {
+      baseImgDir: CONFIG_IMG_DIR,
+      allowedExtensions: allowedExtensions,
+      requireExistence: true,   // set false if you allow references that will exist later
+      contentSniff: true,       // uses sharp under the hood to confirm it's a real image
+      // Narrow to expected keys to reduce false positives (adjust to your schema):
+      checkOnlyKeys: ['image', 'images', 'thumbnail', 'background', 'path'],
+      checkKeysRegex: [/image/i, /thumb/i, /background/i, /photo/i, /^background$/i, /path/i],
+      outputStyle: 'absolute',
+    });
 
-  });
+    
+    if (!ok) {
+      // Log a concise summary…
+      logFromRequest(
+        req,
+        logLevels.WARN,
+        `PPTX config rejected: ${errors.length} validation error(s)`
+      );
+
+      // …and log each exact failure with structured context
+      errors.forEach((e, idx) => {
+        logFromRequest(
+          req,
+          logLevels.WARN,
+          `Path validation failed [${idx + 1}/${errors.length}] at ${e.jsonPath}: ${e.error}; value="${preview(e.value)}"`
+        );
+      });
+
+      return res.status(400).json({ error: `PPTX Template validation failed with ${errors.length} error(s)`, details: errors });
+    }
+
+    // save the sanitized JSON produced by the validator (normalized POSIX paths, etc.)
+    const json = JSON.stringify(normalizedJson, null, 2);
+
+    fs.writeFile(file, json, 'utf8', (err) => {
+      if (err) {
+        logFromRequest(req, logLevels.ERROR, `Unable to save config: ${err.message}`);
+        return res.status(500).json({ error: 'Unable to save config' });
+      }
+      res.json({ message: 'Configuration updated successfully.' });
+      logFromRequest(req, logLevels.INFO, `PPTX config file ${file} updated`);
+    });
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Unhandled error in save-pptx-config: ${err.message}`);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+
+// helper to avoid log spam / secrets leakage
+function preview(str, max = 180) {
+  if (typeof str !== 'string') return String(str);
+  const clean = str.replace(/\s+/g, ' ').slice(0, max);
+  return clean + (str.length > max ? '…' : '');
+}
+
 });
 
 router.post("/pptx-config/reset", (req, res) => {
@@ -773,9 +865,12 @@ router.post("/pptx-config/reset", (req, res) => {
     return res.status(400).json({ error: "Invalid config type." });
   }
 
-  const defaultPath = path.join(__dirname, `./pptx-config/${configType}Config.default.json`);
-  const livePath = path.join(__dirname, `./pptx-config/${configType}Config.json`);
+  // const defaultPath = path.join(__dirname, `./pptx-config/${configType}Config.default.json`);
+  // const livePath = path.join(__dirname, `./pptx-config/${configType}Config.json`);
 
+  const defaultPath = path.join(__dirname, `default.${configType}Config.json`);
+  const livePath = path.join(PPTX_CONFIG_DIR, `${configType}Config.json`);
+console.log(livePath);
   try {
     if (!fs.existsSync(defaultPath)) {
       logFromRequest(req, logLevels.ERROR, `Default config not found:` + defaultPath);
@@ -1120,8 +1215,11 @@ router.post("/resources/delete", (req, res) => {
 
     // Check if PPTX configs reference the file
     try {
-      const pptxConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
-      const cardConfig = JSON.parse(fs.readFileSync(CARD_PATH, "utf-8"));
+      // const pptxConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+      // const cardConfig = JSON.parse(fs.readFileSync(CARD_PATH, "utf-8"));
+
+      const pptxConfig = JSON.parse(fs.readFileSync(CONFIG_PATHS[pptx], "utf-8"));
+      const cardConfig = JSON.parse(fs.readFileSync(CONFIG_PATHS[card], "utf-8"));
 
       const pptxRefs = JSON.stringify(pptxConfig).includes(filename);
       const cardRefs = JSON.stringify(cardConfig).includes(filename);

@@ -32,7 +32,7 @@
           "y": 3,
           "w": 0.8,
           "h": 0.8,
-          "path": "resources/default_logo.png"
+          "path": "/var/lib/auction/resources/default_logo.png"
         }
       }
     ]

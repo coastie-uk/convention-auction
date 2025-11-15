@@ -24,18 +24,6 @@ const {
     log
   } = require('./logger');
 
-setLogLevel(logLevels.DEBUG);
-
-const validLogLevels = ["DEBUG", "INFO", "WARN", "ERROR"];
-const normalizedLevel = LOG_LEVEL.toUpperCase();
-if (validLogLevels.includes(normalizedLevel)) {
-    setLogLevel(normalizedLevel);
-    log('Logger', logLevels.INFO, `Log level set to ${normalizedLevel}`);
-
-} else {
-    log('Logger', logLevels.WARN, `Invalid LOG_LEVEL ${LOG_LEVEL} in config. Defaulting to INFO.`);
-    setLogLevel("INFO");
-}
 
 module.exports = function phase1Patch (app, authenticateRole) {
   if (typeof authenticateRole !== 'function') {
@@ -440,5 +428,5 @@ settlement.get('/summary', authenticateRole('cashier'), (req, res) => {
   app.use('/settlement', settlement);
   app.use('/lots', sales);
 
-  log('Phase1', logLevels.INFO, 'Phase 1 patch v1.1 (bid+payment processor) loaded');
+ // log('Phase1', logLevels.INFO, 'Phase 1 patch v1.1 (bid+payment processor) loaded');
 };

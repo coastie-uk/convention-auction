@@ -162,6 +162,8 @@
           </select>
           <textarea id="config-json" rows="20" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
           <p id="config-error" style="color: red;"></p>
+            <div id="errorBox" class="error-box" role="alert" aria-live="polite"></div>
+            <ul id="errorList" class="error-list" hidden></ul>
           <button id="save-config">Save Config</button>
           <button id="reset-pptx-config">Reset to Default</button>
           <button onclick="document.getElementById('config-editor').style.display='none'">Cancel</button>
@@ -240,9 +242,11 @@
 
 
   </main>
-
+  <script src="/scripts/banner.js"></script>
   <script src="/scripts/maintenance.js"></script>
   <script src="/scripts/daypilot-modal-3.15.1.min.js"></script>
+
+
   
   <script>
 

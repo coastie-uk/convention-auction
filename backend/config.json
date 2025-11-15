@@ -1,18 +1,18 @@
 {
-  "CONFIG_IMG_DIR": "resources",
+  "CONFIG_IMG_DIR": "/var/lib/auction/resources",
   "SAMPLE_DIR": "sample-assets",
-  "BACKUP_DIR": "backups",
+  "BACKUP_DIR": "/var/lib/auction/backup",
   "MAX_UPLOADS": 30,
   "allowedExtensions": [".jpg", ".jpeg", ".png"],
-  "DB_PATH": "auction.db",
-  "UPLOAD_DIR": "uploads",
-  "SECRET_KEY": "RarityIsBestPony",
-  "port": 3000,
-  "LOG_LEVEL": "INFO",
+  "DB_PATH": "/var/lib/auction/",
+  "DB_NAME": "auction.db",  
+  "UPLOAD_DIR": "/var/lib/auction/uploads",
+  "PORT": 3001,
+  "LOG_LEVEL": "DEBUG",
+  "LOG_DIR": "/var/log/auction",
+  "LOG_NAME": "server.log",
   "MAX_AUCTIONS": 20,
-  "MAX_ITEMS": 2000
-
-
-
-
-}
+  "MAX_ITEMS": 2000,
+  "PPTX_CONFIG_DIR": "/var/lib/auction",
+  "OUTPUT_DIR": "/var/lib/auction/output"
+  }
