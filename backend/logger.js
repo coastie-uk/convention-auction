@@ -26,7 +26,9 @@ const MAX_LOG_SIZE_MB = 1;
 
 // default to INFO if setLogLevel not called
 let currentLogLevel = logLevels.INFO;
-log('Logger', logLevels.INFO, `Logging initialised`);
+// this text is used to trim the maint log display
+log('General', logLevels.INFO, '~~ Starting up Auction backend ~~');
+log('Logger', logLevels.INFO, `Logging framework initialized. Log file: ${logFilePath}`);
 
 
 // Set the current log level

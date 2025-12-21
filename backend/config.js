@@ -32,6 +32,7 @@ if (!process.env.SECRET_KEY) {
   }
 }
 
+
 const SECRET_KEY = process.env.SECRET_KEY;
 
 // Basic sanity check for length of key
@@ -40,6 +41,24 @@ if (!SECRET_KEY || SECRET_KEY.trim().length < 16) {
  console.error('[config] FATAL: SECRET_KEY missing/too short in environment (.env).');
   process.exit(1);
 }
+
+const SUMUP_WEB_ENABLED = parseBoolEnv('SUMUP_WEB_ENABLED', false);
+
+requireGroupIfEnabled(SUMUP_WEB_ENABLED, 'SumUp Web Payments', [
+  'SUMUP_API_KEY',
+  'SUMUP_MERCHANT_CODE',
+  'SUMUP_RETURN_URL'
+]);
+
+// SumUp: card-present via deep link
+const SUMUP_CARD_PRESENT_ENABLED = parseBoolEnv('SUMUP_CARD_PRESENT_ENABLED', false);
+
+requireGroupIfEnabled(SUMUP_CARD_PRESENT_ENABLED, 'SumUp Card-Present Payments', [
+  'SUMUP_AFFILIATE_KEY',
+  'SUMUP_APP_ID',
+  'SUMUP_CALLBACK_SUCCESS',
+  'SUMUP_CALLBACK_FAIL'
+]);
 
 // Load config.json (needed for all other settings)
 const jsonPath = path.join(__dirname, 'config.json');
@@ -103,6 +122,8 @@ try {
   const LOG_NAME      = reqStr(json, 'LOG_NAME');         // e.g., "server.log"
   const OUTPUT_DIR      = reqStr(json, 'OUTPUT_DIR');         // e.g., "output"
 
+  
+
   cfg = {
     // secret (env)
     SECRET_KEY,
@@ -123,7 +144,30 @@ try {
     PPTX_CONFIG_DIR,
     LOG_DIR,
     LOG_NAME,
-    OUTPUT_DIR
+    OUTPUT_DIR,
+
+  // SumUp – web (hosted payments)
+    SUMUP_WEB_ENABLED,
+    SUMUP_API_KEY: process.env.SUMUP_API_KEY || null,
+    SUMUP_MERCHANT_CODE: process.env.SUMUP_MERCHANT_CODE || null,
+    SUMUP_RETURN_URL: process.env.SUMUP_RETURN_URL || null,
+
+    // SumUp – card-present (deep link)
+    SUMUP_CARD_PRESENT_ENABLED,
+    SUMUP_AFFILIATE_KEY: process.env.SUMUP_AFFILIATE_KEY || null,
+    SUMUP_APP_ID: process.env.SUMUP_APP_ID || null,
+    SUMUP_CALLBACK_SUCCESS: process.env.SUMUP_CALLBACK_SUCCESS || null,
+    SUMUP_CALLBACK_FAIL: process.env.SUMUP_CALLBACK_FAIL || null,
+    PAYMENT_TTL_MIN: Number(process.env.PAYMENT_INTENT_TTL_MINUTES || 20),
+
+    CURRENCY: validateSumupCurrency(process.env.CURRENCY, 'GBP'),
+
+    SUMUP_APP_INDIRECT_ENABLED: parseBoolEnv('SUMUP_APP_INDIRECT_ENABLED', false),
+
+    //other payment method toggles
+    CASH_ENABLED: parseBoolEnv('CASH_PAYMENT_ENABLED', true),
+    MANUAL_CARD_ENABLED: parseBoolEnv('MANUAL_CARD_PAYMENT_ENABLED', true),
+    PAYPAL_ENABLED: parseBoolEnv('PAYPAL_PAYMENT_ENABLED', false)
   };
 } catch (e) {
   console.error('[config] FATAL:', e.message);
@@ -154,5 +198,79 @@ if (config.LOG_LEVEL === 'DEBUG') {
 
 });
 }
+
+function parseBoolEnv(name, defaultValue = false) {
+  const raw = process.env[name];
+
+  if (raw === undefined) {
+    return defaultValue;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+
+  throw new Error(
+    `Invalid boolean value for ${name}: "${raw}". Expected true/false/1/0/yes/no/on/off.`
+  );
+}
+
+function validateSumupCurrency(value, defaultValue) {
+  if (value === undefined || value === null || value.toString().trim() === '') {
+    return defaultValue;
+  }
+
+  const normalized = value.toString().trim().toUpperCase();
+  const allowed = new Set([
+    'BGN',
+    'BRL',
+    'CHF',
+    'CLP',
+    'CZK',
+    'DKK',
+    'EUR',
+    'GBP',
+    'HUF',
+    'NOK',
+    'PLN',
+    'SEK',
+    'USD'
+  ]);
+
+  if (!allowed.has(normalized)) {
+    throw new Error(
+      `Invalid SUMUP_CURRENCY "${value}". Expected one of: ${Array.from(allowed).join(', ')}.`
+    );
+  }
+
+  return normalized;
+}
+
+/**
+ * If a feature group is enabled, ensure all required env vars are present and non-empty.
+ *
+ * @param {boolean} enabled
+ * @param {string} groupName        Human-readable group name (for error messages)
+ * @param {string[]} requiredEnvKeys List of env var names to check
+ */
+function requireGroupIfEnabled(enabled, groupName, requiredEnvKeys) {
+  if (!enabled) return;
+
+  const missing = requiredEnvKeys.filter((key) => {
+    const v = process.env[key];
+    return v === undefined || v === null || v.toString().trim() === '';
+  });
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Configuration error: ${groupName} is enabled but the following environment variables are missing or empty: ${missing.join(
+        ', '
+      )}`
+    );
+  }
+}
+
+
 
 module.exports = config;

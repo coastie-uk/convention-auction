@@ -1,6 +1,6 @@
 /**
  * @file        phase1-patch.js
- * @description Phase 1 upgrade patch. Adds in finalise and payment functions
+ * @description Phase 1 upgrade patch. Adds in finalise and payment functions for manual payments.
  * @author      Chris Staples
  * @license     GPL3
  */
@@ -13,22 +13,25 @@ const db       = require('./db');
 const checkAuctionState = require('./middleware/checkAuctionState')(
     db, { ttlSeconds: 2 }   // optional – default is 5
  );
+const { authenticateRole } = require('./middleware/authenticateRole');
+const { CASH_ENABLED, MANUAL_CARD_ENABLED, PAYPAL_ENABLED, SUMUP_WEB_ENABLED, SUMUP_CARD_PRESENT_ENABLED, SUMUP_APP_INDIRECT_ENABLED, CURRENCY } = require('./config');
 
-const { CONFIG_IMG_DIR, SAMPLE_DIR, UPLOAD_DIR, DB_PATH, BACKUP_DIR, MAX_UPLOADS, allowedExtensions, MAX_AUCTIONS, LOG_LEVEL } = require('./config');
+const { logLevels, logFromRequest } = require('./logger');
+const { json } = require('body-parser');
+const { sanitiseText } = require('./middleware/sanitiseText');
 
-const {
-    logLevels,
-    setLogLevel,
-    logFromRequest,
-    createLogger,
-    log
-  } = require('./logger');
+// Prepare payment methods object - this is static at runtime
+const paymentMethods = Object.freeze(JSON.parse(JSON.stringify({
+  'cash': CASH_ENABLED,
+  'card-manual': MANUAL_CARD_ENABLED,
+  'paypal-manual': PAYPAL_ENABLED,
+  'sumup-web': SUMUP_WEB_ENABLED,
+  'sumup-app': SUMUP_CARD_PRESENT_ENABLED,
+  'sumup-indirect': SUMUP_APP_INDIRECT_ENABLED
+})));
 
+module.exports = function phase1Patch (app) {
 
-module.exports = function phase1Patch (app, authenticateRole) {
-  if (typeof authenticateRole !== 'function') {
-    throw new TypeError('phase1-patch: authenticateRole function must be passed in');
-  }
 
   //--------------------------------------------------------------------------
   // Record audit events
@@ -118,24 +121,60 @@ module.exports = function phase1Patch (app, authenticateRole) {
     res.json(rows);
   });
 
+  //--------------------------------------------------------------------------
+  // API to fetch the enabled payment methods
+  //--------------------------------------------------------------------------
+  settlement.get('/payment-methods', authenticateRole('cashier'), (req, res) => {
+
+    res.json(paymentMethods);
+  });
 
   //--------------------------------------------------------------------------
-  // Settlement (record paymeny)
+  // Settlement (record paymeny) for non-hosted payments
   //--------------------------------------------------------------------------
 
 
- settlement.post('/payment/:auctionId', authenticateRole('cashier'), checkAuctionState(['settlement']), (req, res) => {
- const auction_id   = Number(req.params.auctionId);
-const {bidder_id, amount, method = 'cash', note = '' } = req.body;
+  settlement.post('/payment/:auctionId', authenticateRole('cashier'), checkAuctionState(['settlement']), (req, res) => {
+    const auction_id = Number(req.params.auctionId);
+    const { bidder_id, amount, method = 'cash', note = '' } = req.body;
+    const sanitisedNote = sanitiseText(note, 100);
+    // acceptable methods (manual methods only here, SumUp handled elsewhere)
+    const manualPaymentMethods = ['cash', 'card-manual', 'paypal-manual'];
+    if (!manualPaymentMethods.includes(method)) {
+      return res.status(400).json({ error: 'Invalid payment method' });
+    }
+
+    if (!bidder_id || !amount || !auction_id) {
+      return res.status(400).json({ error: 'Missing params' });
+    }
+    // check if the requested method is enabled in config
+    if (CASH_ENABLED === false && method === 'cash' || MANUAL_CARD_ENABLED === false && method === 'card-manual' || PAYPAL_ENABLED === false && method === 'paypal-manual') {
+      logFromRequest(req, logLevels.WARN, `Attempt to create manual payment with disabled method ${method}`);
+      return res.status(503).json({ error: `Requested payment method ${method} disabled` });
+    }
 
 
-  // settlement.post('/payment', authenticateRole('cashier'), (req, res) => {
-  //   const { auction_id, bidder_id, amount, method = 'cash', note = '' } = req.body;
+
     if (!bidder_id || !amount) return res.status(400).json({ error: 'Missing params' });
 
-    db.run(`INSERT INTO payments (bidder_id, amount, method, note, created_by)
-            VALUES (?,?,?,?,?)`,
-      [bidder_id, amount, method, note, req.user.role]
+    // Check that the requested amount does not exceed the bidder's outstanding balance
+    const sums2 = db.prepare(`
+      SELECT
+        IFNULL((SELECT SUM(hammer_price) FROM items WHERE winning_bidder_id = ?), 0) AS lots_total,
+        IFNULL((SELECT SUM(amount) FROM payments WHERE bidder_id = ?), 0) AS payments_total
+    `).get(bidder_id, bidder_id);
+    const outstanding = Math.max(0, Math.round((sums2.lots_total - sums2.payments_total)));
+    logFromRequest(req, logLevels.DEBUG, `Bidder ${bidder_id} outstanding amount=${outstanding}, amount requested=${amount}`);
+    if (amount > outstanding) {
+      logFromRequest(req, logLevels.WARN, `Intent amount exceeds outstanding: bidder=${bidder_id} amount=${amount} outstanding=${outstanding}`);
+      return res.status(400).json({ error: 'Amount requested exceeds outstanding', outstanding});
+    }
+
+try {
+
+    db.run(`INSERT INTO payments (bidder_id, amount, method, note, created_by, currency)
+            VALUES (?,?,?,?,?,?)`,
+      [bidder_id, amount, method, sanitisedNote, req.user.role, CURRENCY]
     );
     audit(req.user.role, 'payment', 'bidder', bidder_id, { amount, method });
     logFromRequest(req, logLevels.INFO, `${method} payment by bidder ${bidder_id} for ${amount} recorded`);
@@ -175,8 +214,13 @@ const {bidder_id, amount, method = 'cash', note = '' } = req.body;
      })
    }
  res.json({ ok: true, balance });
-    });
-  
+    
+} catch (error) {
+    logFromRequest(req, logLevels.ERROR, `Failed to record payment for bidder ${bidder_id}: ${error.message}`);
+
+    res.status(500).json({ error: `Failed to record payment for bidder ${bidder_id}: ${error.message}` });
+}
+  });
  
 
   //--------------------------------------------------------------------------
@@ -192,7 +236,7 @@ settlement.delete('/payment/:pay_id', authenticateRole('cashier'), checkAuctionS
   // look up the row for audit purposes
   const row = db.get(`SELECT bidder_id, amount, method FROM payments WHERE id = ?`, [payId]);
   if (!row) return res.status(404).json({ error: 'Payment not found' });
-
+try {
   // simple delete (Phase 1 lets cashiers fix typos)
   db.run(`DELETE FROM payments WHERE id = ?`, [payId]);
 
@@ -206,7 +250,12 @@ settlement.delete('/payment/:pay_id', authenticateRole('cashier'), checkAuctionS
 
 
   res.json({ ok: true });
-});
+} catch (error) {
+    logFromRequest(req, logLevels.ERROR, `Failed to delete payment ${payId}: ${error.message}`);
+
+    res.status(500).json({ error: `Failed to delete payment ${payId}: ${error.message}` });
+}
+} );
 
   //--------------------------------------------------------------------------
   // Settlement (create csv summary)

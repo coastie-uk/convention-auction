@@ -51,6 +51,74 @@ const API_ROOT = `${API}/settlement`;
     }
   }
 
+
+// Enable or disable payment buttons based on backend config
+
+async function refreshPaymentButtons() {
+  const buttons = document.querySelectorAll('#payButtons button[data-method]');
+
+  if (!buttons.length) {
+    console.warn('[payments] No payment buttons found under #payButtons');
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API_ROOT}/payment-methods`, { headers: { Authorization: token } });
+
+    if (!res.ok) {
+      console.error('[payments] Failed to fetch payment methods:', res.status, res.statusText);
+      // Fail-safe: disable all buttons if we can’t confirm what’s allowed
+      buttons.forEach(btn => {
+        btn.disabled = true;
+        btn.classList.add('disabled');
+      });
+      return;
+    }
+
+    const data = await res.json();
+
+    const methods = data.paymentMethods && typeof data.paymentMethods === 'object'
+      ? data.paymentMethods
+      : data;
+
+    if (!methods || typeof methods !== 'object') {
+      console.error('[payments] Unexpected payload for payment methods:', data);
+      buttons.forEach(btn => {
+        btn.disabled = true;
+        btn.classList.add('disabled');
+      });
+      return;
+    }
+
+    // Toggle each button based on the methods object
+    buttons.forEach(btn => {
+      const key = btn.dataset.method;
+      const enabled = !!methods[key];
+
+      if (enabled) {
+        btn.disabled = false;
+        btn.classList.remove('disabled');
+        btn.removeAttribute('title');
+      } else {
+        btn.disabled = true;
+        btn.classList.add('disabled');
+        btn.title = 'This payment method is currently disabled.';
+      }
+    });
+
+    console.info('[payments] Payment buttons updated from backend config:', methods);
+  } catch (err) {
+    console.error('[payments] Error while loading payment methods:', err);
+    // Conservative: disable everything if something goes wrong
+    const buttons = document.querySelectorAll('#payButtons button[data-method]');
+    buttons.forEach(btn => {
+      btn.disabled = true;
+      btn.classList.add('disabled');
+    });
+  }
+}
+
+  
   function renderBidders(){
     bidderBody.innerHTML='';
     sortBidders(bidders).forEach(b=>{
@@ -100,7 +168,7 @@ const API_ROOT = `${API}/settlement`;
 document.getElementById('payButtons').classList.remove('disabled');
 document.querySelectorAll('#payButtons button').forEach(btn => btn.disabled = false);
 document.querySelectorAll('#delPay button').forEach(btn => btn.disabled = false);
-console.log("buttons enabled");
+// console.log("buttons enabled");
 
   } else {
   
@@ -130,7 +198,7 @@ updateTotals();
     payBody.innerHTML='';
     (selBidder.payments||[]).forEach(p=>{
       const tr=document.createElement('tr');
-      tr.innerHTML=`<td>${new Date(p.created_at).toLocaleTimeString()}</td><td>${p.method}</td><td>${money(p.amount)}</td><td><button data-id="${p.id}" class="delPay">✕</button></td>`;
+      tr.innerHTML=`<td>${new Date(p.created_at).toLocaleTimeString()}</td><td>${p.method}</td><td>${money(p.amount)}</td><td>${p.note}</td><td><button data-id="${p.id}" class="delPay">✕</button></td>`;
       payBody.appendChild(tr);
     });
     payBody.querySelectorAll('.delPay').forEach(btn=>{
@@ -143,6 +211,147 @@ updateTotals();
     document.getElementById('totals').innerHTML=`<strong>Lots:</strong> ${money(o.lots_total)} &nbsp; <strong>Paid:</strong> ${money(o.payments_total)} &nbsp; <strong>Balance:</strong> ${money(o.balance)}`;
     document.getElementById('payButtons').classList.toggle('disabled',o.balance===0);
   }
+
+
+  // ---------- SumUp integration helper ----------
+  async function startSumupPayment(amt, note, mode = 'app') {
+    if (!selBidder) {
+      alert('No bidder selected');
+      return;
+    }
+
+    const amountMinor = Math.round(Number(amt) * 100);
+    if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
+      alert('Invalid amount for SumUp payment');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API}/payments/intents`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token   
+        },
+        body: JSON.stringify({
+          bidder_id: selBidder.id,
+          amount_minor: amountMinor,
+          currency: 'GBP',
+          channel: mode === 'web' ? 'hosted' : 'app',
+          note: note || null
+        })
+      });
+
+      if (!response.ok) {
+        let msg = `Failed to start SumUp payment (status ${response.status})`;
+        try {
+          const errJson = await response.json();
+          if (errJson && errJson.error) msg = errJson.error;
+        } catch (_) { /* ignore JSON parse errors */ }
+        throw new Error(msg);
+      }
+
+      const data = await response.json();
+      const deepLink   = data.deep_link || null;
+      const hostedLink = data.hosted_link || null;
+      const url = deepLink || hostedLink;
+
+      if (!url) {
+        throw new Error('Backend did not return a SumUp checkout URL.');
+      }
+
+      // If this is a SumUp app deep link, this will jump into the app on a tablet/phone.
+      // If it’s a hosted checkout URL, it will open in a new tab.
+     window.open(url, '_blank', 'noopener');
+
+
+      if (typeof showMessage === 'function') {
+        showMessage(
+          'SumUp payment started. Complete the card payment in the SumUp app, then refresh to see the updated balance.',
+          'info'
+        );
+      } else {
+        console.log('SumUp payment started for bidder', selBidder.id);
+      }
+
+    } catch (err) {
+      if (typeof showMessage === 'function') {
+        showMessage('SumUp error: ' + err.message, 'error');
+      } else {
+        alert('SumUp error: ' + err.message);
+      }
+    }
+  }
+
+async function makePaymentRequest(amt,note) {
+
+const currency = 'GBP';
+const method = 'sumup-app';
+const auctionId = AUCTION_ID;
+const bidderId = selBidder.id
+
+  // Basic front-end validation to fail fast
+  if (!auctionId || !bidderId) {
+    throw new Error('auctionId and bidderId are required to create a payment request');
+  }
+
+  const numericAmount = Number(amt);
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+    throw new Error(`Invalid amount "${amt}" for payment request`);
+  }
+
+    //   const amountMinor = Math.round(Number(amt) * 100);
+    // if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
+    //   alert('Invalid amount for SumUp payment');
+    //   return;
+    // }
+
+  const payload = {
+    auction_id: auctionId,
+    bidder_id: bidderId,
+    amount: numericAmount,
+    currency,
+    method,
+    note: note || null
+  };
+
+  let response;
+  try {
+    response = await fetch(`${API}/payments/payment-requests`, {
+      method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token   
+        },
+      body: JSON.stringify(payload)
+    });
+  } catch (err) {
+    console.error('Network error creating payment request', err);
+    throw new Error('Network error while creating payment request');
+  }
+
+  if (!response.ok) {
+    let msg = `Server error (${response.status})`;
+    try {
+      const errBody = await response.json();
+      if (errBody && errBody.error) {
+        msg = errBody.error;
+      }
+    } catch {
+      // ignore JSON parse errors, keep default message
+    }
+    console.warn('Backend rejected payment request:', msg);
+    throw new Error(`Failed to create payment request: ${msg}`);
+  }
+
+  const data = await response.json();
+  if (!data || !data.payment_request) {
+    console.error('Unexpected backend payload for payment request', data);
+    throw new Error('Backend returned an unexpected response when creating payment request');
+  }
+
+  return data.payment_request;
+}
 
 
     // payment modal via buttons
@@ -169,6 +378,26 @@ overlay.querySelector('#amt').focus();
       const amt=Number(amtIn.value);
         if(!amt)return alert('Amount?');
       const note=overlay.querySelector('#note').value;
+
+      // NEW: SumUp branch
+  if (method === 'sumup-app') {
+    await startSumupPayment(amt, note, 'app');
+    overlay.remove();
+    return;
+  }
+
+  if (method === 'sumup-web') {
+    await startSumupPayment(amt, note, 'web');
+    overlay.remove();
+    return;
+  }
+
+  // if (method === 'sumup-indirect') {
+  //   await makePaymentRequest(amt, note);
+  //   overlay.remove();
+  //   return;
+  // }
+
      try {
       const response = await fetch(`${API_ROOT}/payment/${AUCTION_ID}`,{
         method:'POST',
@@ -280,5 +509,6 @@ document.getElementById('summaryBtn').onclick = async () => {
 
   // polling
   fetchBidders();
+  refreshPaymentButtons();
   setInterval(fetchBidders,POLL_MS);
 })();

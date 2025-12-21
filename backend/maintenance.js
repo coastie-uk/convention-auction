@@ -14,7 +14,7 @@ const { exec } = require("child_process");
 const router = express.Router();
 const { CONFIG_IMG_DIR, SAMPLE_DIR, UPLOAD_DIR, DB_PATH, DB_NAME, BACKUP_DIR, MAX_UPLOADS, allowedExtensions, MAX_AUCTIONS, OUTPUT_DIR, LOG_LEVEL, PPTX_CONFIG_DIR, LOG_DIR, LOG_NAME } = require('./config');
 
-const { validateJsonPaths } = require('./security/json-path-validator');
+const { validateJsonPaths } = require('./middleware/json-path-validator');
 
 const upload = multer({ dest: UPLOAD_DIR });
 const sharp = require("sharp");
@@ -148,7 +148,12 @@ router.post("/reset", checkAuctionState(['setup', 'archived']), (req, res) => {
   })
 
   try {
+    db.pragma('defer_foreign_keys = ON');
     const result = db.transaction(id => {
+
+      // Payment intents
+      const delIntents = db.prepare(`DELETE FROM payment_intents WHERE bidder_id IN (SELECT id FROM bidders WHERE auction_id = ?)`).run(id).changes;
+      
       /* payments */
       const delPay = db.prepare(`DELETE FROM payments WHERE bidder_id IN (SELECT id FROM bidders WHERE auction_id = ?)`).run(id).changes;
 
@@ -161,7 +166,7 @@ router.post("/reset", checkAuctionState(['setup', 'archived']), (req, res) => {
       /* (optional) auction shell itself */
       // const delAuction = db.prepare(`DELETE FROM auctions WHERE id = ?`).run(id).changes;
 
-      return { payments: delPay, items: delItems, bidders: delBidders };
+      return { payment_intents: delIntents, payments: delPay, items: delItems, bidders: delBidders };
     })(auction_id);         // <-- execute the transaction
 
     res.json({
@@ -169,12 +174,13 @@ router.post("/reset", checkAuctionState(['setup', 'archived']), (req, res) => {
       auction_id: auction_id,
       deleted: result        // { payments: n, items: n, bidders: n }
     });
-    logFromRequest(req, logLevels.INFO, `Auction ${auction_id} has been reset. Removed: ${result.items} items, ${result.bidders} bidders, ${result.payments} payments`);
+    logFromRequest(req, logLevels.INFO, `Auction ${auction_id} has been reset. Removed: ${result.items} items, ${result.bidders} bidders, ${result.payments} payments, ${result.payment_intents} payment intents. `);
 
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Purge failed' });
+    res.status(500).json({ error: 'Reset failed' });
   }
+  db.pragma('defer_foreign_keys = OFF');
 })
 
 //--------------------------------------------------------------------------

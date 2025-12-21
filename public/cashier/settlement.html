@@ -17,6 +17,7 @@
     .pay-list td{ font-size:0.85rem; }
     .disabled   { opacity:0.5; pointer-events:none; }
     #payButtons button{margin-right:8px;padding:6px 14px;}
+    #payButtons button[disabled] { cursor:not-allowed; }
   </style>
     <link rel="stylesheet" href="/styles/settlement.css" />
 
@@ -42,14 +43,16 @@
       <h3>Lots won</h3>
       <table id="lotsTable"><thead><tr><th>Lot</th><th>Title</th><th>Price</th></tr></thead><tbody></tbody></table>
       <h3>Payments</h3>
-      <table id="payTable" class="pay-list"><thead><tr><th>Time</th><th>Method</th><th>Amount</th><th></th></tr></thead><tbody></tbody></table>
+      <table id="payTable" class="pay-list"><thead><tr><th>Time</th><th>Method</th><th>Amount</th><th>Notes</th><th></th></tr></thead><tbody></tbody></table>
       <div id="totals" style="margin-top:8px;"></div>
 
       <div id="payButtons" style="margin-top:12px;">
         <button data-method="cash">Cash</button>
-        <button data-method="card">Card (manual)</button>
-        <button data-method="paypal">PayPal (manual)</button>
-        <!-- <button data-method="sumup" disabled>SumUp</button> -->
+        <button data-method="card-manual">Card (manual)</button>
+        <button data-method="paypal-manual">PayPal (manual)</button>
+        <button data-method="sumup-app">SumUp (card reader)</button>
+        <button data-method="sumup-web">SumUp (web)</button>
+        <button data-method="sumup-indirect" hidden>SumUp (via android)</button>
         
     </div>
   </div>
@@ -62,7 +65,7 @@
       <label>Amount £</label>
       <input id="amt" type="number" min="0" step="0.01" style="width:100%" autofocus>
       <label style="margin-top:6px;display:block;">Note</label>
-      <input id="note" type="text" style="width:100%">
+      <input id="note" type="text" style="width:100%" maxlength="100" placeholder="Optional note">
       <div style="display:flex;justify-content:flex-end;margin-top:10px;gap:8px;">
         <button id="cancel">Cancel</button>
         <button id="ok">Record</button>

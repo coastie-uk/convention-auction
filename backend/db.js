@@ -7,7 +7,7 @@
 
 const Database = require('better-sqlite3');
 const path     = require('path');
-const schemaVersion = '2.1';
+const schemaVersion = '2.2';
 const { logLevels, log } = require('./logger');
 const {
     DB_PATH,
@@ -19,14 +19,11 @@ const {
 // 1.1   Switch to better-sqlite3. Add passwords table
 // 2.0   Adds auctions, bidders, payments and audit tables to align with convention-auction 1.0
 // 2.1   Add admin_can_change_state to auctions table
-//
+// 2.2  Add payment_intents table and additional payments columns for SumUp integration
+
 const dbPath = path.join(DB_PATH, DB_NAME);
-
 log('General', logLevels.INFO, 'Using database at ' + dbPath);
-
-// const db = new Database(path.join(DB_PATH, DB_NAME));
 const db = new Database(dbPath);
-
 
 try {
 
@@ -80,6 +77,7 @@ try {
         FOREIGN KEY (bidder_id) REFERENCES bidders(id)
       )`);
 
+
     db.exec(`CREATE TABLE IF NOT EXISTS audit_log (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         user        TEXT,
@@ -93,8 +91,48 @@ try {
     // create uniqueness on (auction_id, paddle_number)
     db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_bidder_auction_paddle ON bidders(auction_id, paddle_number)");
 
-    // Add admin_state_change
-    db.exec("ALTER TABLE auctions ADD COLUMN admin_can_change_state INTEGER NOT NULL DEFAULT 0; -- 0=false, 1=true");
+
+
+    // Pending SumUp (and future) payment requests the server creates
+    db.exec(`CREATE TABLE IF NOT EXISTS payment_intents (
+      intent_id TEXT PRIMARY KEY,
+      bidder_id INTEGER NOT NULL,
+      amount_minor INTEGER NOT NULL,       -- pence, to avoid floating issues
+      currency TEXT NOT NULL DEFAULT 'GBP',
+      channel TEXT NOT NULL DEFAULT 'app', -- 'app' (SumUp app) | 'hosted' (optional)
+      status TEXT NOT NULL CHECK (status IN ('pending','succeeded','failed','expired','cancelled')),
+      sumup_checkout_id TEXT,              -- only for hosted flow (optional)
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT,
+      FOREIGN KEY (bidder_id) REFERENCES bidders(id)
+    )`);
+
+
+} catch (err) {
+    log('General', logLevels.ERROR, `Database error: ${err.message}`);
+}
+
+// Modifications to existing tables for schema version upgrades - Try to add columns/indexes, ignore errors if they already exist
+
+// 2.1 -> 2.2: Add payment provider metadata to payments table
+try { db.exec("ALTER TABLE payments ADD COLUMN provider TEXT not null default 'unknown'"); } catch (e) { /* already exists */ }
+try { db.exec("ALTER TABLE payments ADD COLUMN provider_txn_id TEXT"); } catch (e) { /* already exists */ }
+try { db.exec("ALTER TABLE payments ADD COLUMN intent_id TEXT"); } catch (e) { /* already exists */ }
+try { db.exec("ALTER TABLE payments ADD COLUMN currency TEXT"); } catch (e) { /* already exists */ }
+try { db.exec("ALTER TABLE payments ADD COLUMN raw_payload TEXT"); } catch (e) { /* already exists */ }
+try { db.exec("ALTER TABLE payments ADD COLUMN FOREIGN KEY (intent_id) REFERENCES payment_intents(intent_id)"); } catch (e) { /* already exists */ }
+try { db.exec("ALTER TABLE payment_intents ADD COLUMN note TEXT"); } catch (e) { /* already exists */ }
+
+
+// These are critical to prevent duplicate payment records for the same provider transaction - SumUp may send multiple notifications for the same payment
+try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_provider_payments_txn ON payments(provider, provider_txn_id)`); } catch (e) { /* already exists */ }
+try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_provider_payments_intent ON payments(provider, intent_id)`); } catch (e) { /* already exists */ }
+
+
+// 2.0 -> 2.1 Add admin_state_change
+try { db.exec("ALTER TABLE auctions ADD COLUMN admin_can_change_state INTEGER NOT NULL DEFAULT 0; -- 0=false, 1=true"); } catch (e) { /* already exists */ }
+
+
 
 // one-time default passwords
 const defaultPasswords = [
@@ -113,9 +151,7 @@ for (const { role, password } of defaultPasswords) {
 
 log('General', logLevels.INFO, 'Database opened');
 
-} catch (err) {
-    log('General', logLevels.ERROR, `Database error: ${err.message}`);
-}
+
 
 // ──────────────────────────────────────────────────────────────
 // Performance / concurrency tuning

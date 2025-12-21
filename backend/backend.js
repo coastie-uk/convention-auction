@@ -21,7 +21,8 @@ const app = express();
 const fsp = require('fs').promises;
 const db = require('./db');
 
-const VALID_ROLES = new Set(['admin', 'maintenance', 'cashier', 'slideshow']);
+
+// const VALID_ROLES = new Set(['admin', 'maintenance', 'cashier', 'slideshow']);
 const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
 
 const {
@@ -40,12 +41,17 @@ const {
     OUTPUT_DIR
 } = require('./config');
 
+const { authenticateRole } = require('./middleware/authenticateRole');
+
 const maintenanceRoutes = require('./maintenance');
 const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
 const checkAuctionState = require('./middleware/checkAuctionState')(
     db,
     { ttlSeconds: 2 }
 );
+const { api: paymentsApi, paymentProcessorVer } = require('./payments');
+
+
 // collect up version info
 const { version } = require('./package.json'); // get version from package.json
 const backendVersion = version || 'Unknown';
@@ -53,9 +59,9 @@ const { schemaVersion } = require('./db'); // get schema version from db.js
 
 
 
-// this text is used to trim the maint log display
-log('General', logLevels.INFO, '~~ Starting up Auction backend ~~');
 log('General', logLevels.INFO, `Backend version: ${backendVersion}, DB schema version: ${schemaVersion}`);
+log('General', logLevels.INFO, `Payment processor: ${paymentProcessorVer}`);
+
 setLogLevel(LOG_LEVEL.toUpperCase());
 
 //--------------------------------------------------------------------------
@@ -83,9 +89,18 @@ setLogLevel(LOG_LEVEL.toUpperCase());
 // Enable CORS
 // app.use(cors(corsOptions)); // Use the cors middleware with your options
 
+
+// Then generic parsers and other routes
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// Must come after body parsers
+require('./phase1-patch')(app);
+
+
+// Mount API
+app.use(paymentsApi);
 
 
 // Multer storage setup for file uploads
@@ -109,71 +124,6 @@ if (!fs.existsSync(OUTPUT_DIR)) {
 }
 
 
-/**
- * Express middleware factory that validates a JWT **and** authorisation role.
- *
- * @param {string | Iterable<string>} acceptedRoles – either:
- *        • a single role string  e.g. "admin"                      (previous behaviour)  
- *        • an iterable of roles   e.g. ["admin", "cashier"]
- *
- * @returns {import('express').RequestHandler}
- */
-function authenticateRole(acceptedRoles) {
-    // ------------- parameter normalisation & validation -------------
-    const roleList = Array.isArray(acceptedRoles)
-        ? [...acceptedRoles]                       // copy to avoid surprises
-        : [acceptedRoles];                         // preserve backward compatibility
-
-    // defensive input checks – fail fast on bad config
-    roleList.forEach(role => {
-        if (!VALID_ROLES.has(role)) {
-            const msg = `authenticateRole(): invalid role "${role}" supplied`;
-            // Prefer throwing during app start-up so a bad route fails loudly
-            /* istanbul ignore next */               // easier testing
-            throw new TypeError(msg);
-        }
-    });
-
-    const roleSet = new Set(roleList);           // O(1) look-ups later
-
-    // ------------------ actual middleware ------------------
-    return function authenticateRoleMw(req, res, next) {
-        const token = req.headers['authorization'];
-
-        if (!token) {
-            logFromRequest(req, logLevels.ERROR, 'No JWT supplied in Authorization header');
-            return res.status(403).json({ error: 'Access denied' });
-        }
-
-        jwt.verify(token, SECRET_KEY, (err, decoded) => {
-            if (err) {
-                logFromRequest(
-                    req,
-                    logLevels.DEBUG,
-                    `Invalid token – ${err.name}…`
-                );
-                return res.status(403).json({ error: 'Session expired' });
-            }
-
-            if (!roleSet.has(decoded.role)) {
-                logFromRequest(
-                    req,
-                    logLevels.WARN,
-                    `Role mismatch. Allowed: ${[...roleSet].join(', ')}, got ${decoded.role}`
-                );
-                return res.status(403).json({ error: 'Unauthorized' });
-            }
-
-            // Success – attach user to request and continue
-            req.user = decoded;
-            next();
-        });
-    };
-}
-
-
-// right below the authenticateRole definition
-require('./phase1-patch')(app, authenticateRole);
 
 //--------------------------------------------------------------------------
 // get /version
