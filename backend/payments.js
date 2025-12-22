@@ -29,7 +29,6 @@ const {
 
 const toPounds = (minor) => (minor / 100).toFixed(2);
 
-// --- Create Intent (cashier starts payment) ---
 const api = express.Router();
 api.use(express.json());
 
@@ -83,12 +82,12 @@ if (channel !== 'hosted' && channel !== 'app' && channel !== 'app-ind' ) {
     const payload = { intent_id: intentId, amount_minor, currency: CURRENCY };
 
     if (channel === 'app' || channel === 'app-ind') {
-      const title = `Bidder ${bidder_id}`;
+      const title = getPaymentLabelForBidder(bidder_id);
       payload.deep_link = buildDeepLink({
         amount_minor, currency: CURRENCY, title, external_reference: intentId
       });
     } else {
-      const description = `Bidder ${bidder_id}`;
+      const description = getPaymentLabelForBidder(bidder_id);
       const hc = await createHostedCheckout({
         amount_minor, currency: CURRENCY, checkout_reference: intentId, description
       });
@@ -382,9 +381,6 @@ async function verifyAndFinalizeIntent(intentId, { raw = null, source = 'manual'
   const amount = Number(toPounds(intent.amount_minor));
   const createdBy = (source === 'webhook') ? 'sumup-web' : 'sumup-app';
   const providerTxn = latest?.transactions?.[0]?.id || crypto.randomUUID();
-
-
-
   const t = db.transaction(() => {
 
     // Check payment isn't already finalised (e.g. duplicate webhook from SumUp)
@@ -401,22 +397,11 @@ async function verifyAndFinalizeIntent(intentId, { raw = null, source = 'manual'
       return;
     }
 
-    // Write to payments table
-    // const r = db.prepare(`
-    //   INSERT INTO payments (bidder_id, amount, method, note, created_by, provider, provider_txn_id, intent_id, payment_id, raw_payload)
-    //   VALUES (?, ?, 'card', ?, ?, 'sumup', ?, ?, ?, ?)
-    // `).run(intent.bidder_id, amount, ``, createdBy, providerTxn, intent.intent_id, r.lastInsertRowid, raw ? JSON.stringify(raw) : (latest ? JSON.stringify(latest) : null));
-
+// Create payment record
     const r = db.prepare(`
       INSERT INTO payments (bidder_id, amount, method, note, created_by, provider, provider_txn_id, intent_id, raw_payload, currency)
       VALUES (?, ?, ? , ?, 'cashier', 'sumup', ?, ?, ?, ?)
     `).run(intent.bidder_id, amount, createdBy, intent.note, providerTxn, intent.intent_id, raw ? JSON.stringify(raw) : (latest ? JSON.stringify(latest) : null), CURRENCY);
-
-    // Store provider metadata linking to payments.id (for audit/idempotency)
-    // db.prepare(`
-    //   INSERT OR IGNORE INTO provider_payments (provider, provider_txn_id, intent_id, payment_id, raw_payload)
-    //   VALUES ('sumup', ?, ?, ?, ?)
-    // `).run(providerTxn, intent.intent_id, r.lastInsertRowid, raw ? JSON.stringify(raw) : (latest ? JSON.stringify(latest) : null));
 
     // Mark intent done
     db.prepare(`UPDATE payment_intents SET status = 'succeeded' WHERE intent_id=?`).run(intent.intent_id);
@@ -494,6 +479,19 @@ function expireStaleIntents() {
   }
 }
 
+// --- Get payment label for bidder ---
+const stmtGetAuctionLabelForBidder = db.prepare(`
+  SELECT a.id AS auction_id, a.short_name, a.full_name
+  FROM bidders b
+  JOIN auctions a ON a.id = b.auction_id
+  WHERE b.id = ?
+`);
 
+const getPaymentLabelForBidder = (bidderId) => {
+  const row = stmtGetAuctionLabelForBidder.get(bidderId);
+  if (!row) return `Bidder ${bidderId}`;
+  const auctionName = row.full_name || row.short_name;
+  return `${auctionName} - Bidder ${bidderId}`;
+};
 
 module.exports = { api, paymentProcessorVer, verifyAndFinalizeIntent };
