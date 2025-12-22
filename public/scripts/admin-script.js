@@ -33,6 +33,7 @@ document.addEventListener("DOMContentLoaded", function () {
     let selectedAuctionCanChangeState = 0;
     let selectedOrder = sessionStorage.getItem("item_sort_order") || "asc";
     let selectedSort = sessionStorage.getItem("item_sort_field") || "item_number";
+    let currencySymbol = localStorage.getItem("currencySymbol") || "£";
 
     document.getElementById("sort-field").value = selectedSort;
     document.getElementById("sort-order").value = selectedOrder;
@@ -40,7 +41,7 @@ document.addEventListener("DOMContentLoaded", function () {
     // controls whether to show bidder & amount columns
     const showBidStates = ['live', 'settlement', 'archived'];
 
-    const fmtPrice = v => `£${Number(v).toFixed(2)}`;
+    const fmtPrice = v => `${currencySymbol}${Number(v).toFixed(2)}`;
 
     const API = "/api"
 
@@ -194,6 +195,8 @@ document.addEventListener("DOMContentLoaded", function () {
         const data = await response.json();
         if (response.ok) {
             localStorage.setItem("token", data.token);
+            currencySymbol = data.currency || "£";
+            localStorage.setItem("currencySymbol", currencySymbol);
             loginSection.style.display = "none";
             adminSection.style.display = "block";
 
@@ -271,7 +274,7 @@ document.addEventListener("DOMContentLoaded", function () {
             // build the summary text
 
             document.getElementById("auction-total").textContent =
-                `Total: £${(totals?.hammer_total || 0).toFixed(2)} (${totals.items_with_bids}/${totals.item_count})`;
+                `Total: ${currencySymbol}${(totals?.hammer_total || 0).toFixed(2)} (${totals.items_with_bids}/${totals.item_count})`;
 
 
 

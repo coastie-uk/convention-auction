@@ -14,12 +14,13 @@ const API_ROOT = `${API}/settlement`;
   const payBody    = document.querySelector('#payTable tbody');
   const detailBox  = document.getElementById('detail');
   const titleEl    = document.getElementById('title');
-
-  const money = v => `£${Number(v).toFixed(2)}`;
+  const currencySymbol = localStorage.getItem("currencySymbol") || "£";
+  const money = v => `${currencySymbol}${Number(v).toFixed(2)}`;
 
   const urlParams  = new URLSearchParams(location.search);
   const AUCTION_ID = Number(urlParams.get('auctionId'));
   const AUCTION_STATUS = (urlParams.get('auctionStatus') || '').toLowerCase();
+
 
 
 
@@ -492,12 +493,12 @@ document.getElementById('summaryBtn').onclick = async () => {
     <div style="background:#fff;padding:22px 26px;border-radius:8px;width:340px;">
       <h3>Auction Summary</h3>
       <table style="width:100%;border-collapse:collapse;font-size:0.95rem;">
-        <tr><td>Total lots</td>         <td style="text-align:right;">£${s.lots_total.toFixed(2)}</td></tr>
-        <tr><td>Paid total</td>         <td style="text-align:right;">£${s.payments_total.toFixed(2)}</td></tr>
+        <tr><td>Total lots</td>         <td style="text-align:right;">${currencySymbol}${s.lots_total.toFixed(2)}</td></tr>
+        <tr><td>Paid total</td>         <td style="text-align:right;">${currencySymbol}${s.payments_total.toFixed(2)}</td></tr>
         <tr><td style="padding-top:4px;" colspan="2"><strong>By method</strong></td></tr>
-        ${Object.entries(s.breakdown).map(([m,v])=>`<tr><td>${m}</td><td style="text-align:right;">£${v.toFixed(2)}</td></tr>`).join('')}
+        ${Object.entries(s.breakdown).map(([m,v])=>`<tr><td>${m}</td><td style="text-align:right;">${currencySymbol}${v.toFixed(2)}</td></tr>`).join('')}
         <tr><td style="padding-top:6px;"><strong>Balance due</strong></td>
-            <td style="text-align:right;"><strong>£${s.balance.toFixed(2)}</strong></td></tr>
+            <td style="text-align:right;"><strong>${currencySymbol}${s.balance.toFixed(2)}</strong></td></tr>
       </table>
       <div style="text-align:right;margin-top:10px;"><button id="closeSum">Close</button></div>
     </div>`;

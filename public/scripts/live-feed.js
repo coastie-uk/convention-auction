@@ -14,6 +14,8 @@ const API_ROOT = "/api"
   const params = new URLSearchParams(location.search);
   const AUCTION_ID = Number(params.get('auctionId'));
   const AUCTION_STATUS = (params.get('auctionStatus') || '').toLowerCase();
+  const currencySymbol = localStorage.getItem("currencySymbol") || "£";
+
 
   // if the auction isnt live, we dont need to poll especially fast
 
@@ -34,7 +36,7 @@ const API_ROOT = "/api"
   const rowsMap = new Map(); // rowid -> <tr>
 
   // ---------- helpers ---------------------------------------------------------
-  const money = v => `£${Number(v).toFixed(2)}`;
+  const money = v => `${currencySymbol}${Number(v).toFixed(2)}`;
   const time  = () => new Date().toLocaleTimeString();
   const setStatus = ok => {
     statusEl.textContent = ok ? 'Updated' : 'Stale';

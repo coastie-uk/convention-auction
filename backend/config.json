@@ -14,5 +14,6 @@
   "MAX_AUCTIONS": 20,
   "MAX_ITEMS": 2000,
   "PPTX_CONFIG_DIR": "/var/lib/auction",
-  "OUTPUT_DIR": "/var/lib/auction/output"
+  "OUTPUT_DIR": "/var/lib/auction/output",
+  "CURRENCY_SYMBOL": "£"
   }

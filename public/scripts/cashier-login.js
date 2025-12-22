@@ -34,7 +34,7 @@ const API = "/api"
     let currentAuctionId = null;        // number | null
     let currentScreen    = null;        // "live" | "settlement" | null
     let refreshTimer     = null;
-  
+    let currencySymbol = localStorage.getItem("currencySymbol") || "£";
 
     // ---------- Initialisation -------------------------------------------------
     els.loginBtn.onclick = doLogin;
@@ -209,6 +209,8 @@ function loadLastView() {
         if (!res.ok) throw new Error(data.error || "Auth failed");
   
         localStorage.setItem("cashierToken", data.token);
+        currencySymbol = data.currency || "£";
+        localStorage.setItem("currencySymbol", currencySymbol);
         startDashboard();
       } catch (err) {
         console.error(err);

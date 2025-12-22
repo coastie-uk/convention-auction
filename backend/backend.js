@@ -38,7 +38,8 @@ const {
     LOG_LEVEL,
     MAX_ITEMS,
     PPTX_CONFIG_DIR,
-    OUTPUT_DIR
+    OUTPUT_DIR,
+    CURRENCY_SYMBOL
 } = require('./config');
 
 const { authenticateRole } = require('./middleware/authenticateRole');
@@ -165,6 +166,7 @@ app.post('/validate', async (req, res) => {
 //--------------------------------------------------------------------------
 // POST /login
 // Login route. Checks pw and returns a jwt
+// Also returns currency symbol (as this route is the entry point to all users)
 //--------------------------------------------------------------------------
 
 app.post('/login', (req, res) => {
@@ -182,7 +184,7 @@ app.post('/login', (req, res) => {
             return res.status(401).json({ error: "Invalid password" });
         }
         const token = jwt.sign({ role }, SECRET_KEY, { expiresIn: "8h" });
-        res.json({ token });
+        res.json({ token, currency: CURRENCY_SYMBOL });
 
         logFromRequest(req, logLevels.INFO, `User with role "${role}" logged in`);
         logFromRequest(req, logLevels.DEBUG, `full Token: ${token}....`);

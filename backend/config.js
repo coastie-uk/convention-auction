@@ -121,7 +121,7 @@ try {
   const LOG_DIR      = reqStr(json, 'LOG_DIR');         // e.g., "logs"
   const LOG_NAME      = reqStr(json, 'LOG_NAME');         // e.g., "server.log"
   const OUTPUT_DIR      = reqStr(json, 'OUTPUT_DIR');         // e.g., "output"
-
+  const CURRENCY_SYMBOL = reqStr(json, 'CURRENCY_SYMBOL'); // e.g., "£"
   
 
   cfg = {
@@ -145,6 +145,7 @@ try {
     LOG_DIR,
     LOG_NAME,
     OUTPUT_DIR,
+    CURRENCY_SYMBOL,
 
   // SumUp – web (hosted payments)
     SUMUP_WEB_ENABLED,
