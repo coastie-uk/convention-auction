@@ -21,10 +21,6 @@ const API_ROOT = `${API}/settlement`;
   const AUCTION_ID = Number(urlParams.get('auctionId'));
   const AUCTION_STATUS = (urlParams.get('auctionStatus') || '').toLowerCase();
 
-
-
-
-  
   if (!Number.isInteger(AUCTION_ID) || AUCTION_ID <= 0) {
     alert('This page must be opened with ?auctionId=<number>');
 
@@ -91,21 +87,50 @@ async function refreshPaymentButtons() {
       return;
     }
 
-    // Toggle each button based on the methods object
-    buttons.forEach(btn => {
-      const key = btn.dataset.method;
-      const enabled = !!methods[key];
+    // // Toggle each button based on the methods object
+    // buttons.forEach(btn => {
+    //   const key = btn.dataset.method;
+    //   const enabled = !!methods[key];
 
-      if (enabled) {
-        btn.disabled = false;
-        btn.classList.remove('disabled');
-        btn.removeAttribute('title');
-      } else {
-        btn.disabled = true;
-        btn.classList.add('disabled');
-        btn.title = 'This payment method is currently disabled.';
-      }
-    });
+    //   if (enabled) {
+    //     btn.disabled = false;
+    //     btn.classList.remove('disabled');
+    //     btn.removeAttribute('title');
+    //   } else {
+    //     btn.disabled = true;
+    //     btn.classList.add('disabled');
+    //     btn.title = 'This payment method is currently disabled.';
+    //   }
+    // });
+
+    // Toggle each button based on the methods object
+buttons.forEach(btn => {
+  const key = btn.dataset.method;
+  const cfg = methods?.[key];
+
+  // Backwards-compatible: old boolean format OR new { enabled, label } format
+  const enabled =
+    (typeof cfg === 'boolean') ? cfg :
+    (cfg && typeof cfg === 'object') ? !!cfg.enabled :
+    false;
+
+  if (enabled) {
+    btn.disabled = false;
+    btn.style.display = '';
+    btn.classList.remove('disabled');
+    btn.removeAttribute('title');
+  } else {
+    btn.disabled = true;
+    btn.classList.add('disabled');
+    btn.style.display = 'none';
+    btn.title = 'This payment method is currently disabled.';
+  }
+
+  if (cfg && typeof cfg === 'object' && cfg.label) {
+    btn.textContent = cfg.label;
+  }
+});
+
 
     console.info('[payments] Payment buttons updated from backend config:', methods);
   } catch (err) {
@@ -195,15 +220,21 @@ updateTotals();
     });
   }
 
-  function renderPayments(){
-    payBody.innerHTML='';
-    (selBidder.payments||[]).forEach(p=>{
-      const tr=document.createElement('tr');
-      tr.innerHTML=`<td>${new Date(p.created_at).toLocaleTimeString()}</td><td>${p.method}</td><td>${money(p.amount)}</td><td>${p.note}</td><td><button data-id="${p.id}" class="delPay">✕</button></td>`;
+  function renderPayments() {
+    payBody.innerHTML = '';
+    (selBidder.payments || []).forEach(p => {
+      const tr = document.createElement('tr');
+      if (p.amount < 0) {
+        tr.innerHTML = `<td>${p.id}</td><td>${new Date(p.created_at).toLocaleString()}</td><td>${p.method}</td><td>${money(p.amount)}</td><td>${p.note}</td>`;
+      } else {
+        tr.innerHTML = `<td>${p.id}</td><td>${new Date(p.created_at).toLocaleString()}</td><td>${p.method}</td><td>${money(p.amount)}</td><td>${p.note}</td><td><button data-id="${p.id}" class="delPay">Refund</button></td>`;
+      }
       payBody.appendChild(tr);
     });
-    payBody.querySelectorAll('.delPay').forEach(btn=>{
-      btn.onclick=()=>delPayment(btn.dataset.id);
+    payBody.querySelectorAll('.delPay').forEach(btn => {
+      //      btn.onclick=()=>delPayment(btn.dataset.id);
+      btn.onclick = () => openRefundModal(btn.dataset.id);
+
     });
   }
 
@@ -213,6 +244,9 @@ updateTotals();
     document.getElementById('payButtons').classList.toggle('disabled',o.balance===0);
   }
 
+
+
+  
 
   // ---------- SumUp integration helper ----------
   async function startSumupPayment(amt, note, mode = 'app') {
@@ -239,7 +273,8 @@ updateTotals();
           amount_minor: amountMinor,
           currency: 'GBP',
           channel: mode === 'web' ? 'hosted' : 'app',
-          note: note || null
+          note: note || null,
+          auctionId: AUCTION_ID
         })
       });
 
@@ -284,76 +319,111 @@ updateTotals();
     }
   }
 
-async function makePaymentRequest(amt,note) {
+// async function makePaymentRequest(amt,note) {
+// // TODO remove currency as this is configured on the backend
+// const currency = 'GBP';
+// const method = 'sumup-app';
+// const auctionId = AUCTION_ID;
+// const bidderId = selBidder.id
 
-const currency = 'GBP';
-const method = 'sumup-app';
-const auctionId = AUCTION_ID;
-const bidderId = selBidder.id
+//   // Basic front-end validation to fail fast
+//   if (!auctionId || !bidderId) {
+//     throw new Error('auctionId and bidderId are required to create a payment request');
+//   }
 
-  // Basic front-end validation to fail fast
-  if (!auctionId || !bidderId) {
-    throw new Error('auctionId and bidderId are required to create a payment request');
-  }
+//   const numericAmount = Number(amt);
+//   if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+//     throw new Error(`Invalid amount "${amt}" for payment request`);
+//   }
 
-  const numericAmount = Number(amt);
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-    throw new Error(`Invalid amount "${amt}" for payment request`);
-  }
+//   const payload = {
+//     auction_id: auctionId,
+//     bidder_id: bidderId,
+//     amount: numericAmount,
+//     currency,
+//     method,
+//     note: note || null
+//   };
 
-    //   const amountMinor = Math.round(Number(amt) * 100);
-    // if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
-    //   alert('Invalid amount for SumUp payment');
-    //   return;
-    // }
+//   let response;
+//   try {
+//     response = await fetch(`${API}/payments/payment-requests`, {
+//       method: 'POST',
+//         headers: {
+//           'Content-Type': 'application/json',
+//           Authorization: token   
+//         },
+//       body: JSON.stringify(payload)
+//     });
+//   } catch (err) {
+//     console.error('Network error creating payment request', err);
+//     throw new Error('Network error while creating payment request');
+//   }
 
-  const payload = {
-    auction_id: auctionId,
-    bidder_id: bidderId,
-    amount: numericAmount,
-    currency,
-    method,
-    note: note || null
-  };
+//   if (!response.ok) {
+//     let msg = `Server error (${response.status})`;
+//     try {
+//       const errBody = await response.json();
+//       if (errBody && errBody.error) {
+//         msg = errBody.error;
+//       }
+//     } catch {
+//       // ignore JSON parse errors, keep default message
+//     }
+//     console.warn('Backend rejected payment request:', msg);
+//     throw new Error(`Failed to create payment request: ${msg}`);
+//   }
 
-  let response;
-  try {
-    response = await fetch(`${API}/payments/payment-requests`, {
-      method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: token   
-        },
-      body: JSON.stringify(payload)
-    });
-  } catch (err) {
-    console.error('Network error creating payment request', err);
-    throw new Error('Network error while creating payment request');
-  }
+//   const data = await response.json();
+//   if (!data || !data.payment_request) {
+//     console.error('Unexpected backend payload for payment request', data);
+//     throw new Error('Backend returned an unexpected response when creating payment request');
+//   }
 
-  if (!response.ok) {
-    let msg = `Server error (${response.status})`;
-    try {
-      const errBody = await response.json();
-      if (errBody && errBody.error) {
-        msg = errBody.error;
-      }
-    } catch {
-      // ignore JSON parse errors, keep default message
+//   return data.payment_request;
+// }
+
+
+function openRefundModal(id){
+    const tpl=document.getElementById('refundTpl').content.cloneNode(true);
+    const overlay=tpl.firstElementChild;document.body.appendChild(overlay);
+    overlay.querySelector('#modalTitle').textContent=`Apply refund for payment ID ${id}`;
+    const amtIn=overlay.querySelector('#amt');
+    amtIn.value=0.00;
+
+overlay.querySelector('#amt').focus();
+
+    overlay.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { e.preventDefault(); cancel.click(); }
+  if (e.key === 'Enter')  { e.preventDefault(); ok.click();     }
+});
+    
+    overlay.querySelector('#cancel').onclick=()=>overlay.remove();
+    overlay.querySelector('#ok').onclick=async()=>{
+      const amt=Number(amtIn.value);
+        if(!amt)return alert('Amount?');
+      const reason=overlay.querySelector('#note').value;
+
+       const modal = await DayPilot.Modal.confirm("Confirm refund of " + money(amt) + " for payment ID " + id + "?");
+        if (modal.canceled) {
+            showMessage("Refund cancelled", "info");
+            return;
+        } else { 
+    
+       reversePayment(id, amt, reason, ``)
+      .then(() => {
+        showMessage('Refund applied successfully', 'info');
+        overlay.remove();
+        fetchBidders();
+      })
+      .catch(err => {
+        showMessage('Refund error: ' + err.message, 'error');
+      });
     }
-    console.warn('Backend rejected payment request:', msg);
-    throw new Error(`Failed to create payment request: ${msg}`);
+    };
+
+
   }
-
-  const data = await response.json();
-  if (!data || !data.payment_request) {
-    console.error('Unexpected backend payload for payment request', data);
-    throw new Error('Backend returned an unexpected response when creating payment request');
-  }
-
-  return data.payment_request;
-}
-
 
     // payment modal via buttons
   document.querySelectorAll('#payButtons button').forEach(btn=>{
@@ -422,42 +492,72 @@ overlay.querySelector('#amt').focus();
 
       overlay.remove();fetchBidders();}; }
 
-  async function delPayment(id) {
-
-       const modal = await DayPilot.Modal.confirm("Are you sure you want to delete this payment?");
-        if (modal.canceled) {
-            showMessage("Payment not deleted", "info");
-            return;
-        } else { 
-
-    try {
-
-      const response = await fetch(`${API_ROOT}/payment/${id}`, {
-        method: 'DELETE',
-        headers: {
+async function reversePayment(paymentId, amount, reason, note) {
+  const res = await fetch(`${API_ROOT}/payment/${paymentId}/reverse`, {
+    method: 'POST',
+    headers: {
           Authorization: token,
           "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          auctionId: AUCTION_ID
-        })
+    },
+    body: JSON.stringify({
+      amount,   
+      reason,   
+      note,
+      auction_id: AUCTION_ID      
+    })
+  });
 
-      });
+  const data = await res.json();
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to delete payment");
-      }
-
-       showMessage("Payment deleted", "info");
-
-    } catch (err) {
-      showMessage("Payment error " + err.message, "error");
+  if (!res.ok) {
+    // backend may return remaining amount on conflict
+    if (data?.remaining != null) {
+      throw new Error(`Amount exceeds remaining reversible (£${data.remaining})`);
     }
+    throw new Error(data?.error || 'Reverse payment failed');
+  }
 
-    fetchBidders();
-  }
-  }
+  return data;
+}
+
+
+  // async function delPayment(id) {
+  
+
+  //      const modal = await DayPilot.Modal.confirm("Are you sure you want to delete this payment?");
+  //       if (modal.canceled) {
+  //           showMessage("Payment not deleted", "info");
+  //           return;
+  //       } else { 
+
+  //   try {
+
+  //     const response = await fetch(`${API_ROOT}/payment/${id}`, {
+  //       method: 'DELETE',
+  //       headers: {
+  //         Authorization: token,
+  //         "Content-Type": "application/json"
+  //       },
+  //       body: JSON.stringify({
+  //         auctionId: AUCTION_ID
+  //       })
+
+  //     });
+
+  //     if (!response.ok) {
+  //       const error = await response.json();
+  //       throw new Error(error.error || "Failed to delete payment");
+  //     }
+
+  //      showMessage("Payment deleted", "info");
+
+  //   } catch (err) {
+  //     showMessage("Payment error " + err.message, "error");
+  //   }
+
+  //   fetchBidders();
+  // }
+  // }
 
 
     /* ---------- CSV download with auth header ---------- */

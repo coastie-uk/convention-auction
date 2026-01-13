@@ -114,6 +114,12 @@ try {
 
 // Modifications to existing tables for schema version upgrades - Try to add columns/indexes, ignore errors if they already exist
 
+// 2.2 - 2.3: Add reversals to payments table (deprecates delete payment)
+try { db.exec("ALTER TABLE payments ADD COLUMN reverses_payment_id INTEGER"); } catch (e) { /* already exists */ }
+try { db.exec("ALTER TABLE payments ADD COLUMN reversal_reason TEXT"); } catch (e) { /* already exists */ }
+try { db.exec("CREATE INDEX IF NOT EXISTS ix_payments_reverses_payment_id ON payments(reverses_payment_id)"); } catch (e) { /* already exists */ }
+try { db.exec("CREATE INDEX IF NOT EXISTS ix_payments_bidder_created_at ON payments(bidder_id, created_at)"); } catch (e) { /* already exists */ }
+
 // 2.1 -> 2.2: Add payment provider metadata to payments table
 try { db.exec("ALTER TABLE payments ADD COLUMN provider TEXT not null default 'unknown'"); } catch (e) { /* already exists */ }
 try { db.exec("ALTER TABLE payments ADD COLUMN provider_txn_id TEXT"); } catch (e) { /* already exists */ }

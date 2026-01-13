@@ -35,7 +35,7 @@ const CONFIG_PATHS = {
   card: path.join(PPTX_CONFIG_DIR, 'cardConfig.json')
 };
 
-
+const { audit, auditTypes } = require('./middleware/audit');
 const maintenanceRoutes = require('./maintenance');
 const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
 
@@ -921,9 +921,10 @@ router.post("/auctions/delete", (req, res) => {
     db.run("DELETE FROM auctions WHERE id = ?", [auction_id], function (err) {
       if (err) {
         logFromRequest(req, logLevels.ERROR, `Delete auction error` + err.message);
-
         return res.status(500).json({ error: err.message });
       }
+      
+      audit(req.user.role, 'delete auction', 'auction', auction_id, {});
       // Step 3: Check how many auctions remain
       db.get("SELECT COUNT(*) AS count FROM auctions", [], (err, result) => {
         if (err) return res.status(500).json({ error: err.message });
@@ -936,12 +937,9 @@ router.post("/auctions/delete", (req, res) => {
 
             const deleteBatch = db.transaction(() => {
 
-
-              db.prepare("DELETE FROM audit_log").run();
-              logFromRequest(req, logLevels.DEBUG, `Audit log cleared`);
-
               db.prepare("DELETE FROM auctions").run();
-              logFromRequest(req, logLevels.DEBUG, `Auctions tablecleared`);
+              logFromRequest(req, logLevels.DEBUG, `Auctions table cleared`);
+              
 
               db.prepare("DELETE FROM bidders").run();
               logFromRequest(req, logLevels.DEBUG, `Bidders table cleared`);
@@ -970,6 +968,7 @@ router.post("/auctions/delete", (req, res) => {
             deleteBatch(); // execute the transaction
 
             res.json({ message: "Database reset actions completed successfully." });
+            audit(req.user.role, 'reset database', 'database', null, { reason: 'last auction deleted' });
 
           } catch (err) {
             logFromRequest(req, logLevels.ERROR, `Reset failed: ${err.message}`);
@@ -979,6 +978,7 @@ router.post("/auctions/delete", (req, res) => {
         } else {
           // The normal case.....
           logFromRequest(req, logLevels.INFO, `Auction ${auction_id} deleted`);
+          audit(req.user.role, 'delete auction', 'auction', auction_id, {});
           return res.json({ message: "Auction deleted." });
         }
       });
@@ -1026,12 +1026,13 @@ router.post("/auctions/create", (req, res) => {
     })
 
     // 3. Insert (remember: params go in ONE array)
-    db.run(
+    const result = db.run(
       "INSERT INTO auctions (short_name, full_name, logo) VALUES (?, ?, ?)",
       [short_name.trim().toLowerCase(), full_name.trim(), logo || "default_logo.png"]
     );
-
-    logFromRequest(req, logLevels.INFO, `Created new auction: ${short_name} with logo: ${logo}`);
+    const NewId = result.lastInsertRowid;
+    logFromRequest(req, logLevels.INFO, `Created new auction Id ${NewId} ${short_name} with logo: ${logo}`);
+    audit(req.user.role, 'create auction', 'auction', NewId, { short_name: short_name.trim().toLowerCase(), full_name: full_name.trim(), logo });
     res.json({ message: "Auction created." });
   } catch (err) {
     logFromRequest(req, logLevels.ERROR, `Create auction error: ${err}`);
@@ -1259,7 +1260,7 @@ router.post('/auctions/set-admin-state-permission', async (req, res) => {
   const { auction_id, admin_can_change_state } = req.body;
   const enabled = !!admin_can_change_state ? 1 : 0;
 
-  logFromRequest(req, logLevels.DEBUG, `State perm request for ${auction_id} to: ${admin_can_change_state}`);
+  logFromRequest(req, logLevels.DEBUG, `Admin state control for ${auction_id} to: ${admin_can_change_state}`);
 
 
   if (!auction_id) {
@@ -1267,12 +1268,23 @@ router.post('/auctions/set-admin-state-permission', async (req, res) => {
     return res.status(400).json({ error: "Missing auction ID." });
   }
 
+// Check if this has already been set to the requested value
+  const auction = db.prepare(`SELECT admin_can_change_state FROM auctions WHERE id = ?`).get(auction_id);
+  logFromRequest(req, logLevels.DEBUG, `State control: requested ${enabled}, current ${auction.admin_can_change_state}`);
+  if (!auction) {
+    return res.status(400).json({ error: "Auction not found." });
+  }
+ else if (auction.admin_can_change_state === enabled) {
+  //logFromRequest(req, logLevels.DEBUG, `No change needed for auction ${auction_id} admin state control.`);
+
+  }
+
   try {
 
     db.run(`UPDATE auctions SET admin_can_change_state = ? WHERE id = ?`, [enabled, auction_id]);
 
-    logFromRequest(req, logLevels.INFO, `Updated admin state control for auction ${auction_id} to: ${enabled}`);
-
+    logFromRequest(req, logLevels.INFO, `Updated admin state control for auction ${auction_id} set to: ${enabled}`);
+    audit(req.user.role, 'auction settings', 'auction', auction_id, { admin_can_change_state: enabled });
     return res.json({ message: `Auction ${auction_id} admin state control updated` });
 
   } catch (err) {
@@ -1294,7 +1306,7 @@ router.post("/generate-bids", checkAuctionState(['live', 'settlement']), (req, r
   }
 
   // Step 1: get items without bids
-  db.all("SELECT id FROM items WHERE auction_id = ? AND winning_bidder_id IS NULL", [auction_id], (err, items) => {
+  db.all("SELECT id, description FROM items WHERE auction_id = ? AND winning_bidder_id IS NULL", [auction_id], (err, items) => {
     if (err) return res.status(500).json({ error: err.message });
 
     const availableItems = items.map(i => i.id);
@@ -1335,7 +1347,7 @@ router.post("/generate-bids", checkAuctionState(['live', 'settlement']), (req, r
         .run(selected.id, price, testBid, itemId);
 
       logLines.push(`Item ${itemId} → Paddle ${selected.paddle} → £${price}`);
-      audit(req.user.role, 'finalize (test)', 'item', itemId, { bidder: selected.paddle, price });
+      audit(req.user.role, 'finalize (test)', 'item', itemId, {  bidder: selected.paddle, price, description: items.find(i => i.id === itemId)?.description || ''  });
 
     }
     logFromRequest(req, logLevels.INFO, `Generated ${num_bids} test bid(s) for auction ${auction_id}:\n` + logLines.join("\n"));
@@ -1374,6 +1386,7 @@ router.post("/delete-test-bids", checkAuctionState(['live', 'settlement']), (req
     `).run(auction_id, auction_id);
 
     logFromRequest(req, logLevels.INFO, `Deleted ${result.changes} test bid(s) and ${deleted.changes} unreferenced bidder(s) from auction ${auction_id}`);
+    audit(req.user.role, 'delete test bids', 'auction', auction_id, { test_bids_deleted: result.changes, bidders_deleted: deleted.changes });
     res.json({
       message: `Removed ${result.changes} test bids and ${deleted.changes} unused bidders.`
     });
@@ -1389,25 +1402,35 @@ router.post("/delete-test-bids", checkAuctionState(['live', 'settlement']), (req
 //--------------------------------------------------------------------------
 
 router.get("/audit-log", (req, res) => {
-  const { object_id } = req.query;
+  const { object_id, object_type } = req.query;
+
+if ((object_type && !auditTypes.includes(object_type)) || (object_id && isNaN(Number(object_id)))) {
+    return res.status(400).json({ error: "Invalid filter settings." });
+  }
+
+ logFromRequest(req, logLevels.DEBUG, `Audit log requested. Filter - object_id: ${object_id || 'none'}, object_type: ${object_type || 'none'}`); 
 
   let query = `
   SELECT 
   audit_log.*, 
   items.auction_id, 
-  items.description, 
   items.item_number, 
   auctions.short_name
 FROM audit_log
-LEFT JOIN items ON audit_log.object_id = items.id
-LEFT JOIN auctions ON items.auction_id = auctions.id
-
+LEFT JOIN items ON audit_log.object_type = 'item' AND audit_log.object_id = items.id
+LEFT JOIN auctions ON audit_log.object_type = 'item' AND items.auction_id = auctions.id
     `
 
+
   const params = [];
-  if (object_id) {
+  if (Number(object_id)) {
     query += ` WHERE audit_log.object_id = ?`;
     params.push(object_id);
+  }
+
+  if (object_type) {
+    query += object_id ? ` AND audit_log.object_type = ?` : ` WHERE audit_log.object_type = ?`;
+    params.push(object_type);
   }
 
   query += ` ORDER BY audit_log.created_at DESC`;
@@ -1463,16 +1486,6 @@ router.get("/audit-log/export", (req, res) => {
   }
 });
 
-//--------------------------------------------------------------------------
-// function to Record audit events
-//--------------------------------------------------------------------------
-function audit(user, action, type, id, details = {}) {
-  db.run(
-    `INSERT INTO audit_log (user, action, object_type, object_id, details)
-       VALUES (?,?,?,?,?)`,
-    [user, action, type, id, JSON.stringify(details)]
-  );
-}
 
 function awaitMiddleware(middleware) {
   return (req, res) =>

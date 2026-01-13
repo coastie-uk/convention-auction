@@ -20,7 +20,7 @@ const jwt = require('jsonwebtoken');
 const app = express();
 const fsp = require('fs').promises;
 const db = require('./db');
-
+const { audit } = require('./middleware/audit');
 
 // const VALID_ROLES = new Set(['admin', 'maintenance', 'cashier', 'slideshow']);
 const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
@@ -124,20 +124,6 @@ if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true, mode: 0o755 });
 }
 
-
-
-//--------------------------------------------------------------------------
-// get /version
-// API to get the backend and schema versions
-//--------------------------------------------------------------------------
-
-app.get('/version', (_req, res) => {
-  res.json({
-    backend: backendVersion,
-    schema: schemaVersion,
-  });
-});
-
 //--------------------------------------------------------------------------
 // POST /validate
 // API to validate token. Used to check if stored session is valid
@@ -156,7 +142,8 @@ app.post('/validate', async (req, res) => {
             return res.status(403).json({ error: "Session expired" });
         }
         req.user = decoded;
-        res.json({ token });
+        res.json({ token, versions: 
+            { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer } });
         logFromRequest(req, logLevels.DEBUG, `Token validated successfully`);
 
 
@@ -184,7 +171,9 @@ app.post('/login', (req, res) => {
             return res.status(401).json({ error: "Invalid password" });
         }
         const token = jwt.sign({ role }, SECRET_KEY, { expiresIn: "8h" });
-        res.json({ token, currency: CURRENCY_SYMBOL });
+        res.json({ token, currency: CURRENCY_SYMBOL, versions: 
+            { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer } 
+        });
 
         logFromRequest(req, logLevels.INFO, `User with role "${role}" logged in`);
         logFromRequest(req, logLevels.DEBUG, `full Token: ${token}....`);
@@ -1172,16 +1161,7 @@ function awaitMiddleware(middleware) {
     });
 }
 
-//--------------------------------------------------------------------------
-// API to record audit events
-//--------------------------------------------------------------------------
-function audit(user, action, type, id, details = {}) {
-    db.run(
-        `INSERT INTO audit_log (user, action, object_type, object_id, details)
-       VALUES (?,?,?,?,?)`,
-        [user, action, type, id, JSON.stringify(details)]
-    );
-}
+
 
 //--------------------------------------------------------------------------
 // POST /auctions/update-status
@@ -1198,7 +1178,7 @@ app.post("/auctions/update-status", authenticateRole(["admin", "maintenance"]), 
     }
 
     try {
-        const auction = await db.get(`SELECT id, admin_can_change_state FROM auctions WHERE id = ?`, [auction_id]);
+        const auction = await db.get(`SELECT id, status, admin_can_change_state, short_name FROM auctions WHERE id = ?`, [auction_id]);
 
         // If admin, check auction settings
         const role = req.user?.role;
@@ -1210,6 +1190,11 @@ app.post("/auctions/update-status", authenticateRole(["admin", "maintenance"]), 
 
         const normalizedStatus = status.toLowerCase();
 
+        // Check if the auction is already in the requested status - We seem to get duplicate requests
+        if (auction.status === normalizedStatus) {
+            return res.status(200);
+        }
+
         if (!allowedStatuses.includes(normalizedStatus)) {
             return res.status(400).json({ error: `Invalid status: "${status}"` });
         }
@@ -1217,12 +1202,12 @@ app.post("/auctions/update-status", authenticateRole(["admin", "maintenance"]), 
         db.run("UPDATE auctions SET status = ? WHERE id = ?", [normalizedStatus, auction_id], function (err) {
             if (err) return res.status(500).json({ error: err.message });
 
-            logFromRequest(req, logLevels.INFO, `Updated status for auction ${auction_id} to: ${normalizedStatus}`);
+            logFromRequest(req, logLevels.INFO, `Updated status for auction ${auction_id} ${auction.short_name} to: ${normalizedStatus}`);
 // TODO fix auction state change audit entry
-            audit(role, 'state change', 'auction', "0", { auction: auction_id, new_state: normalizedStatus });
+            audit(role, 'state change', 'auction', auction_id, { auction: auction_id, name: auction.short_name, new_state: normalizedStatus });
             // clear the auction state cache
             checkAuctionState.auctionStateCache.del(auction_id);
-            res.json({ message: `Auction ${auction_id} status updated to ${normalizedStatus}` });
+            res.json({ message: `Auction ${auction_id} ${auction.short_name} status updated to ${normalizedStatus}` });
         });
 
     } catch (err) {

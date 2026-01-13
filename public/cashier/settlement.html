@@ -43,7 +43,7 @@
       <h3>Lots won</h3>
       <table id="lotsTable"><thead><tr><th>Lot</th><th>Title</th><th>Price</th></tr></thead><tbody></tbody></table>
       <h3>Payments</h3>
-      <table id="payTable" class="pay-list"><thead><tr><th>Time</th><th>Method</th><th>Amount</th><th>Notes</th><th></th></tr></thead><tbody></tbody></table>
+      <table id="payTable" class="pay-list"><thead><tr><th>Id</th><th>Time</th><th>Method</th><th>Amount</th><th>Notes</th><th></th></tr></thead><tbody></tbody></table>
       <div id="totals" style="margin-top:8px;"></div>
 
       <div id="payButtons" style="margin-top:12px;">
@@ -66,6 +66,22 @@
       <input id="amt" type="number" min="0" step="0.01" style="width:100%" autofocus>
       <label style="margin-top:6px;display:block;">Note</label>
       <input id="note" type="text" style="width:100%" maxlength="100" placeholder="Optional note">
+      <div style="display:flex;justify-content:flex-end;margin-top:10px;gap:8px;">
+        <button id="cancel">Cancel</button>
+        <button id="ok">Record</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template id="refundTpl">
+  <div style="position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;justify-content:center;align-items:center;z-index:9999;">
+    <div style="background:#fff;padding:20px 24px;border-radius:8px;width:280px;">
+      <h3 id="modalTitle">Record refund</h3>
+      <label>Amount £</label>
+      <input id="amt" type="number" min="0" step="0.01" style="width:100%" autofocus>
+      <label style="margin-top:6px;display:block;">Note</label>
+      <input id="note" type="text" style="width:100%" maxlength="100" placeholder="Required reason for refund">
       <div style="display:flex;justify-content:flex-end;margin-top:10px;gap:8px;">
         <button id="cancel">Cancel</button>
         <button id="ok">Record</button>

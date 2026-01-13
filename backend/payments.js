@@ -1,8 +1,11 @@
-// payments.js
-// Payment processing via SumUp
-// Supports both app deep-link payments and hosted checkouts with webhook and callback handling, and server-side verification.
+/**
+ * @file        payments.js
+ * @description Payment processing via SumUp. Supports both app deep-link payments and hosted checkouts with webhook and callback handling, and server-side verification.
+ * @author      Chris Staples
+ * @license     GPL3
+ */
 
-const paymentProcessorVer = 'SumUp_1.0.0(2025-12-21)';
+const paymentProcessorVer = 'SumUp 1.0.1(2026-1-10)';
 
 const express = require('express');
 const crypto = require('node:crypto');
@@ -11,6 +14,9 @@ const db = require('./db');
 const { logLevels, logFromRequest, log } = require('./logger');
 const { request } = require('undici');
 const { authenticateRole } = require('./middleware/authenticateRole');
+const checkAuctionState = require('./middleware/checkAuctionState')(
+    db, { ttlSeconds: 2 }   
+ );
 const { sanitiseText } = require('./middleware/sanitiseText');
 const {
   SUMUP_WEB_ENABLED,
@@ -28,6 +34,8 @@ const {
 } = require('./config');
 
 const toPounds = (minor) => (minor / 100).toFixed(2);
+const {audit, recomputeBalanceAndAudit } = require('./middleware/audit');
+const { channel } = require('node:diagnostics_channel');
 
 const api = express.Router();
 api.use(express.json());
@@ -38,7 +46,7 @@ const posInt = (x) => Number.isInteger(x) && x > 0;
 // API to create a payment intent
 // supports three channels: 'hosted' (desktop/QR), 'app' (direct app), 'app-ind' (indirect app via payment request)
 
-api.post('/payments/intents', authenticateRole("cashier"), async (req, res) => {
+api.post('/payments/intents', authenticateRole("cashier"), checkAuctionState(['settlement']), async (req, res) => {
   try {
    expireStaleIntents();
     const { bidder_id, amount_minor, currency, channel, note } = req.body || {};
@@ -121,6 +129,17 @@ api.get('/payments/intents/:id', authenticateRole("cashier"), (req, res) => {
   }
 });
 
+// --- Test webhook endpoint (GET) ---
+// For testing webhook reachability from SumUp dashboard
+// Not used in production flow.
+api.get('/payments/sumup/webhook', async (req, res) => {
+  logFromRequest(req, logLevels.INFO, `Sumup web test webhook received ${JSON.stringify(req.query)}`);
+    const time = new Date().toISOString();
+    const type = 'Web';
+  res.type('html').send(generateTestPage('Web', req));
+    return;
+});
+
 // --- Webhook for hosted checkouts ---
 // This is a server-to-server notification from SumUp when the checkout status changes.
 // MUST be reachable from the public internet over HTTPS using valid TLS certs (not self-signed).
@@ -151,9 +170,45 @@ api.post('/payments/sumup/webhook', async (req, res) => {
   }
 });
 
+function generateTestPage(type, req) {
+const time = new Date().toISOString();
+ const ip = (
+    req.headers['x-forwarded-for']?.split(',')[0]?.trim() || // if behind proxy
+    req.socket?.remoteAddress ||
+    req.connection?.remoteAddress ||
+    'unknown'
+  );
+
+  return `
+<!DOCTYPE html> <html lang="en"> <head> <meta charset="UTF-8"> <title>SumUp ${type} Payment Callback Test</title> </head>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 2rem;
+      background: #f5f5f5;
+      color: #222;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      box-sizing: border-box;
+      text-align: center;
+    }
+      </style>
+<body> <h1>SumUp ${type} Payment Callback Test</h1>
+  <p>The endpoint URL configured on the backend is reachable from this browser. Received at ${time} from IP ${ip}. This <i>suggests</i> that the endpoint is configured correctly.</p>
+  <p>As a reminder, the endpoint MUST be reachable from the public internet over HTTPS using valid TLS certs (not self-signed).</p>
+  <p>To now test the full payment flow, please initiate a payment via the front-end UI.</p> </body> </html>
+`;  
+
+}
+
 
 // API for handling both success and fail callbacks from SumUp app deep-link UX
 // Testing indicates that SumUp will sometimes call the success endpoint under failure conditions (!!), so we treat them the same and interpret the status param.
+// MUST be reachable from the public internet over HTTPS using valid TLS certs (not self-signed).
 
 api.get('/payments/sumup/callback/success', handleSumupAppCallback);
 api.get('/payments/sumup/callback/fail', handleSumupAppCallback);
@@ -163,6 +218,13 @@ function handleSumupAppCallback(req, res) {
   const foreignTxId = readForeignTxId(req.query);
   const txCode = readTxCode(req.query);
   const failure = readFailureInfo(req.query);
+
+  // If everything is null, assume it's a simple reachability test and respond accordingly
+if (!foreignTxId && !txCode && !failure.cause && !failure.message) {
+    logFromRequest(req, logLevels.INFO, `Sumup app test webhook received ${JSON.stringify(req.query)}`);
+  res.type('html').send(generateTestPage('App', req));
+    return;
+}
 
   logFromRequest(req, logLevels.INFO,
     `sumup_app_callback endpoint=${req.path} status=${status} foreign_tx=${foreignTxId} tx_code=${txCode} failure=${JSON.stringify(failure)}`);
@@ -195,7 +257,7 @@ function handleSumupAppCallback(req, res) {
   }
 
   // Opens a simple page that attempts to close itself after showing status
-  // This should work as the window was opened by window.open from our front-end.
+  // Auto-close is typically blocked by modern browser but it *should* work here as the window was opened by window.open from our front-end.
 
   res.type('html').send(`
 <!DOCTYPE html>
@@ -296,7 +358,6 @@ function handleSumupAppCallback(req, res) {
 
           setTimeout(() => {
             // If we're still running here, assume the close was blocked.
-            // We can’t *detect* it directly, so we just offer guidance.
             fallbackMsg.style.display = "block";
             closeButton.disabled = true;
           }, 500);
@@ -407,8 +468,18 @@ async function verifyAndFinalizeIntent(intentId, { raw = null, source = 'manual'
     db.prepare(`UPDATE payment_intents SET status = 'succeeded' WHERE intent_id=?`).run(intent.intent_id);
       log("Payment", logLevels.INFO, `Payment intent finalized: intent=${intent.intent_id}, amount=${intent.amount_minor}`);
 
+
+    const bidderRow = db.get(`SELECT paddle_number FROM bidders WHERE id = ?`, [intent.bidder_id]);
+
+    audit('cashier', 'payment', 'bidder', intent.bidder_id, { amount, createdBy, paddle: bidderRow.paddle_number, intent: intent.intent_id });
+
+    // Recompute balance and set audit status on items
+    const balance = recomputeBalanceAndAudit(intent.bidder_id);
+    log("Payment", logLevels.DEBUG, `Payment complete. Bidder ${intent.bidder_id} / paddle number ${bidderRow.paddle_number} new balance after payment: ${balance}`);
+
   });
 
+  // run transaction
   t();
 
 }

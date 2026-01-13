@@ -177,7 +177,12 @@ const API = "/api"
 
   // --------------- undo finalize -----------------------------
   async function undoFinalize(itemId, rowEl) {
-    if (!confirm('Undo finalize for this lot?')) return;
+    // if (!confirm('Undo finalize for this lot?')) return;
+           const modal = await DayPilot.Modal.confirm("Retract bid for this lot?");
+        if (modal.canceled) {
+           return showMessage("Retract cancelled", "info");
+        } else { 
+    
     try {
       const res = await fetch(UNDO_API(itemId), {
         method:'POST',
@@ -215,6 +220,7 @@ const API = "/api"
       showMessage(err.message||err, "error");
 
     }
+  }
   }
 
   // --------------- lock editing when live --------------------

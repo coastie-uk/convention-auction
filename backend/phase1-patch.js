@@ -1,6 +1,6 @@
 /**
  * @file        phase1-patch.js
- * @description Phase 1 upgrade patch. Adds in finalise and payment functions for manual payments.
+ * @description Phase 1 upgrade patch. Adds in bid recording functions and payment functions for manual payments.
  * @author      Chris Staples
  * @license     GPL3
  */
@@ -11,38 +11,50 @@
 const express = require('express');
 const db       = require('./db');
 const checkAuctionState = require('./middleware/checkAuctionState')(
-    db, { ttlSeconds: 2 }   // optional – default is 5
+    db, { ttlSeconds: 2 }   
  );
 const { authenticateRole } = require('./middleware/authenticateRole');
-const { CASH_ENABLED, MANUAL_CARD_ENABLED, PAYPAL_ENABLED, SUMUP_WEB_ENABLED, SUMUP_CARD_PRESENT_ENABLED, SUMUP_APP_INDIRECT_ENABLED, CURRENCY } = require('./config');
+const { CASH_ENABLED, MANUAL_CARD_ENABLED, PAYPAL_ENABLED, SUMUP_WEB_ENABLED, SUMUP_CARD_PRESENT_ENABLED, CURRENCY, SUMUP_CALLBACK_SUCCESS, SUMUP_RETURN_URL } = require('./config');
 
-const { logLevels, logFromRequest } = require('./logger');
+const { logLevels, logFromRequest, log } = require('./logger');
 const { json } = require('body-parser');
 const { sanitiseText } = require('./middleware/sanitiseText');
+const { audit, recomputeBalanceAndAudit } = require('./middleware/audit');
 
 // Prepare payment methods object - this is static at runtime
 const paymentMethods = Object.freeze(JSON.parse(JSON.stringify({
-  'cash': CASH_ENABLED,
-  'card-manual': MANUAL_CARD_ENABLED,
-  'paypal-manual': PAYPAL_ENABLED,
-  'sumup-web': SUMUP_WEB_ENABLED,
-  'sumup-app': SUMUP_CARD_PRESENT_ENABLED,
-  'sumup-indirect': SUMUP_APP_INDIRECT_ENABLED
+  'cash': {
+    enabled: CASH_ENABLED,
+    label: 'Cash',
+    url: null
+  },
+  'card-manual': {
+    enabled: MANUAL_CARD_ENABLED,
+    label: 'Card (manual)',
+    url: null
+  },
+  'paypal-manual': {
+    enabled: PAYPAL_ENABLED,
+    label: 'PayPal (manual)',
+    url: null
+  },
+  'sumup-web': {
+    enabled: SUMUP_WEB_ENABLED,
+    label: 'SumUp Web checkout',
+    url: SUMUP_RETURN_URL
+
+  },
+  'sumup-app': {
+    enabled: SUMUP_CARD_PRESENT_ENABLED,
+    label: 'SumUp App',
+    url: SUMUP_CALLBACK_SUCCESS
+  },
+
 })));
+
 
 module.exports = function phase1Patch (app) {
 
-
-  //--------------------------------------------------------------------------
-  // Record audit events
-  //--------------------------------------------------------------------------
-  function audit (user, action, type, id, details = {}) {
-    db.run(
-      `INSERT INTO audit_log (user, action, object_type, object_id, details)
-       VALUES (?,?,?,?,?)`,
-      [user, action, type, id, JSON.stringify(details)]
-    );
-  }
 
   //--------------------------------------------------------------------------
   // Live Feed (Read only)
@@ -124,8 +136,8 @@ module.exports = function phase1Patch (app) {
   //--------------------------------------------------------------------------
   // API to fetch the enabled payment methods
   //--------------------------------------------------------------------------
-  settlement.get('/payment-methods', authenticateRole('cashier'), (req, res) => {
-
+  settlement.get('/payment-methods', authenticateRole(['cashier','maintenance']), (req, res) => {
+  logFromRequest(req, logLevels.DEBUG, `Payment methods requested`);
     res.json(paymentMethods);
   });
 
@@ -153,9 +165,12 @@ module.exports = function phase1Patch (app) {
       return res.status(503).json({ error: `Requested payment method ${method} disabled` });
     }
 
-
-
-    if (!bidder_id || !amount) return res.status(400).json({ error: 'Missing params' });
+    // verify that the bidder belongs to the auction and fetch paddle number
+    const bidderRow = db.get(`SELECT paddle_number FROM bidders WHERE id = ? AND auction_id = ?`, [bidder_id, auction_id]);
+    if (!bidderRow) {
+      logFromRequest(req, logLevels.ERROR, `Bidder ${bidder_id} not found in auction ${auction_id} whilst recording payment`);
+      return res.status(404).json({ error: 'Bidder not found for this auction' });
+    }
 
     // Check that the requested amount does not exceed the bidder's outstanding balance
     const sums2 = db.prepare(`
@@ -164,9 +179,9 @@ module.exports = function phase1Patch (app) {
         IFNULL((SELECT SUM(amount) FROM payments WHERE bidder_id = ?), 0) AS payments_total
     `).get(bidder_id, bidder_id);
     const outstanding = Math.max(0, Math.round((sums2.lots_total - sums2.payments_total)));
-    logFromRequest(req, logLevels.DEBUG, `Bidder ${bidder_id} outstanding amount=${outstanding}, amount requested=${amount}`);
+    logFromRequest(req, logLevels.DEBUG, `Bidder ${bidder_id} paddle number ${bidderRow.paddle_number} outstanding amount=${outstanding}, amount requested=${amount}`);
     if (amount > outstanding) {
-      logFromRequest(req, logLevels.WARN, `Intent amount exceeds outstanding: bidder=${bidder_id} amount=${amount} outstanding=${outstanding}`);
+      logFromRequest(req, logLevels.WARN, `Intent amount exceeds outstanding: bidder=${bidder_id} paddle number=${bidderRow.paddle_number} amount=${amount} outstanding=${outstanding}`);
       return res.status(400).json({ error: 'Amount requested exceeds outstanding', outstanding});
     }
 
@@ -176,43 +191,12 @@ try {
             VALUES (?,?,?,?,?,?)`,
       [bidder_id, amount, method, sanitisedNote, req.user.role, CURRENCY]
     );
-    audit(req.user.role, 'payment', 'bidder', bidder_id, { amount, method });
+    audit(req.user.role, 'payment', 'bidder', bidder_id, { amount, method, paddle: bidderRow.paddle_number, note: sanitisedNote });
     logFromRequest(req, logLevels.INFO, `${method} payment by bidder ${bidder_id} for ${amount} recorded`);
 
   /* 2️⃣  recompute balance */
-  const sums = db.get(
-    `SELECT
-         (SELECT SUM(hammer_price)
-            FROM items
-           WHERE winning_bidder_id = ?) AS lots_total,
-         (SELECT SUM(amount)
-            FROM payments
-           WHERE bidder_id = ?)        AS paid_total`,
-    [bidder_id, bidder_id]
-  );
+  const balance = recomputeBalanceAndAudit(bidder_id, req);
 
-  const balance = (sums.lots_total || 0) - (sums.paid_total || 0);
-
-  /* 3️⃣  if fully paid, audit every lot => “item paid” */
-
-    const items = db.all(
-      `SELECT i.id, b.paddle_number 
-        FROM items i
-        LEFT JOIN bidders b ON b.id = i.winning_bidder_id
-        WHERE winning_bidder_id = ?
-      `,
-      [bidder_id]
-    );
-   if (balance <= 0) {
-     items.forEach(it => {
-       audit(req.user.role, 'paid in full', 'item', it.id, { bidder: it.paddle_number });
-     })
-   }
-   else if (balance > 0) {
-     items.forEach(it => {
-       audit(req.user.role, 'part paid', 'item', it.id, { bidder: it.paddle_number });
-     })
-   }
  res.json({ ok: true, balance });
     
 } catch (error) {
@@ -221,41 +205,161 @@ try {
     res.status(500).json({ error: `Failed to record payment for bidder ${bidder_id}: ${error.message}` });
 }
   });
- 
 
   //--------------------------------------------------------------------------
-  // Settlement (delete paymeny)
+  // Settlement (payment reversal)
   // auctionId provided in the request body to feed checkAuctionState
+
+  // POST /payments/:id/reverse
+  // Body: { amount?: number, reason?: string, note?: string }
+  // - amount: optional, defaults to full remaining amount
+  // - reason: required
+  // - note: optional free text
   //--------------------------------------------------------------------------
 
 
-settlement.delete('/payment/:pay_id', authenticateRole('cashier'), checkAuctionState(['settlement']), (req, res) => {
-  const payId = Number(req.params.pay_id);
-  if (!payId) return res.status(400).json({ error: 'Bad id' });
 
-  // look up the row for audit purposes
-  const row = db.get(`SELECT bidder_id, amount, method FROM payments WHERE id = ?`, [payId]);
-  if (!row) return res.status(404).json({ error: 'Payment not found' });
-try {
-  // simple delete (Phase 1 lets cashiers fix typos)
-  db.run(`DELETE FROM payments WHERE id = ?`, [payId]);
+settlement.post('/payment/:payid/reverse', authenticateRole(['cashier', 'admin']), checkAuctionState(['settlement']), (req, res) => {
+  try {
+    const originalId = Number(req.params.payid);
+    if (!Number.isInteger(originalId) || originalId <= 0) {
+      return res.status(400).json({ error: 'invalid_payment_id' });
+    }
 
-  // audit entry
-  audit(req.user.role, 'delete_payment', 'bidder', row.bidder_id, {
-    deleted_payment_id: payId,
-    amount: row.amount,
-    method: row.method
-  });
-      logFromRequest(req, logLevels.INFO, `Payment by bidder ${row.bidder_id} removed for item ${payId}`);
+    const body = req.body || {};
+    const requestedAmount = body.amount != null ? Number(body.amount) : null;
+
+  
+    const reason = sanitiseText(body.reason, 255); 
+    const extraNote = sanitiseText(body.note, 255);
+
+    if (!reason) {
+      return res.status(400).json({ error: 'reason_required' });
+    }
+
+    const getOriginal = db.prepare(`
+      SELECT id, bidder_id, amount, method, note, created_by, created_at,
+             provider, provider_txn_id, intent_id, currency
+      FROM payments
+      WHERE id = ?
+    `);
 
 
-  res.json({ ok: true });
-} catch (error) {
-    logFromRequest(req, logLevels.ERROR, `Failed to delete payment ${payId}: ${error.message}`);
+    const getReversedTotal = db.prepare(`
+      SELECT COALESCE(SUM(-amount), 0) AS reversed_total
+      FROM payments
+      WHERE reverses_payment_id = ?
+    `);
 
-    res.status(500).json({ error: `Failed to delete payment ${payId}: ${error.message}` });
-}
-} );
+    const insertReversal = db.prepare(`
+  INSERT INTO payments (
+    bidder_id,
+    amount,
+    method,
+    note,
+    created_by,
+    provider,
+    currency,
+    reverses_payment_id,
+    reversal_reason
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+    const tx = db.transaction(() => {
+      const original = getOriginal.get(originalId);
+      if (!original) {
+        return { error: 'not_found' };
+      }
+
+      // Don’t allow reversing a reversal (or a negative adjustment)
+      if (!(original.amount > 0)) {
+        return { error: 'cannot_reverse_non_positive_payment' };
+      }
+
+      const reversed = getReversedTotal.get(originalId);
+      const reversedTotal = Number(reversed?.reversed_total || 0);
+        logFromRequest(req, logLevels.DEBUG, `Original payment amount=${original.amount}, already reversed total=${reversedTotal}`);
+      const remaining = Number(original.amount) - reversedTotal;
+      // remaining should not go negative; but guard anyway
+      const remainingSafe = remaining < 0 ? 0 : remaining;
+
+      // Determine refund amount
+      const refundAmount =
+        requestedAmount == null ? remainingSafe : requestedAmount;
+
+      if (!(refundAmount > 0)) {
+        return { error: 'invalid_amount' };
+      }
+      if (refundAmount > remainingSafe + 1e-9) { // small float guard
+        return { error: 'amount_exceeds_remaining', remaining: remainingSafe };
+      }
+
+      const reversalNote = `Refund of ${original.currency || ''} ${refundAmount} against ID #${original.id}. Reason: ${reason}` + (extraNote ? ` | note=${extraNote}` : '');
+      logFromRequest(req, logLevels.DEBUG, `reversal note: ${reversalNote}`);
+
+const methodString = original.method + ' (Refund)';
+const info = insertReversal.run(
+
+  original.bidder_id,                              // bidder_id
+  -refundAmount,                                   // amount (negative)
+  methodString,                                    // method
+  reversalNote,                                    // note
+  req.user.role,                                   // created_by
+  original.provider || 'unknown',                   // provider (schema NOT NULL)
+  original.currency || 'GBP',                       // currency (schema NOT NULL)
+  original.id,                                     // reverses_payment_id
+  reason                                           // reversal_reason
+);
+
+audit(req.user.role, 'payment_reversal', 'bidder', original.bidder_id, {
+  original_payment_id: original.id,
+  reversal_payment_id: info.lastInsertRowid,
+  amount: refundAmount,
+  reason
+});
+
+logFromRequest(req, logLevels.DEBUG, `Reversal inserted with id=${info.lastInsertRowid}`);
+      return {
+        ok: true,
+        reversal_id: Number(info.lastInsertRowid),
+        original_id: original.id,
+        bidder_id: original.bidder_id,
+        refunded: refundAmount,
+        remaining: remainingSafe - refundAmount
+      };
+    });
+
+    const result = tx();
+
+    if (result?.error === 'not_found') {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+    if (result?.error === 'cannot_reverse_non_positive_payment') {
+      return res.status(409).json({ error: 'Cannot reverse non-positive payment' });
+    }
+    if (result?.error === 'invalid_amount') {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+    if (result?.error === 'amount_exceeds_remaining') {
+      return res.status(409).json({ error: 'Amount exceeds remaining', remaining: result.remaining });
+    }
+    if (!result?.ok) {
+      return res.status(500).json({ error: 'Reverse payment failed' });
+    }
+
+    logFromRequest(req, logLevels.INFO,
+      `payment_reversed original=${result.original_id} reversal=${result.reversal_id} bidder=${result.bidder_id} refunded=${result.refunded}`
+    );
+
+    return res.status(201).json(result);
+
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Payment reverse error ${err}`);
+    return res.status(500).json({ error: 'Payment reverse error' });
+  }
+});
+
 
   //--------------------------------------------------------------------------
   // Settlement (create csv summary)
@@ -292,8 +396,8 @@ try {
   //--------------------------------------------------------------------------
   const sales = express.Router();
 
-  sales.post('/:id/finalize', authenticateRole('admin'), checkAuctionState(['live', 'settlement']), (req, res) => {
-    const itemId = Number(req.params.id);
+  sales.post('/:itemid/finalize', authenticateRole('admin'), checkAuctionState(['live', 'settlement']), (req, res) => {
+    const itemId = Number(req.params.itemid);
     const { paddle, price, auctionId } = req.body;
     if (!paddle || !price || !auctionId) return res.status(400).json({ error: 'Missing paddle or price or auction id' });
 
@@ -395,8 +499,8 @@ if (info.changes === 0) {
   //--------------------------------------------------------------------------
   // Settlement - retrieve items the bidder won
   //--------------------------------------------------------------------------
-settlement.get('/bidders/:id', authenticateRole('cashier'), (req, res) => {
-  const id = Number(req.params.id);
+settlement.get('/bidders/:bidderid', authenticateRole('cashier'), (req, res) => {
+  const id = Number(req.params.bidderid);
   const auctionId = Number(req.query.auction_id);           // NEW
 
 if (!auctionId || !id) return res.status(400).json({ error: 'item # and auction_id required' });
@@ -477,5 +581,5 @@ settlement.get('/summary', authenticateRole('cashier'), (req, res) => {
   app.use('/settlement', settlement);
   app.use('/lots', sales);
 
- // log('Phase1', logLevels.INFO, 'Phase 1 patch v1.1 (bid+payment processor) loaded');
+
 };

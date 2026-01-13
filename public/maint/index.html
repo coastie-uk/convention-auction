@@ -17,13 +17,13 @@
       <input type="password" id="maintenance-password" placeholder="Enter Maintenance Password">
       <button id="login-button">Login</button>
       <p id="error-message" style="color:red;"></p>
-      <p id="build-version" style="color:#666; font-size:0.9em; margin-top:6px;"></p>
 
       </div>
     </section>
 
     <section id="maintenance-section" style="display:none;">
       <h1>Maintenance Panel</h1>
+      <p id="software-version" style="margin-top:5px; color:#666;"></p>
       <a href="/help/user-guide.html?section=maintenance-panel" target="_blank"><button>User guide</button></a>
 
               <button onclick="window.location.href='/admin'">Back to Admin Panel</button>
@@ -190,10 +190,35 @@
         </table>
       </details>
 
+      <details class="payments">
+        <summary>Payment Processing</summary>
+        <table id="paymentMethodsTable" class="payment-methods">
+          <thead>
+            <tr>
+      
+              <th>Label</th>
+              <th>Status</th>
+              <th>Callback URL (click to test)</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      <p> See documentation for instructions on configuring payment processing options</p>
+      </details>
+
 <details class="group">
   <summary>Audit Log Viewer</summary>
-    <label for="audit-filter-id">Filter by Item ID:</label>
+    <label for="audit-filter-id">Filter by Id:</label>  
     <input type="number" id="audit-filter-id" style="margin-right: 10px;" />
+    <label for="audit-filter-type">Filter by Event Type:</label>
+    <select id="audit-filter-type" style="margin-right: 10px;">
+      <option value="">All Types</option>
+      <option value="item">Item</option>
+      <option value="bidder">Bidder</option>
+      <option value="payment">Payment</option>
+      <option value="auction">Auction</option>
+      <option value="database">Database</option>
+    </select>
     <button id="fetch-audit-log">Fetch Audit log</button>
   <button id="export-audit-log">Download CSV</button>
   <br>
@@ -202,13 +227,14 @@
       <thead>
         <tr>
           <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Time</th>
+          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Type</th>
           <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Item ID</th>
           <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Action</th>
           <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Details</th>
 
           <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">User</th>
 
-          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Description</th>
+
           <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Auction</th>
           <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Item #</th>
         </tr>

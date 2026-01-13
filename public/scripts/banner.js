@@ -20,18 +20,3 @@
             messageBanner.style.display = "none";
         }, 3000);
     }
-
-    // Helper function to attach build version info
-    
-        (async function attachBuildVersion() {
-        const el = document.getElementById('build-version');
-        if (!el) return; // nothing to do
-
-        try {
-            const res = await fetch(`${API2}/version`, { cache: 'no-store' });
-            const data = await res.json();
-            el.textContent = `Server connected (v${data.backend}, db schema ${data.schema})`;
-        } catch (e) {
-            el.textContent = `Error connecting to server`;
-        }
-    })();

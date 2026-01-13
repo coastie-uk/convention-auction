@@ -3,30 +3,9 @@ const API = "/api"
 const output = document.getElementById("output");
 const loginSection = document.getElementById("login-section");
 const maintenanceSection = document.getElementById("maintenance-section");
+const softwareVersion = document.getElementById("software-version");
 
 var isRendering = false;
-
-// Create a message banner
-// const messageBanner = document.createElement("div");
-// messageBanner.id = "message-banner";
-// document.body.appendChild(messageBanner);
-
-// // Function to show messages with different types
-// function showMessage(message, type = "info") { // success, error, info
-//   messageBanner.textContent = message;
-//   messageBanner.className = `message-banner ${type}`;
-//   messageBanner.style.display = "block";
-//   messageBanner.style.opacity = "1";
-
-//   setTimeout(() => {
-//     messageBanner.style.transition = "opacity 1s";
-//     messageBanner.style.opacity = "0";
-//   }, 3000);
-
-//   setTimeout(() => {
-//     messageBanner.style.display = "none";
-//   }, 3000);
-// }
 
 checkToken();
 
@@ -47,6 +26,8 @@ async function checkToken() {
       checkIntegrity();
       loadPptxImageList();
       startAutoRefresh();
+      loadEnabledPaymentMethods();
+      softwareVersion.textContent = `Backend: ${data.versions.backend || 'N/A'}, Schema: ${data.versions.schema || 'N/A'}, Payment processor: ${data.versions.payment_processor || 'N/A'}`;
     } else {
       logOut();
       document.getElementById("error-message").innerText = data.error;
@@ -70,6 +51,9 @@ document.getElementById("login-button").addEventListener("click", async () => {
     maintenanceSection.style.display = "block";
     refreshAuctions();
     checkToken();
+    loadEnabledPaymentMethods();
+    softwareVersion.textContent = `Backend version: ${data.versions.backend || 'N/A'}, Schema version: ${data.versions.schema || 'N/A'}`;
+
     location.reload();
   } else {
     document.getElementById("error-message").innerText = data.error;
@@ -990,9 +974,13 @@ document.getElementById("reset-pptx-config").onclick = async () => {
 document.getElementById("fetch-audit-log").onclick = async () => {
 
   const filterId = document.getElementById("audit-filter-id").value;
-  const query = filterId ? `?object_id=${filterId}` : "";
+  const typeSelect = document.getElementById("audit-filter-type");
+  const selectedType = typeSelect.options[typeSelect.selectedIndex].value; 
+  const idQuery = filterId ? `?object_id=${filterId}` : "";
+  const typeQuery = selectedType ? (idQuery ? `&object_type=${selectedType}` : `?object_type=${selectedType}`) : "";
+  const finalQuery = idQuery + typeQuery;
 
-  const res = await fetch(`${API}/maintenance/audit-log${query}`, {
+  const res = await fetch(`${API}/maintenance/audit-log${finalQuery}`, {
     headers: { Authorization: token }
   });
 
@@ -1011,12 +999,13 @@ document.getElementById("fetch-audit-log").onclick = async () => {
     const row = document.createElement("tr");
     row.innerHTML = `
       <td style="padding: 4px;">${log.created_at}</td>
+      <td style="padding: 4px;">${log.object_type}</td>
       <td style="padding: 4px;">${log.object_id}</td>
       <td style="padding: 4px;">${log.action}</td>
       <td style="padding: 4px;">${formatHistoryDetails(log.details)}</td>
 
       <td style="padding: 4px;">${log.user}</td>
-      <td style="padding: 4px;">${log.description || "(Not available)"}</td>
+
       <td style="padding: 4px;">${log.short_name ?? ""}</td>
       <td style="padding: 4px;">${log.item_number ?? ""}</td>
     `;
@@ -1029,6 +1018,58 @@ document.getElementById("fetch-audit-log").onclick = async () => {
   //   logBox.textContent += line;
   // });
 }
+async function loadEnabledPaymentMethods() {
+  const tableBody = document.querySelector('#paymentMethodsTable tbody');
+
+  tableBody.innerHTML = '';
+
+  const res = await fetch(`${API}/settlement/payment-methods`, {
+    headers: {
+      Authorization: token,
+      "Accept": "application/json"
+    }
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to load payment methods (${res.status})`);
+  }
+
+  const methods = await res.json();
+  Object.entries(methods).forEach(([key, cfg]) => {
+    const label = cfg?.label || key;
+    const enabled = !!cfg?.enabled;
+    const url  = cfg?.url || null;
+
+    const tr = document.createElement('tr');
+
+    const tdLabel = document.createElement('td');
+    tdLabel.textContent = label;
+
+    const tdStatus = document.createElement('td');
+    tdStatus.textContent = enabled ? 'Enabled' : 'Disabled';
+    tdStatus.className = enabled ? 'enabled' : 'disabled';
+
+    
+      const tdLink = document.createElement('td');
+      tdLink.textContent = url ? '' : 'N/A';
+
+      if (url) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.textContent = url;
+        tdLink.appendChild(link);
+      }
+
+    tr.appendChild(tdLabel);
+    tr.appendChild(tdStatus);
+    tr.appendChild(tdLink);
+
+
+    tableBody.appendChild(tr);
+  });
+}
+
 
 function formatHistoryDetails(details) {
   if (!details) return "";

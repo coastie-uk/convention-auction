@@ -53,12 +53,6 @@
 /* eslint-disable node/no-sync */
 const NodeCache = require('node-cache');
 
-// const DEFAULT_LOGGER = {
-//   info: console.log,
-//   warn: console.warn,
-//   error: console.error,
-// };
-
 /**
  * Factory that injects the shared better‑sqlite3 Database instance **and**
  * sets up a per‑process NodeCache.
@@ -128,7 +122,7 @@ module.exports = (db, options = {}) => {
         // set auction id from the inputs
         let auctionId = paramAuctionId || bodyAuctionId || bodyAuctionIdAlt;
 
-        // if both ID and auction have showed up, check that the item actually belongs to the auction
+        // if both item ID and auction have showed up, check that the item actually belongs to the auction
         if (auctionId && id) {
           const itemValid = stmtCheckConsistency.get(id, auctionId);
 
