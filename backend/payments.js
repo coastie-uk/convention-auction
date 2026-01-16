@@ -29,10 +29,10 @@ const {
   SUMUP_CALLBACK_SUCCESS,
   SUMUP_CALLBACK_FAIL,
   PAYMENT_TTL_MIN,
-  SUMUP_APP_INDIRECT_ENABLED,
   CURRENCY
 } = require('./config');
 
+const bcrypt = require('bcryptjs');
 const toPounds = (minor) => (minor / 100).toFixed(2);
 const {audit, recomputeBalanceAndAudit } = require('./middleware/audit');
 const { channel } = require('node:diagnostics_channel');
@@ -47,6 +47,26 @@ const posInt = (x) => Number.isInteger(x) && x > 0;
 // supports three channels: 'hosted' (desktop/QR), 'app' (direct app), 'app-ind' (indirect app via payment request)
 
 api.post('/payments/intents', authenticateRole("cashier"), checkAuctionState(['settlement']), async (req, res) => {
+
+// Check if the cashier account is still on its default password
+try {
+  const row = db.get(`SELECT password FROM passwords WHERE role = 'cashier'`);
+  if (row) {
+    const isDefault = bcrypt.compareSync('c1234', row.password);
+    if (isDefault && (SUMUP_WEB_ENABLED || SUMUP_CARD_PRESENT_ENABLED)) {
+      log("Server", logLevels.WARN, `The cashier account is using the default password.SumUp payments cannot be processed until the cashier password is changed.`);
+      return res.status(403).json({ error: 'SumUp payments blocked due to default cashier password' });
+    }
+  } else {
+    log("Server", logLevels.ERROR, `No cashier account found in passwords table.`);
+  }
+}
+catch (error) {
+  log("Server", logLevels.ERROR, `Error checking cashier password: ${error.message}`);
+  return res.status(500).json({ error: 'internal_error' });
+}
+
+
   try {
    expireStaleIntents();
     const { bidder_id, amount_minor, currency, channel, note } = req.body || {};
@@ -76,7 +96,7 @@ if (channel !== 'hosted' && channel !== 'app' && channel !== 'app-ind' ) {
     }
 
     //check if the requested channel is enabled in config
-    if (channel === 'hosted' && !SUMUP_WEB_ENABLED || channel === 'app' && !SUMUP_CARD_PRESENT_ENABLED || (channel === 'app-ind' && !SUMUP_APP_INDIRECT_ENABLED)) {
+    if (channel === 'hosted' && !SUMUP_WEB_ENABLED || channel === 'app' && !SUMUP_CARD_PRESENT_ENABLED) {
       logFromRequest(req, logLevels.WARN, `Attempt to create SumUp payment with disabled channel: ${channel}`);
       return res.status(503).json({ error: `Requested payment method SumUp-${channel} is disabled` });
     }

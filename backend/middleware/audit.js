@@ -1,7 +1,7 @@
 const db = require('../db');
 
 const { logLevels, log } = require('../logger');
-const auditTypes = ['item', 'bidder', 'payment', 'auction', 'database'];
+const auditTypes = ['item', 'bidder', 'payment', 'auction', 'database','server'];
 
 const stmtGetItemAuditInfo = db.prepare(
     `SELECT i.auction_id, i.description, a.short_name

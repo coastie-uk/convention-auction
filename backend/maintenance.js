@@ -12,7 +12,7 @@ const multer = require("multer");
 const { Parser } = require("@json2csv/plainjs");
 const { exec } = require("child_process");
 const router = express.Router();
-const { CONFIG_IMG_DIR, SAMPLE_DIR, UPLOAD_DIR, DB_PATH, DB_NAME, BACKUP_DIR, MAX_UPLOADS, allowedExtensions, MAX_AUCTIONS, OUTPUT_DIR, LOG_LEVEL, PPTX_CONFIG_DIR, LOG_DIR, LOG_NAME } = require('./config');
+const { CONFIG_IMG_DIR, SAMPLE_DIR, UPLOAD_DIR, DB_PATH, DB_NAME, BACKUP_DIR, MAX_UPLOADS, allowedExtensions, MAX_AUCTIONS, OUTPUT_DIR, LOG_LEVEL, PPTX_CONFIG_DIR, LOG_DIR, LOG_NAME, PASSWORD_MIN_LENGTH } = require('./config');
 
 const { validateJsonPaths } = require('./middleware/json-path-validator');
 
@@ -36,6 +36,7 @@ const CONFIG_PATHS = {
 };
 
 const { audit, auditTypes } = require('./middleware/audit');
+const bcrypt = require('bcryptjs');
 const maintenanceRoutes = require('./maintenance');
 const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
 
@@ -140,15 +141,18 @@ router.post("/reset", checkAuctionState(['setup', 'archived']), (req, res) => {
     return res.status(400).json({ error: "Missing auction_id or password" });
   }
 
-  db.get("SELECT password FROM passwords WHERE role = 'maintenance'", [], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!row || row.password !== password) {
+  try {
+    const mPassword = db.prepare("SELECT password FROM passwords WHERE role = 'maintenance'").get();
+    if (!mPassword || !bcrypt.compareSync(password, mPassword.password)) {
+      logFromRequest(req, logLevels.WARN, `Incorrect maintenance password attempt for auction reset`);
       return res.status(401).json({ error: "Incorrect maintenance password" });
     }
-  })
+  } catch (err) {
+    return res.status(500).json({ error: "Error verifying password" });
+  }
 
   try {
-    db.pragma('defer_foreign_keys = ON');
+  //  db.pragma('defer_foreign_keys = ON');
     const result = db.transaction(id => {
 
       // Payment intents
@@ -163,9 +167,6 @@ router.post("/reset", checkAuctionState(['setup', 'archived']), (req, res) => {
       /* bidders */
       const delBidders = db.prepare(`DELETE FROM bidders WHERE auction_id = ?`).run(id).changes;
 
-      /* (optional) auction shell itself */
-      // const delAuction = db.prepare(`DELETE FROM auctions WHERE id = ?`).run(id).changes;
-
       return { payment_intents: delIntents, payments: delPay, items: delItems, bidders: delBidders };
     })(auction_id);         // <-- execute the transaction
 
@@ -175,33 +176,79 @@ router.post("/reset", checkAuctionState(['setup', 'archived']), (req, res) => {
       deleted: result        // { payments: n, items: n, bidders: n }
     });
     logFromRequest(req, logLevels.INFO, `Auction ${auction_id} has been reset. Removed: ${result.items} items, ${result.bidders} bidders, ${result.payments} payments, ${result.payment_intents} payment intents. `);
-
+    audit(req.user.role, 'reset auction', 'auction', auction_id, { deleted: result  });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Reset failed' });
   }
-  db.pragma('defer_foreign_keys = OFF');
+ // db.pragma('defer_foreign_keys = OFF');
 })
 
 //--------------------------------------------------------------------------
 // GET /export
-// API to export items to CSV
+// API to export items, bidders, and payments to CSV
 //--------------------------------------------------------------------------
 
 router.get("/export", (req, res) => {
-  db.all("SELECT * FROM items", [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    const parser = new Parser();
-    const csv = parser.parse(rows);
-    const filePath = path.join(OUTPUT_DIR, "bulk_export.csv");
-    fs.writeFileSync(filePath, csv);
+  try {
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const filename = `auction_export_${timestamp}.zip`;
+    const archive = archiver("zip", { zlib: { level: 9 } });
 
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader("Content-Disposition", `attachment; filename=bulk_items.csv`);
-    res.end('\uFEFF' + csv);
-    //   res.download(filePath);
-    logFromRequest(req, logLevels.INFO, `Bulk CSV export complete`);
-  });
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    archive.on("warning", (err) => {
+      console.warn("Export archive warning:", err.message);
+    });
+    archive.on("error", (err) => {
+      console.error("Export archive error:", err.message);
+      if (!res.headersSent) {
+        res.status(500);
+      }
+      res.end();
+    });
+
+    archive.pipe(res);
+
+    const tables = [
+      { table: "auctions", filename: "auctions.csv" },
+      { table: "items", filename: "items.csv" },
+      { table: "bidders", filename: "bidders.csv" },
+      { table: "payment_intents", filename: "payment_intents.csv" },
+      { table: "payments", filename: "payments.csv" }
+    ];
+
+    const metadata = {
+      exported_at: now.toISOString(),
+      schema_version: db.schemaVersion,
+      db_name: DB_NAME,
+      tables: []
+    };
+
+    for (const entry of tables) {
+      const fields = db.prepare(`PRAGMA table_info(${entry.table})`).all().map(row => row.name);
+      const rows = db.prepare(`SELECT * FROM ${entry.table}`).all();
+      const parser = new Parser({ fields });
+      const csv = parser.parse(rows);
+
+      archive.append('\uFEFF' + csv, { name: entry.filename });
+      metadata.tables.push({
+        table: entry.table,
+        filename: entry.filename,
+        rows: rows.length,
+        fields
+      });
+    }
+
+    archive.append(JSON.stringify(metadata, null, 2), { name: "metadata.json" });
+    archive.finalize();
+    logFromRequest(req, logLevels.INFO, "Bulk CSV export archive complete");
+  } catch (err) {
+    console.error("Export failed:", err.message);
+    res.status(500).json({ error: "Export failed" });
+  }
 });
 
 
@@ -317,17 +364,18 @@ router.get("/photo-report", (req, res) => {
 // API to do some basic database checks. Mostly deprecated by database engine protections.......
 //--------------------------------------------------------------------------
 
-
 router.get("/check-integrity", (req, res) => {
   logFromRequest(req, logLevels.DEBUG, `Running integrity checks`);
 
   db.all("SELECT * FROM items", [], (err, items) => {
     if (err) return res.status(500).json({ error: err.message });
 
-    // Map of existing photo filenames
-    // const missingPhotos = items.filter(item => item.photo && !fs.existsSync(path.join(__dirname, "uploads", item.photo)));
-
-    const missingPhotos = items.filter(item => item.photo && !fs.existsSync(path.join(UPLOAD_DIR, item.photo)));
+    const missingPhotoItemIds = new Set();
+    for (const item of items) {
+      if (item.photo && !fs.existsSync(path.join(UPLOAD_DIR, item.photo))) {
+        missingPhotoItemIds.add(item.id);
+      }
+    }
 
     // Find items with missing or invalid auction_id
     db.all("SELECT id FROM auctions", [], (err, auctions) => {
@@ -341,82 +389,187 @@ router.get("/check-integrity", (req, res) => {
         !item.description?.trim() || !item.contributor?.trim() || !item.item_number
       );
 
-      // Build list of unique invalid item IDs
-      const invalidItemIds = new Set([
-        ...missingPhotos.map(i => i.id),
-        ...orphanedItems.map(i => i.id),
-        ...invalidFields.map(i => i.id)
-      ]);
+      db.all("SELECT * FROM bidders", [], (err, bidders) => {
+        if (err) return res.status(500).json({ error: err.message });
 
-      const invalidItemDetails = items.map(item => {
-        const issues = [];
+        const bidderById = new Map(bidders.map(b => [b.id, b]));
 
-        if (item.photo && !fs.existsSync(path.join(UPLOAD_DIR, item.photo))) {
-          issues.push("Missing photo");
-        }
-        if (!validAuctionIds.has(item.auction_id)) {
-          issues.push("Invalid auction ID");
-        }
-        if (!item.description?.trim()) {
-          issues.push("Missing description");
-        }
-        if (!item.contributor?.trim()) {
-          issues.push("Missing contributor");
-        }
+        db.all("SELECT * FROM payments", [], (err, payments) => {
+          if (err) return res.status(500).json({ error: err.message });
 
-        if (!item.item_number) {
-          issues.push("Missing item number");
-        }
+          const paymentById = new Map(payments.map(p => [p.id, p]));
 
-        if (issues.length === 0) return null;
+          const invalidItemDetails = items.map(item => {
+            const issues = [];
 
-        return {
-          id: item.id,
-          auction_id: item.auction_id,
-          description: item.description,
-          contributor: item.contributor,
-          photo: item.photo,
-          item_number: item.item_number,
-          issues
-        };
-      }).filter(Boolean);
+            if (missingPhotoItemIds.has(item.id)) {
+              issues.push("Missing photo");
+            }
+            if (!validAuctionIds.has(item.auction_id)) {
+              issues.push("Invalid auction ID");
+            }
+            if (!item.description?.trim()) {
+              issues.push("Missing description");
+            }
+            if (!item.contributor?.trim()) {
+              issues.push("Missing contributor");
+            }
+            if (!item.item_number) {
+              issues.push("Missing item number");
+            }
+            if (item.winning_bidder_id) {
+              const winningBidder = bidderById.get(item.winning_bidder_id);
+              if (!winningBidder) {
+                issues.push("Invalid winning bidder");
+              } else if (winningBidder.auction_id && winningBidder.auction_id !== item.auction_id) {
+                issues.push("Winning bidder auction mismatch");
+              }
+            }
+            if (item.hammer_price != null) {
+              if (Number.isNaN(Number(item.hammer_price)) || Number(item.hammer_price) <= 0) {
+                issues.push("Invalid hammer price");
+              }
+              if (!item.winning_bidder_id) {
+                issues.push("Hammer price without winning bidder");
+              }
+            } else if (item.winning_bidder_id) {
+              issues.push("Winning bidder without hammer price");
+            }
 
-      res.json({
-        total: items.length,
-        invalidItems: invalidItemDetails
+            if (issues.length === 0) return null;
+
+            return {
+              id: item.id,
+              auction_id: item.auction_id,
+              description: item.description,
+              contributor: item.contributor,
+              photo: item.photo,
+              item_number: item.item_number,
+              winning_bidder_id: item.winning_bidder_id,
+              hammer_price: item.hammer_price,
+              issues
+            };
+          }).filter(Boolean);
+
+          const invalidBidderDetails = bidders.map(bidder => {
+            const issues = [];
+
+            if (!validAuctionIds.has(bidder.auction_id)) {
+              issues.push("Invalid auction ID");
+            }
+            if (!bidder.name?.trim()) {
+              issues.push("Missing name");
+            }
+            if (!Number.isFinite(bidder.paddle_number) || bidder.paddle_number <= 0) {
+              issues.push("Invalid paddle number");
+            }
+
+            if (issues.length === 0) return null;
+
+            return {
+              id: bidder.id,
+              auction_id: bidder.auction_id,
+              paddle_number: bidder.paddle_number,
+              name: bidder.name,
+              issues
+            };
+          }).filter(Boolean);
+
+          const invalidPaymentDetails = payments.map(payment => {
+            const issues = [];
+
+            if (!Number.isFinite(payment.amount) || payment.amount <= 0) {
+              issues.push("Invalid amount");
+            }
+            if (payment.reverses_payment_id) {
+              if (!paymentById.has(payment.reverses_payment_id)) {
+                issues.push("Invalid reversal target");
+              } else if (payment.reverses_payment_id === payment.id) {
+                issues.push("Self-referencing reversal");
+              }
+              if (Number.isFinite(payment.amount) && payment.amount > 0) {
+                issues.push("Reversal with positive amount");
+              }
+            }
+
+            if (issues.length === 0) return null;
+
+            return {
+              id: payment.id,
+              bidder_id: payment.bidder_id,
+              amount: payment.amount,
+              method: payment.method,
+              reverses_payment_id: payment.reverses_payment_id,
+              provider: payment.provider,
+              provider_txn_id: payment.provider_txn_id,
+              intent_id: payment.intent_id,
+              currency: payment.currency,
+              issues
+            };
+          }).filter(Boolean);
+
+          res.json({
+            total: items.length,
+            invalidItems: invalidItemDetails,
+            bidderTotal: bidders.length,
+            invalidBidders: invalidBidderDetails,
+            paymentTotal: payments.length,
+            invalidPayments: invalidPaymentDetails
+          });
+
+          const logChunks = [];
+          if (invalidItemDetails.length > 0) {
+            const itemLines = invalidItemDetails.map(item =>
+              `Item ID ${item.id} (Auction ${item.auction_id}) Issues: ${item.issues.join(", ")}`
+            ).join(" | ");
+            logChunks.push(`Items: ${itemLines}`);
+          }
+          if (invalidBidderDetails.length > 0) {
+            const bidderLines = invalidBidderDetails.map(bidder =>
+              `Bidder ID ${bidder.id} (Auction ${bidder.auction_id}) Issues: ${bidder.issues.join(", ")}`
+            ).join(" | ");
+            logChunks.push(`Bidders: ${bidderLines}`);
+          }
+          if (invalidPaymentDetails.length > 0) {
+            const paymentLines = invalidPaymentDetails.map(payment =>
+              `Payment ID ${payment.id} (Bidder ${payment.bidder_id}) Issues: ${payment.issues.join(", ")}`
+            ).join(" | ");
+            logChunks.push(`Payments: ${paymentLines}`);
+          }
+
+          if (logChunks.length > 0) {
+            logFromRequest(
+              req,
+              logLevels.WARN,
+              `Integrity check flagged issues: ${logChunks.join(" || ")}`
+            );
+          } else {
+            logFromRequest(req, logLevels.INFO, `Integrity check complete, no errors found`);
+          }
+        });
       });
-
-      // Log all invalid items with details
-      if (invalidItemDetails.length > 0) {
-        const logLines = invalidItemDetails.map(item => {
-          return `Item ID ${item.id} (Auction ${item.auction_id}) Issues: ${item.issues.join(", ")}`;
-        }).join(" | ");
-
-        logFromRequest(req, logLevels.WARN, `Integrity check flagged ${invalidItemDetails.length} invalid item(s): ${logLines}`);
-      }
-      else {
-        logFromRequest(req, logLevels.INFO, `Integrity check complete, no errors found`);
-
-      }
     });
   });
 });
+//--------------------------------------------------------------------------
+// Remove invalid items API (disabled as this only had limited usecase)
+//--------------------------------------------------------------------------
 
-router.post("/check-integrity/delete", (req, res) => {
-  const { ids } = req.body;
-  if (!Array.isArray(ids) || ids.length === 0) {
-    logFromRequest(req, logLevels.ERROR, `No item IDs provided for deletion`);
-    return res.status(400).json({ error: "No item IDs provided for deletion" });
-  }
+// router.post("/check-integrity/delete", (req, res) => {
+//   const { ids } = req.body;
+//   if (!Array.isArray(ids) || ids.length === 0) {
+//     logFromRequest(req, logLevels.ERROR, `No item IDs provided for deletion`);
+//     return res.status(400).json({ error: "No item IDs provided for deletion" });
+//   }
 
-  const placeholders = ids.map(() => "?").join(",");
-  db.run(`DELETE FROM items WHERE id IN (${placeholders})`, ids, function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ message: `Deleted ${this.changes} invalid item(s).` });
-    logFromRequest(req, logLevels.WARN, `Deleted ${this.changes} invalid item(s).`);
+//   const placeholders = ids.map(() => "?").join(",");
+//   db.run(`DELETE FROM items WHERE id IN (${placeholders})`, ids, function (err) {
+//     if (err) return res.status(500).json({ error: err.message });
+//     res.json({ message: `Deleted ${this.changes} invalid item(s).` });
+//     logFromRequest(req, logLevels.WARN, `Deleted ${this.changes} invalid item(s).`);
 
-  });
-});
+//   });
+// });
 
 //--------------------------------------------------------------------------
 // POST /change-password
@@ -431,18 +584,22 @@ router.post("/change-password", (req, res) => {
     return res.status(400).json({ error: "Invalid role." });
   }
 
-  if (!newPassword || newPassword.length < 5) {
-    return res.status(400).json({ error: "Invalid password." });
+  if (!newPassword || newPassword.length < PASSWORD_MIN_LENGTH) {
+    return res.status(400).json({ error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters.` });
   }
+
+  // Hash the password before storing
+  const hashed = bcrypt.hashSync(newPassword, 12);
 
   db.run(
     `UPDATE passwords SET password = ? WHERE role = ?`,
-    [newPassword, role],
+    [hashed, role],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       if (this.changes === 0) return res.status(404).json({ error: "Role not found." });
 
       logFromRequest(req, logLevels.INFO, `Password changed for role: ${role}`);
+      audit(req.user.role, 'change password', 'server', null, { changed_role: role });
       res.json({ message: `Password for ${role} updated.` });
     }
   );
@@ -596,6 +753,8 @@ router.post("/cleanup-orphan-photos", (req, res) => {
 
     const allFiles = fs.readdirSync(UPLOAD_DIR);
     const orphaned = allFiles.filter(file => !usedFiles.has(file));
+    const orphanSize = orphaned.reduce((sum, file) => sum + fs.statSync(path.join(UPLOAD_DIR, file)).size, 0);
+    const orphanSizeMb = (orphanSize / 1024 / 1024).toFixed(2);
 
     let deleted = 0;
     orphaned.forEach(file => {
@@ -607,8 +766,8 @@ router.post("/cleanup-orphan-photos", (req, res) => {
       }
     });
 
-    res.json({ message: `Deleted ${deleted} orphaned file(s).`, orphaned });
-    logFromRequest(req, logLevels.INFO, `${deleted} orphan photos deleted`);
+    res.json({ message: `Deleted ${deleted} orphaned file(s). Recovered ${orphanSizeMb} Mb.`, orphaned });
+    logFromRequest(req, logLevels.INFO, `${deleted} orphan photos deleted. Recovered ${orphanSizeMb} Mb.`);
   });
 });
 
@@ -921,6 +1080,7 @@ router.post("/auctions/delete", (req, res) => {
     db.run("DELETE FROM auctions WHERE id = ?", [auction_id], function (err) {
       if (err) {
         logFromRequest(req, logLevels.ERROR, `Delete auction error` + err.message);
+        
         return res.status(500).json({ error: err.message });
       }
       

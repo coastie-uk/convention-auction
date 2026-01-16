@@ -36,9 +36,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
             if (data.valid && data.status === "setup") {
 
-                console.log(data.id);
-                console.log(data.full_name);
-                console.log(data.valid);
                 document.querySelector("header h1").textContent = data.full_name + "";
                 const logoImg = document.getElementById("auction-logo");
 
@@ -102,7 +99,6 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!shortName) return;
 
         validateAuction(shortName);
-        console.log(data);
     });
 
     noPhotoCheckbox.addEventListener("change", function () {
@@ -166,7 +162,6 @@ document.addEventListener("DOMContentLoaded", function () {
             showMessage("Submission cancelled", "info");
             return;
         } else {
-            console.log("submit requested");
 
             submitButton.disabled = true;
             messageContainer.textContent = "Submitting...";
@@ -195,7 +190,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
             } else {
-                console.log(formData);
                 submitForm(formData);
             }
         }
@@ -225,12 +219,10 @@ document.addEventListener("DOMContentLoaded", function () {
                     }
                 } else {
                     // Backend returned an error (e.g. auction not active)
-                    console.warn("Backend rejected submission:", data);
                     showMessage(data.error || "There was a problem with your submission.", "error");
                 }
             })
             .catch(error => {
-                console.error("Error submitting item:", error);
                 showMessage("There was an error submitting your item: " + error, "error");
             })
             .finally(() => {

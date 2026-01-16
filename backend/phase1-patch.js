@@ -21,7 +21,9 @@ const { json } = require('body-parser');
 const { sanitiseText } = require('./middleware/sanitiseText');
 const { audit, recomputeBalanceAndAudit } = require('./middleware/audit');
 
+
 // Prepare payment methods object - this is static at runtime
+
 const paymentMethods = Object.freeze(JSON.parse(JSON.stringify({
   'cash': {
     enabled: CASH_ENABLED,

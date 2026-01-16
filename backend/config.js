@@ -85,17 +85,23 @@ if (Object.prototype.hasOwnProperty.call(json, 'SECRET_KEY')) {
 }
 
 // Validate required fields in config.json
-function reqStr(obj, key) {
+function reqStr(obj, key, minLen = 1, maxLen = Infinity) {
   const v = obj[key];
   if (typeof v !== 'string' || v.trim() === '') {
     throw new Error(`Missing/invalid string: ${key}`);
   }
+  if (v.length < minLen || v.length > maxLen) {
+    throw new Error(`String ${key} length is out of bounds: ${minLen} <= ${v.length} <= ${maxLen}`);
+  }
   return v;
 }
-function reqNum(obj, key) {
+function reqNum(obj, key, min = -Infinity, max = Infinity ) {
   const v = obj[key];
   if (typeof v !== 'number' || !Number.isFinite(v)) {
     throw new Error(`Missing/invalid number: ${key}`);
+  }
+  if (v < min || v > max) {
+    throw new Error(`Number ${key} is out of bounds: ${min} <= ${v} <= ${max}`);
   }
   return v;
 }
@@ -106,23 +112,23 @@ let cfg;
 try {
 
   const DB_PATH        = reqStr(json, 'DB_PATH');         // e.g., "/var/auction"
-  const DB_NAME        = reqStr(json, 'DB_NAME');         // e.g., "auction.db"
+  const DB_NAME        = reqStr(json, 'DB_NAME', 1, 100);         // e.g., "auction.db"
   const UPLOAD_DIR     = reqStr(json, 'UPLOAD_DIR');      // e.g., "uploads"
   const BACKUP_DIR     = reqStr(json, 'BACKUP_DIR');      // e.g., "backups"
   const CONFIG_IMG_DIR = reqStr(json, 'CONFIG_IMG_DIR');  // e.g., "resources"
   const SAMPLE_DIR     = reqStr(json, 'SAMPLE_DIR');      // e.g., "sample-assets"
-  const MAX_UPLOADS    = reqNum(json, 'MAX_UPLOADS');
-  const MAX_AUCTIONS   = reqNum(json, 'MAX_AUCTIONS');
-  const MAX_ITEMS      = reqNum(json, 'MAX_ITEMS');
+  const MAX_UPLOADS    = reqNum(json, 'MAX_UPLOADS', 1, 1000);               // e.g., 100
+  const MAX_AUCTIONS   = reqNum(json, 'MAX_AUCTIONS', 1, 100);               // e.g., 50
+  const MAX_ITEMS      = reqNum(json, 'MAX_ITEMS', 1, 10000);               // e.g., 2000
   const allowedExtensions = json.allowedExtensions;
-  const LOG_LEVEL      = reqStr(json, 'LOG_LEVEL');
-  const PORT           = reqNum(json, 'PORT'); 
+  const LOG_LEVEL      = reqStr(json, 'LOG_LEVEL', 3, 10);         // e.g., "INFO"
+  const PORT           = reqNum(json, 'PORT', 1, 65535);               // e.g., 3000
   const PPTX_CONFIG_DIR = reqStr(json, 'PPTX_CONFIG_DIR'); // e.g., "pptx-config"
   const LOG_DIR      = reqStr(json, 'LOG_DIR');         // e.g., "logs"
   const LOG_NAME      = reqStr(json, 'LOG_NAME');         // e.g., "server.log"
   const OUTPUT_DIR      = reqStr(json, 'OUTPUT_DIR');         // e.g., "output"
-  const CURRENCY_SYMBOL = reqStr(json, 'CURRENCY_SYMBOL'); // e.g., "£"
-  
+  const CURRENCY_SYMBOL = reqStr(json, 'CURRENCY_SYMBOL', 1, 3); // e.g., "£"
+  const PASSWORD_MIN_LENGTH = reqNum(json, 'PASSWORD_MIN_LENGTH', 5, 100); // e.g., 5
 
   cfg = {
     // secret (env)
@@ -146,6 +152,7 @@ try {
     LOG_NAME,
     OUTPUT_DIR,
     CURRENCY_SYMBOL,
+    PASSWORD_MIN_LENGTH,
 
   // SumUp – web (hosted payments)
     SUMUP_WEB_ENABLED,

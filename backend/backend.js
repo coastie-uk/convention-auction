@@ -17,9 +17,9 @@ const { Parser } = require('@json2csv/plainjs');
 const bodyParser = require('body-parser');
 var strftime = require('strftime');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const app = express();
 const fsp = require('fs').promises;
-const db = require('./db');
 const { audit } = require('./middleware/audit');
 
 // const VALID_ROLES = new Set(['admin', 'maintenance', 'cashier', 'slideshow']);
@@ -46,10 +46,12 @@ const { authenticateRole } = require('./middleware/authenticateRole');
 
 const maintenanceRoutes = require('./maintenance');
 const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
-const checkAuctionState = require('./middleware/checkAuctionState')(
-    db,
-    { ttlSeconds: 2 }
-);
+
+log('General', logLevels.INFO, '~~ Starting up Auction backend ~~');
+log('Logger', logLevels.INFO, `Logging framework initialized. `);
+
+
+
 const { api: paymentsApi, paymentProcessorVer } = require('./payments');
 
 
@@ -58,7 +60,12 @@ const { version } = require('./package.json'); // get version from package.json
 const backendVersion = version || 'Unknown';
 const { schemaVersion } = require('./db'); // get schema version from db.js
 
+const db = require('./db');
 
+const checkAuctionState = require('./middleware/checkAuctionState')(
+    db,
+    { ttlSeconds: 2 }
+);
 
 log('General', logLevels.INFO, `Backend version: ${backendVersion}, DB schema version: ${schemaVersion}`);
 log('General', logLevels.INFO, `Payment processor: ${paymentProcessorVer}`);
@@ -153,7 +160,7 @@ app.post('/validate', async (req, res) => {
 //--------------------------------------------------------------------------
 // POST /login
 // Login route. Checks pw and returns a jwt
-// Also returns currency symbol (as this route is the entry point to all users)
+// Also returns currency symbol + version data (as this route is the entry point to all users)
 //--------------------------------------------------------------------------
 
 app.post('/login', (req, res) => {
@@ -166,17 +173,53 @@ app.post('/login', (req, res) => {
     db.get(`SELECT password FROM passwords WHERE role = ?`, [role], (err, row) => {
 
         if (err) return res.status(500).json({ error: err.message });
-        if (!row || row.password !== password) {
+        if (!row || !row.password) {
             logFromRequest(req, logLevels.WARN, `Invalid password for role ${role} entered`);
             return res.status(401).json({ error: "Invalid password" });
         }
-        const token = jwt.sign({ role }, SECRET_KEY, { expiresIn: "8h" });
-        res.json({ token, currency: CURRENCY_SYMBOL, versions: 
-            { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer } 
-        });
 
-        logFromRequest(req, logLevels.INFO, `User with role "${role}" logged in`);
-        logFromRequest(req, logLevels.DEBUG, `full Token: ${token}....`);
+        const stored = row.password;
+
+        // If the stored password looks like a bcrypt hash, compare with bcrypt
+        const isHash = typeof stored === 'string' && stored.startsWith('$2');
+
+        const handleSuccess = () => {
+          const token = jwt.sign({ role }, SECRET_KEY, { expiresIn: "8h" });
+          res.json({ token, currency: CURRENCY_SYMBOL, versions: 
+              { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer } 
+          });
+
+          logFromRequest(req, logLevels.INFO, `User with role "${role}" logged in`);
+          logFromRequest(req, logLevels.DEBUG, `full Token: ${token}....`);
+        };
+
+        if (isHash) {
+            bcrypt.compare(password, stored, (bErr, match) => {
+                if (bErr) return res.status(500).json({ error: bErr.message });
+                if (!match) {
+                    logFromRequest(req, logLevels.WARN, `Invalid password for role ${role} entered`);
+                    return res.status(401).json({ error: "Invalid password" });
+                }
+                return handleSuccess();
+            });
+        } else {
+            // legacy plaintext entry - validate then upgrade to hashed password
+            if (stored !== password) {
+                logFromRequest(req, logLevels.WARN, `Invalid password for role ${role} entered`);
+                return res.status(401).json({ error: "Invalid password" });
+            }
+
+            // upgrade - hash and store
+            const hashed = bcrypt.hashSync(password, 12);
+            db.run(`UPDATE passwords SET password = ? WHERE role = ?`, [hashed, role], function (uErr) {
+                if (uErr) {
+                    logFromRequest(req, logLevels.ERROR, `Failed to upgrade plaintext password for ${role}: ${uErr.message}`);
+                } else {
+                    logFromRequest(req, logLevels.INFO, `Upgraded plaintext password to bcrypt for role ${role}`);
+                }
+                return handleSuccess();
+            });
+        }
 
     });
 });

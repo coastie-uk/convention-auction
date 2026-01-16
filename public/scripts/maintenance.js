@@ -86,8 +86,6 @@ document.getElementById("download-db").onclick = async () => {
       filename = match[1];
     }
   }
-  console.log("Download filename:", filename);
-  console.log("Raw Content-Disposition:", disposition);
 
   // Trigger download
   const blob = await res.blob();
@@ -134,7 +132,7 @@ document.getElementById("export-csv").onclick = async () => {
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "auction_export.csv";
+  a.download = "auction_bulk_export.zip";
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -274,8 +272,10 @@ document.getElementById("cleanup-orphans").onclick = async () => {
     return showMessage("No unused photo files to clean up.", "info");
   }
 
-  const confirmDelete = confirm(`Found ${data.count} unused photo file(s). Do you want to delete them?`);
-  if (!confirmDelete) return;
+       const modal = await DayPilot.Modal.confirm(`Found ${data.count} unused photo file(s). Do you want to delete them?`);
+        if (modal.canceled) {
+            return;
+        } else { 
 
   // Step 2: Proceed with cleanup
   const cleanup = await fetch(`${API}/maintenance/cleanup-orphan-photos`, {
@@ -289,6 +289,7 @@ document.getElementById("cleanup-orphans").onclick = async () => {
   } else {
     showMessage(result.error || "Cleanup failed.", "error");
   }
+}
 };
 
 
@@ -296,7 +297,6 @@ document.getElementById("generate-test-data").onclick = async () => {
   const count = parseInt(document.getElementById("test-count").value, 10);
   const auctionId = parseInt(document.getElementById("test-auction-select").value, 10);
 
-  // console.log(auctionId);
 
   if (!count || count < 1) return showMessage("Enter a valid number of test items.", "error");
   if (!auctionId) return showMessage("Please select an auction.", "error");
@@ -423,7 +423,6 @@ document.getElementById('save-config').addEventListener('click', async () => {
     // errorBox.textContent = result.error || 'Unknown error';
     showMessage(result.error || 'Failed to save configuration', 'error');
     renderValidationErrors(result);
-   // console.log('renderValidationErrors called', result);
   }
 });
 
@@ -536,7 +535,7 @@ try {
 
       const confirmed = confirm(
         isLast
-          ? `⚠️ WARNING: This is the last auction and deleting it will reset internal counters and clear all tables, including the audit trail. Proceed?`
+          ? `⚠️ WARNING: This is the last auction and deleting it will reset internal counters and clear all tables. Audit data will NOT be deleted. Proceed?`
           : `Are you sure you want to delete auction ${auction.full_name}?`
       );
 
@@ -599,7 +598,6 @@ isRendering = false;
     else if (e.target.classList.contains("js-admin-state-permission")) {
       const auctionId = e.target.dataset.id;
       const newStatus = e.target.checked;
-      console.log(auctionId);
       e.target.disabled = true;
       try {
         const res = await fetch(`${API}/maintenance/auctions/set-admin-state-permission`, {
@@ -674,7 +672,6 @@ document.getElementById("create-auction").onclick = async () => {
   });
 
   const data = await res.json();
-  console.log(data);
   if (res.ok) {
     showMessage(data.message, "success");
     document.getElementById("auction-short-name").value = "";
@@ -690,9 +687,11 @@ document.addEventListener("click", async (e) => {
     const auctionId = e.target.getAttribute("data-id");
 
     const confirmMsg = `Delete all items from auction ${auctionId}? Bidder and payment details will also be removed`;
-    if (!confirm(confirmMsg)) return;
+ //   if (!confirm(confirmMsg)) return;
 
-    const password = prompt(`Enter maintenance password to reset auction ${auctionId}:`);
+    // TODO change prompt to not show password in plain text
+ //   const password = prompt(`Enter maintenance password to reset auction ${auctionId}:`);
+ const password = await promptPassword(`Enter maintenance password to reset auction`, confirmMsg)
     if (!password) return;
 
     const res = await fetch(`${API}/maintenance/reset`, {
@@ -713,6 +712,69 @@ document.addEventListener("click", async (e) => {
       showMessage(data.error || "Reset failed", "error");
     }
   }
+
+    function promptPassword(message, message2) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = `
+      position:fixed; inset:0; background:rgba(0,0,0,.5);
+      display:flex; align-items:center; justify-content:center; z-index:9999;
+    `;
+
+    const box = document.createElement("div");
+    box.style.cssText = `
+      background:#fff; padding:16px; border-radius:8px; width:min(420px, 92vw);
+      box-shadow:0 8px 24px rgba(0,0,0,.2); font-family:system-ui, sans-serif;
+    `;
+
+    const p = document.createElement("div");
+    p.textContent = message;
+    p.style.marginBottom = "10px";
+
+    
+      const p2 = document.createElement("div");
+      p2.textContent = message2;
+      p2.style.marginBottom = "10px";
+      
+    
+
+    const input = document.createElement("input");
+    input.type = "password";
+    input.autocomplete = "current-password";
+    input.style.cssText = "width:100%; padding:8px; box-sizing:border-box;";
+
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex; justify-content:flex-end; gap:8px; margin-top:12px;";
+
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "Cancel";
+
+    const ok = document.createElement("button");
+    ok.type = "button";
+    ok.textContent = "OK";
+
+    function close(val) {
+      overlay.remove();
+      resolve(val);
+    }
+
+    cancel.addEventListener("click", () => close(null));
+    ok.addEventListener("click", () => close(input.value));
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(null); });
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") close(input.value);
+      if (e.key === "Escape") close(null);
+    });
+
+    row.append(cancel, ok);
+    box.append(p2, p, input, row);
+    overlay.append(box);
+    document.body.append(overlay);
+    input.focus();
+  });
+}
 });
 
 let runCheck = document.getElementById("integrity-check");
@@ -753,30 +815,30 @@ async function checkIntegrity() {
   listDiv.dataset.ids = JSON.stringify(data.invalidItems.map(i => i.id));
 };
 
-document.getElementById("delete-invalid-items").onclick = async () => {
-  const ids = JSON.parse(document.getElementById("integrity-results").dataset.ids || "[]");
-  if (ids.length === 0) return showMessage("Nothing to delete.", "info");
+// document.getElementById("delete-invalid-items").onclick = async () => {
+//   const ids = JSON.parse(document.getElementById("integrity-results").dataset.ids || "[]");
+//   if (ids.length === 0) return showMessage("Nothing to delete.", "info");
 
-  const confirmed = confirm(`Delete ${ids.length} invalid item(s)?`);
-  if (!confirmed) return;
+//   const confirmed = confirm(`Delete ${ids.length} invalid item(s)?`);
+//   if (!confirmed) return;
 
-  const res = await fetch(`${API}/maintenance/check-integrity/delete`, {
-    method: "POST",
-    headers: {
-      Authorization: token,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ ids })
-  });
+//   const res = await fetch(`${API}/maintenance/check-integrity/delete`, {
+//     method: "POST",
+//     headers: {
+//       Authorization: token,
+//       "Content-Type": "application/json"
+//     },
+//     body: JSON.stringify({ ids })
+//   });
 
-  const data = await res.json();
-  if (res.ok) {
-    showMessage(data.message, "success");
-    document.getElementById("integrity-check").click(); // refresh results
-  } else {
-    showMessage(data.error || "Failed to delete items", "error");
-  }
-};
+//   const data = await res.json();
+//   if (res.ok) {
+//     showMessage(data.message, "success");
+//     document.getElementById("integrity-check").click(); // refresh results
+//   } else {
+//     showMessage(data.error || "Failed to delete items", "error");
+//   }
+// };
 
 const imgForm = document.getElementById("pptx-image-form");
 const imgInput = document.getElementById("pptx-image-input");
@@ -1111,14 +1173,12 @@ function startAutoRefresh() {
       loadPptxImageList();
 
     } else {
-      //       console.log("Page not visible — skipping refresh");
     }
   }, 30000);
 }
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
-    //          console.log("Page became visible — refreshing now");
     refreshAuctions();
     loadPptxImageList();
 
@@ -1202,6 +1262,7 @@ document.addEventListener("visibilitychange", () => {
 
     errorList.hidden = false;
   };
+
 
 
 })();

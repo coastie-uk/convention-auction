@@ -9,6 +9,7 @@ const Database = require('better-sqlite3');
 const path     = require('path');
 const schemaVersion = '2.2';
 const { logLevels, log } = require('./logger');
+const bcrypt = require('bcryptjs');
 const {
     DB_PATH,
     DB_NAME
@@ -23,7 +24,11 @@ const {
 
 const dbPath = path.join(DB_PATH, DB_NAME);
 log('General', logLevels.INFO, 'Using database at ' + dbPath);
+
 const db = new Database(dbPath);
+
+
+// Initial schema setup
 
 try {
 
@@ -140,7 +145,7 @@ try { db.exec("ALTER TABLE auctions ADD COLUMN admin_can_change_state INTEGER NO
 
 
 
-// one-time default passwords
+// one-time default passwords (stored as bcrypt hashes)
 const defaultPasswords = [
   { role: "admin",       password: "a1234" },
   { role: "maintenance", password: "m1234" },
@@ -152,7 +157,29 @@ const insertPwd = db.prepare(
 );
 
 for (const { role, password } of defaultPasswords) {
-  insertPwd.run(role, password);      
+  // Hash defaults synchronously at startup with a reasonable cost factor
+  const hashed = bcrypt.hashSync(password, 12);
+  insertPwd.run(role, hashed);
+}
+
+// Ensure any existing plaintext passwords are upgraded to bcrypt hashes.
+try {
+  const rows = db.prepare('SELECT role, password FROM passwords').all();
+  for (const r of rows) {
+    const p = r.password || '';
+    if (typeof p === 'string' && !p.startsWith('$2')) {
+      // Likely plaintext; hash and update
+      try {
+        const h = bcrypt.hashSync(p, 12);
+        db.prepare('UPDATE passwords SET password = ? WHERE role = ?').run(h, r.role);
+        log('General', logLevels.INFO, `Upgraded plaintext password to bcrypt for role ${r.role}`);
+      } catch (e) {
+        log('General', logLevels.ERROR, `Failed to hash password for role ${r.role}: ${e.message}`);
+      }
+    }
+  }
+} catch (e) {
+  log('General', logLevels.ERROR, `Password migration check failed: ${e.message}`);
 }
 
 log('General', logLevels.INFO, 'Database opened');
@@ -218,6 +245,16 @@ module.exports = {
       callCb(cb, e);
       throw e;
     }
+  },
+
+  pragma(statement) {
+    try {
+      db.pragma(statement);
+    } catch (e) {
+      log('DB', logLevels.ERROR, `PRAGMA error: ${e.message}`);
+      throw e;
+    }
+    
   },
 
   /** expose the underlying driver  */

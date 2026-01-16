@@ -15,5 +15,6 @@
   "MAX_ITEMS": 2000,
   "PPTX_CONFIG_DIR": "/var/lib/auction",
   "OUTPUT_DIR": "/var/lib/auction/output",
-  "CURRENCY_SYMBOL": "£"
+  "CURRENCY_SYMBOL": "£",
+  "PASSWORD_MIN_LENGTH": 5
   }
