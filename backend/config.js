@@ -129,7 +129,11 @@ try {
   const OUTPUT_DIR      = reqStr(json, 'OUTPUT_DIR');         // e.g., "output"
   const CURRENCY_SYMBOL = reqStr(json, 'CURRENCY_SYMBOL', 1, 3); // e.g., "£"
   const PASSWORD_MIN_LENGTH = reqNum(json, 'PASSWORD_MIN_LENGTH', 5, 100); // e.g., 5
-
+  const RATE_LIMIT_WINDOW = reqNum(json, 'RATE_LIMIT_WINDOW', 1, 86400); // in seconds
+  const RATE_LIMIT_MAX = reqNum(json, 'RATE_LIMIT_MAX', 1, 1000);
+  const LOGIN_LOCKOUT_AFTER = reqNum(json, 'LOGIN_LOCKOUT_AFTER', 1, 1000);
+  const LOGIN_LOCKOUT = reqNum(json, 'LOGIN_LOCKOUT', 1, 86400); // in seconds
+  const SERVICE_NAME = reqStr(json, 'SERVICE_NAME', 1, 100); // e.g., "Auction_Backend"
   cfg = {
     // secret (env)
     SECRET_KEY,
@@ -153,6 +157,11 @@ try {
     OUTPUT_DIR,
     CURRENCY_SYMBOL,
     PASSWORD_MIN_LENGTH,
+    RATE_LIMIT_WINDOW,
+    RATE_LIMIT_MAX,
+    LOGIN_LOCKOUT_AFTER,
+    LOGIN_LOCKOUT,
+    SERVICE_NAME,
 
   // SumUp – web (hosted payments)
     SUMUP_WEB_ENABLED,
@@ -189,16 +198,11 @@ if (config.LOG_LEVEL === 'DEBUG') {
 
   console.info('[config] loaded', {
     PORT: config.PORT,
-    LOG_LEVEL: config.LOG_LEVEL,
     DB_PATH: path.resolve(config.DB_PATH),
     UPLOAD_DIR: path.resolve(config.UPLOAD_DIR),
     BACKUP_DIR: path.resolve(config.BACKUP_DIR),
     CONFIG_IMG_DIR: path.resolve(config.CONFIG_IMG_DIR),
     SAMPLE_DIR: path.resolve(config.SAMPLE_DIR),
-    MAX_UPLOADS: config.MAX_UPLOADS,
-    MAX_AUCTIONS: config.MAX_AUCTIONS,
-    MAX_ITEMS: config.MAX_ITEMS,
-    allowedExtensions: config.allowedExtensions,
     PPTX_CONFIG_DIR: path.resolve(config.PPTX_CONFIG_DIR),
     LOG_DIR: path.resolve(config.LOG_DIR),
     LOG_NAME: config.LOG_NAME,

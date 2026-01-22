@@ -13,6 +13,11 @@ const { logFromRequest, logLevels } = require('../logger');
  */
 const VALID_ROLES = new Set(['admin', 'maintenance', 'cashier', 'slideshow']);
 
+  // Sleep function that returns a promise
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
 
 
 /**
@@ -48,7 +53,19 @@ function authenticateRole(acceptedRoles) {
 
         if (!token) {
             logFromRequest(req, logLevels.ERROR, 'No JWT supplied in Authorization header');
-            return res.status(403).json({ error: 'Access denied' });
+            sleep(1000).then(() => {  // mitigate brute-force attacks
+                return res.status(403).json({ error: 'Access denied' });
+            });
+            return;
+        }
+
+        // Verify token & role
+        if (typeof token !== 'string') {
+            logFromRequest(req, logLevels.DEBUG, 'Malformed Authorization header (not a string)');
+            sleep(1000).then(() => {  // mitigate brute-force attacks
+                return res.status(403).json({ error: 'Access denied' });
+            });
+            return;
         }
 
         jwt.verify(token, SECRET_KEY, (err, decoded) => {

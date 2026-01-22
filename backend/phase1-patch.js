@@ -171,7 +171,7 @@ module.exports = function phase1Patch (app) {
     const bidderRow = db.get(`SELECT paddle_number FROM bidders WHERE id = ? AND auction_id = ?`, [bidder_id, auction_id]);
     if (!bidderRow) {
       logFromRequest(req, logLevels.ERROR, `Bidder ${bidder_id} not found in auction ${auction_id} whilst recording payment`);
-      return res.status(404).json({ error: 'Bidder not found for this auction' });
+      return res.status(400).json({ error: 'Bidder not found for this auction' });
     }
 
     // Check that the requested amount does not exceed the bidder's outstanding balance
@@ -335,16 +335,16 @@ logFromRequest(req, logLevels.DEBUG, `Reversal inserted with id=${info.lastInser
     const result = tx();
 
     if (result?.error === 'not_found') {
-      return res.status(404).json({ error: 'Payment not found' });
+      return res.status(400).json({ error: 'Payment not found' });
     }
     if (result?.error === 'cannot_reverse_non_positive_payment') {
-      return res.status(409).json({ error: 'Cannot reverse non-positive payment' });
+      return res.status(400).json({ error: 'Cannot reverse non-positive payment' });
     }
     if (result?.error === 'invalid_amount') {
       return res.status(400).json({ error: 'Invalid amount' });
     }
     if (result?.error === 'amount_exceeds_remaining') {
-      return res.status(409).json({ error: 'Amount exceeds remaining', remaining: result.remaining });
+      return res.status(400).json({ error: 'Amount exceeds remaining', remaining: result.remaining });
     }
     if (!result?.ok) {
       return res.status(500).json({ error: 'Reverse payment failed' });
@@ -483,12 +483,12 @@ if (info.changes === 0) {
   sales.post('/:id/undo', authenticateRole('admin'), checkAuctionState(['live', 'settlement']), (req, res) => {
     const itemId = Number(req.params.id);
     const row = db.get(`SELECT winning_bidder_id FROM items WHERE id = ?`, [itemId]);
-    if (!row) return res.status(404).json({ error: 'Item not found' });
+    if (!row) return res.status(400).json({ error: 'Item not found' });
 
     const paid = db.get(`SELECT 1 FROM payments WHERE bidder_id = ? LIMIT 1`, [row.winning_bidder_id]);
     if (paid) {
        logFromRequest(req, logLevels.WARN, `Bid retract failed for item ${itemId} by bidder ${row.winning_bidder_id} - Payment exists`);
-      return res.status(409).json({ error: 'Cannot undo – payments exist' });
+      return res.status(400).json({ error: 'Cannot undo – payments exist' });
     }
     db.run(`UPDATE items SET winning_bidder_id = NULL, hammer_price = NULL WHERE id = ?`, [itemId]);
     audit(req.user.role, 'undo-bid', 'item', itemId);
@@ -511,7 +511,7 @@ if (!auctionId || !id) return res.status(400).json({ error: 'item # and auction_
   const bidder = db.get(`
     SELECT * FROM bidders WHERE id = ? AND auction_id = ?`,
     [id, auctionId] );
-   if (!bidder) return res.status(404).json({ error: 'Bidder not found for this auction' });
+   if (!bidder) return res.status(400).json({ error: 'Bidder not found for this auction' });
 
   const lots = db.all(`
       SELECT item_number, description, hammer_price, test_item, test_bid

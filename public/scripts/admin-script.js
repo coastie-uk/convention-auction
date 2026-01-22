@@ -539,13 +539,18 @@ document.addEventListener("DOMContentLoaded", function () {
 
         const auctionId = parseInt(selectedAuctionId, 10);
 
+        const selectedAuction = auctions.find(a => a.id === selectedAuctionId);
+        const selectedAuctionPublicId = selectedAuction?.public_id;
+        
+
+
         if (addPhotoInput.files.length > 0) {
             formData.append("photo", addPhotoInput.files[0]);
         }
 
         var token = localStorage.getItem("token");
 
-        fetch(`${API}/auctions/${auctionId}/newitem`, {
+        fetch(`${API}/auctions/${selectedAuctionPublicId}/newitem`, {
             method: "POST",
             headers: { "Authorization": token },
             body: formData

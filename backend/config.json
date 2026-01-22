@@ -11,10 +11,15 @@
   "LOG_LEVEL": "DEBUG",
   "LOG_DIR": "/var/log/auction",
   "LOG_NAME": "server.log",
-  "MAX_AUCTIONS": 20,
+  "MAX_AUCTIONS": 100,
   "MAX_ITEMS": 2000,
   "PPTX_CONFIG_DIR": "/var/lib/auction",
   "OUTPUT_DIR": "/var/lib/auction/output",
   "CURRENCY_SYMBOL": "£",
-  "PASSWORD_MIN_LENGTH": 5
+  "PASSWORD_MIN_LENGTH": 5,
+  "RATE_LIMIT_WINDOW": 60,
+  "RATE_LIMIT_MAX": 10,
+  "LOGIN_LOCKOUT_AFTER": 8,
+  "LOGIN_LOCKOUT": 300,
+  "SERVICE_NAME": "Auction_Backend"
   }

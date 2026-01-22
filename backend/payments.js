@@ -44,7 +44,7 @@ const posInt = (x) => Number.isInteger(x) && x > 0;
 
 
 // API to create a payment intent
-// supports three channels: 'hosted' (desktop/QR), 'app' (direct app), 'app-ind' (indirect app via payment request)
+// supports channels: 'hosted' (desktop/QR), 'app' (direct app)
 
 api.post('/payments/intents', authenticateRole("cashier"), checkAuctionState(['settlement']), async (req, res) => {
 
@@ -89,8 +89,7 @@ catch (error) {
     const intentId = uuidv4();
 
     const expiresAt = new Date(Date.now() + PAYMENT_TTL_MIN * 60 * 1000).toISOString();
- //   const chan = (channel === 'hosted') ? 'hosted' : (channel === 'app-ind' ? 'app-ind' : 'app');
-if (channel !== 'hosted' && channel !== 'app' && channel !== 'app-ind' ) {
+if (channel !== 'hosted' && channel !== 'app') {
       logFromRequest(req, logLevels.WARN, `Attempt to create SumUp payment with invalid channel: ${channel}`);
       return res.status(400).json({ error: `Invalid channel specified: ${channel}` });
     }
@@ -109,7 +108,7 @@ if (channel !== 'hosted' && channel !== 'app' && channel !== 'app-ind' ) {
 
     const payload = { intent_id: intentId, amount_minor, currency: CURRENCY };
 
-    if (channel === 'app' || channel === 'app-ind') {
+    if (channel === 'app') {
       const title = getPaymentLabelForBidder(bidder_id);
       payload.deep_link = buildDeepLink({
         amount_minor, currency: CURRENCY, title, external_reference: intentId
@@ -140,7 +139,7 @@ api.get('/payments/intents/:id', authenticateRole("cashier"), (req, res) => {
     const row = db.prepare(`
       SELECT intent_id, bidder_id, amount_minor, currency, status, channel, sumup_checkout_id, expires_at
       FROM payment_intents WHERE intent_id=?`).get(req.params.id);
-    if (!row) return res.status(404).json({ error: 'not_found' });
+    if (!row) return res.status(400).json({ error: 'not_found' });
     res.json(row);
   } catch (err) {
     logFromRequest(req, logLevels.ERROR, `intent_get_error ${err.message}`);
@@ -175,7 +174,7 @@ api.post('/payments/sumup/webhook', async (req, res) => {
     res.status(200).end(); // ACK fast to SumUp as per their docs
 
     if (!checkoutId) {
-      logFromRequest(req, logLevels.INFO, 'webhook_missing_checkout_id');
+      logFromRequest(req, logLevels.WARN, 'webhook_missing_checkout_id');
       return;
     }
     // Link back to our intent via stored checkout id
@@ -252,9 +251,13 @@ if (!foreignTxId && !txCode && !failure.cause && !failure.message) {
   // Test point: force success even if SumUp says otherwise (e.g. if transaction cancelled on POS)
   // status = `success`;
 
+  // Without a foreign tx ID we can't do anything
   if (!foreignTxId) {
     logFromRequest(req, logLevels.WARN,
-      `SumUp app callback missing foreign tx ID. endpoint=${req.path}`);
+      `SumUp app callback missing foreign tx ID. Aborting processing.`);
+      res.status(400).json({ error: 'missing transaction ID' });
+    return;
+      
   } else if (status === 'success') {
     // Happy path: fire-and-forget verification/finalisation
     verifyAndFinalizeIntent(foreignTxId, {

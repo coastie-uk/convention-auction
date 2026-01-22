@@ -7,6 +7,7 @@
 
 const Database = require('better-sqlite3');
 const path     = require('path');
+const fs       = require('fs');
 const schemaVersion = '2.2';
 const { logLevels, log } = require('./logger');
 const bcrypt = require('bcryptjs');
@@ -22,8 +23,20 @@ const {
 // 2.1   Add admin_can_change_state to auctions table
 // 2.2  Add payment_intents table and additional payments columns for SumUp integration
 
-const dbPath = path.join(DB_PATH, DB_NAME);
-log('General', logLevels.INFO, 'Using database at ' + dbPath);
+let dbPath = path.join(DB_PATH, DB_NAME);
+if (DB_PATH === ".") {
+
+  log('General', logLevels.WARN, 'Using current directory for database path; this is not recommended for production use.');
+  // get the absolute path
+  dbPath = path.resolve(DB_NAME);
+}
+  
+const isNewDatabase = !fs.existsSync(dbPath);
+if (isNewDatabase) {
+  log('General', logLevels.WARN, `Database file not found; creating new database at ${dbPath}`);
+} else {
+  log('General', logLevels.INFO, 'Using existing database at ' + dbPath);
+}
 
 const db = new Database(dbPath);
 
@@ -124,6 +137,7 @@ try { db.exec("ALTER TABLE payments ADD COLUMN reverses_payment_id INTEGER"); } 
 try { db.exec("ALTER TABLE payments ADD COLUMN reversal_reason TEXT"); } catch (e) { /* already exists */ }
 try { db.exec("CREATE INDEX IF NOT EXISTS ix_payments_reverses_payment_id ON payments(reverses_payment_id)"); } catch (e) { /* already exists */ }
 try { db.exec("CREATE INDEX IF NOT EXISTS ix_payments_bidder_created_at ON payments(bidder_id, created_at)"); } catch (e) { /* already exists */ }
+try { db.exec("ALTER TABLE auctions ADD COLUMN public_id TEXT"); } catch (e) { /* already exists */ }
 
 // 2.1 -> 2.2: Add payment provider metadata to payments table
 try { db.exec("ALTER TABLE payments ADD COLUMN provider TEXT not null default 'unknown'"); } catch (e) { /* already exists */ }

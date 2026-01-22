@@ -12,9 +12,10 @@ const multer = require("multer");
 const { Parser } = require("@json2csv/plainjs");
 const { exec } = require("child_process");
 const router = express.Router();
-const { CONFIG_IMG_DIR, SAMPLE_DIR, UPLOAD_DIR, DB_PATH, DB_NAME, BACKUP_DIR, MAX_UPLOADS, allowedExtensions, MAX_AUCTIONS, OUTPUT_DIR, LOG_LEVEL, PPTX_CONFIG_DIR, LOG_DIR, LOG_NAME, PASSWORD_MIN_LENGTH } = require('./config');
-
+const { CONFIG_IMG_DIR, SAMPLE_DIR, UPLOAD_DIR, DB_PATH, DB_NAME, BACKUP_DIR, MAX_UPLOADS, allowedExtensions, MAX_AUCTIONS, PPTX_CONFIG_DIR, LOG_DIR, LOG_NAME, PASSWORD_MIN_LENGTH, SERVICE_NAME } = require('./config');
+const crypto = require('crypto');
 const { validateJsonPaths } = require('./middleware/json-path-validator');
+const { sanitiseText } = require('./middleware/sanitiseText');
 
 const upload = multer({ dest: UPLOAD_DIR });
 const sharp = require("sharp");
@@ -145,7 +146,7 @@ router.post("/reset", checkAuctionState(['setup', 'archived']), (req, res) => {
     const mPassword = db.prepare("SELECT password FROM passwords WHERE role = 'maintenance'").get();
     if (!mPassword || !bcrypt.compareSync(password, mPassword.password)) {
       logFromRequest(req, logLevels.WARN, `Incorrect maintenance password attempt for auction reset`);
-      return res.status(401).json({ error: "Incorrect maintenance password" });
+      return res.status(403).json({ error: "Incorrect maintenance password" });
     }
   } catch (err) {
     return res.status(500).json({ error: "Error verifying password" });
@@ -457,9 +458,10 @@ router.get("/check-integrity", (req, res) => {
             if (!validAuctionIds.has(bidder.auction_id)) {
               issues.push("Invalid auction ID");
             }
-            if (!bidder.name?.trim()) {
-              issues.push("Missing name");
-            }
+            // Bidder name not used
+            // if (!bidder.name?.trim()) {
+            //   issues.push("Missing name");
+            // }
             if (!Number.isFinite(bidder.paddle_number) || bidder.paddle_number <= 0) {
               issues.push("Invalid paddle number");
             }
@@ -596,7 +598,7 @@ router.post("/change-password", (req, res) => {
     [hashed, role],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) return res.status(404).json({ error: "Role not found." });
+      if (this.changes === 0) return res.status(400).json({ error: "Role not found." });
 
       logFromRequest(req, logLevels.INFO, `Password changed for role: ${role}`);
       audit(req.user.role, 'change password', 'server', null, { changed_role: role });
@@ -608,14 +610,24 @@ router.post("/change-password", (req, res) => {
 //--------------------------------------------------------------------------
 // POST /restart
 // API to Restart the server
+// Tries pm2 first, then systemctl, then user-level systemctl
 //--------------------------------------------------------------------------
 
 router.post("/restart", (req, res) => {
-  res.json({ message: "Restarting server..." });
+  res.json({ message: "Restarting server. Check server log panel for status" });
   logFromRequest(req, logLevels.INFO, `Server restart requested`);
   setTimeout(() => {
-    exec("pm2 restart auction", (err) => {
-      if (err) console.log("Restart failed:", err);
+    exec(`pm2 restart ${SERVICE_NAME}`, (err) => {
+      if (!err) return;
+      exec(`systemctl restart ${SERVICE_NAME}`, (serviceErr) => {
+        if (!serviceErr) return;
+        exec(`systemctl --user restart ${SERVICE_NAME}`, (userServiceErr) => {
+          if (userServiceErr) {
+            logFromRequest(req, logLevels.ERROR, `Restart failed: ${userServiceErr.message}`);
+
+          }
+        });
+      });
     });
   }, 1000);
 });
@@ -1155,48 +1167,52 @@ router.post("/auctions/create", (req, res) => {
   const { short_name, full_name, logo } = req.body;
 
   // 1. Validate input
-  if (!short_name || !full_name)
+  if (!short_name || !full_name) {
+    logFromRequest(req, logLevels.ERROR, `Create auction missing short_name or full_name`);
     return res.status(400).json({ error: "Missing short_name or full_name" });
+  }
 
+  if (/\s/.test(short_name) || short_name.length < 3 || short_name.length > 64) {
+    logFromRequest(req, logLevels.ERROR, `Create auction invalid short_name format`);
+    return res.status(400).json({ error: "Short name must not contain spaces and be between 3 and 64 characters." });
+}
 
-
-  if (/\s/.test(short_name))
-    return res.status(400).json({ error: "Short name must not contain spaces." });
-
+    const sanitised_full_name = sanitiseText(full_name, 256);
+    const sanitised_short_name = sanitiseText(short_name, 64);
   try {
     // 2. Uniqueness check (sync)
     const existing = db.get(
       "SELECT id FROM auctions WHERE short_name = ?",
-      [short_name.trim()]
+      [sanitised_short_name.trim()]
     );
     if (existing)
-      return res
-        .status(400)
-        .json({ error: "Short name must be unique. This one already exists." });
+      return res.status(400).json({ error: "Short name must be unique. This one already exists." });
 
 
-    db.get("SELECT COUNT(*) AS count FROM auctions", [], (err, row) => {
-      if (err) return res.status(500).json({ error: err.message });
+    const row = db.get("SELECT COUNT(*) AS count FROM auctions");
 
       if (row.count >= MAX_AUCTIONS) {
         logFromRequest(req, logLevels.WARN, `Auction limit reached. Maximum allowed is ${MAX_AUCTIONS}.`);
 
         return res.status(400).json({ error: `Cannot create more than ${MAX_AUCTIONS} auctions.` });
       }
-    })
+    
+      // generate a random public_id to support submission links
+      const public_id = crypto.randomBytes(16).toString("hex");
 
     // 3. Insert (remember: params go in ONE array)
     const result = db.run(
-      "INSERT INTO auctions (short_name, full_name, logo) VALUES (?, ?, ?)",
-      [short_name.trim().toLowerCase(), full_name.trim(), logo || "default_logo.png"]
+      "INSERT INTO auctions (short_name, full_name, logo, public_id) VALUES (?, ?, ?, ?)",
+      [sanitised_short_name.trim().toLowerCase(), sanitised_full_name.trim(), logo || "default_logo.png", public_id]
     );
     const NewId = result.lastInsertRowid;
     logFromRequest(req, logLevels.INFO, `Created new auction Id ${NewId} ${short_name} with logo: ${logo}`);
-    audit(req.user.role, 'create auction', 'auction', NewId, { short_name: short_name.trim().toLowerCase(), full_name: full_name.trim(), logo });
-    res.json({ message: "Auction created." });
+    audit(req.user.role, 'create auction', 'auction', NewId, { short_name: short_name.trim().toLowerCase(), full_name: sanitised_full_name.trim(), logo });
+    return res.status(201).json({ message: `Auction ${sanitised_full_name.trim()} created.` });
+    
   } catch (err) {
-    logFromRequest(req, logLevels.ERROR, `Create auction error: ${err}`);
-    res.status(500).json({ error: "Could not create auction" });
+    logFromRequest(req, logLevels.ERROR, `Create auction error: ${err?.stack || err.message}`);
+    res.status(500).json({ error: "Could not create auction" + err.message });
   }
 });
 
@@ -1367,7 +1383,7 @@ router.post("/resources/delete", (req, res) => {
   const filePath = path.join(CONFIG_IMG_DIR, filename);
   if (!filePath.startsWith(CONFIG_IMG_DIR) || !fs.existsSync(filePath)) {
     logFromRequest(req, logLevels.WARN, `File not found ${filename}`);
-    return res.status(404).json({ error: "File not found" });
+    return res.status(400).json({ error: "File not found" });
   }
 
   // Check if any auctions are using this logo
@@ -1385,8 +1401,8 @@ router.post("/resources/delete", (req, res) => {
       // const pptxConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
       // const cardConfig = JSON.parse(fs.readFileSync(CARD_PATH, "utf-8"));
 
-      const pptxConfig = JSON.parse(fs.readFileSync(CONFIG_PATHS[pptx], "utf-8"));
-      const cardConfig = JSON.parse(fs.readFileSync(CONFIG_PATHS[card], "utf-8"));
+      const pptxConfig = JSON.parse(fs.readFileSync(CONFIG_PATHS.pptx, "utf-8"));
+      const cardConfig = JSON.parse(fs.readFileSync(CONFIG_PATHS.card, "utf-8"));
 
       const pptxRefs = JSON.stringify(pptxConfig).includes(filename);
       const cardRefs = JSON.stringify(cardConfig).includes(filename);

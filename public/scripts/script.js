@@ -9,6 +9,7 @@ document.addEventListener("DOMContentLoaded", function () {
     let latestFile = null;
     let selectedAuctionId = null;
     let selectedAuctionName = null;
+    let selectedAuctionPublicId = null;
     const API = "/api";
     const auctionGate = document.getElementById("auction-gate");
     const submissionSection = document.getElementById("submission-section");
@@ -34,7 +35,7 @@ document.addEventListener("DOMContentLoaded", function () {
             // const data = await response.json();
             const data = await response.json();
 
-            if (data.valid && data.status === "setup") {
+            if (data.valid) {
 
                 document.querySelector("header h1").textContent = data.full_name + "";
                 const logoImg = document.getElementById("auction-logo");
@@ -49,19 +50,13 @@ document.addEventListener("DOMContentLoaded", function () {
                     logoImg.alt = "Default Auction Logo";
                     logoImg.style.display = "block";
                 }
-
-                selectedAuctionId = data.id;
                 selectedAuctionName = data.full_name;
+                selectedAuctionPublicId = data.public_id;
 
                 // Set this to assist
-                sessionStorage.setItem("auction_id", data.id);
+                sessionStorage.setItem("auction_public_id", data.public_id);
 
                 showFormForAuction(data);
-            }
-            else if (data.valid && data.status !== "setup") {
-
-                auctionGate.style.display = "block";
-                showMessage("This auction is not currently accepting submissions", "error");
 
             } else {
 
@@ -197,12 +192,12 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
     function submitForm(formData) {
-        if (!selectedAuctionId) {
+        if (!selectedAuctionPublicId) {
             showMessage("Cannot submit - Auction not set", "error");
             return;
         }
 
-        fetch(`${API}/auctions/${selectedAuctionId}/newitem`, {
+        fetch(`${API}/auctions/${selectedAuctionPublicId}/newitem`, {
             method: "POST",
             body: formData
         })

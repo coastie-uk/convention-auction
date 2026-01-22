@@ -73,16 +73,22 @@ function updateMaintenancePassword(newPassword) {
   showMenu();
 };
 
-
 function clearAuditLog() {
   rl.question("Are you sure you want to clear the audit log? This action cannot be undone. Type `clear` to proceed: ", (answer) => {
     const response = String(answer || "").trim().toLowerCase();
     if (response === "clear") {
 
       try {
-        db.prepare("DELETE FROM audit_log").run();
+         db.pragma('foreign_keys = OFF');
+        const clearAuditLogTx = db.transaction(() => {
+          db.prepare("DELETE FROM audit_log").run();
+          db.prepare("DELETE FROM sqlite_sequence WHERE name = 'audit_log'").run();
+        });
+        clearAuditLogTx();
+         db.pragma('foreign_keys = ON');
         log("Server", logLevels.INFO, "Audit log cleared successfully.");
-        audit('system', 'clear audit log', 'server', null, { method: 'server-management.js', user: linuxusername   });
+        audit('system', 'clear audit log', 'server', null, { method: 'server-management.js', user: linuxusername });
+
         showMenu();
         return;
       }
@@ -99,13 +105,48 @@ function clearAuditLog() {
   showMenu();
 }
 
+function resetDatabase() {
+
+    rl.question("Are you sure you want to reset the database? This action cannot be undone. Type `reset` to proceed: ", (answer) => {
+    const response = String(answer || "").trim().toLowerCase();
+    if (response === "reset") {
+  // TODO delete all data from all tables except passwords and audit_log
+  try {
+  db.pragma('foreign_keys = OFF');
+  db.prepare("DELETE FROM bidders").run();
+  db.prepare("DELETE FROM auctions").run();
+  db.prepare("DELETE FROM items").run();
+  db.prepare("DELETE FROM payment_intents").run();
+  db.prepare("DELETE FROM payments").run();
+  db.pragma('foreign_keys = ON');
+  }
+  catch (err) {
+    log("Server", logLevels.ERROR, `Error resetting database: ${err.message}`);
+    db.pragma('foreign_keys = ON');
+    showMenu();
+    return;
+  }
+  log("Server", logLevels.INFO, "Database reset to initial state.");
+  
+  audit('system', 'reset database', 'server', null, { method: 'server-management.js', user: linuxusername });
+  showMenu();
+}
+     else {
+      console.log("Database reset operation cancelled.");
+      showMenu();}
+  });
+}
+
+// Display menu and handle user input
+
 
 function showMenu() {
   console.log("\n==============================");
   console.log("Server Maintenance Tasks:");
   console.log("1) Set maintenance password");
   console.log("2) Clear database audit log");
-  console.log("3) Exit");
+  console.log("3) Reset database to initial state");
+  console.log("4) Exit");
   console.log("==============================\n");
   rl.question("Select an option: ", (answer) => {
     const choice = String(answer || "").trim();
@@ -117,8 +158,15 @@ function showMenu() {
       clearAuditLog();
       showMenu();
     }
-
     if (choice === "3") {
+      console.log("Resetting database to initial state...");
+      resetDatabase();
+    
+        showMenu();
+      };
+    
+
+    if (choice === "4") {
       rl.close();
       db.close();
       process.exit(0);

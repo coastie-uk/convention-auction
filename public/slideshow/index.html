@@ -521,6 +521,7 @@
                 }
             }
 
+            // TODO: This needs fixing as validate-auction is a public endpoint and only returns public_id and not id. Consider building a new endpoint for this. May be better to call list auctions
             async function validateAuctionShortName(shortName) {
                 console.log("validate called");
                 if (!shortName) throw new Error("Auction name required");
@@ -533,10 +534,10 @@
 
                 const data = await res.json();
                 //    console.log(data);
-                if (res.ok && data.id) {
-                    localStorage.setItem("slideshowAuctionId", data.id);
+                if (res.ok && data.public_id) {
+                    localStorage.setItem("slideshowAuctionId", data.public_id);
                     localStorage.setItem("slideshowFullName", data.full_name);
-                    return data.id;
+                    return data.public_id;
                 } else {
                     throw new Error(data.error || "Name not found");
                 }

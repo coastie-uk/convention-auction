@@ -21,6 +21,8 @@ const bcrypt = require('bcryptjs');
 const app = express();
 const fsp = require('fs').promises;
 const { audit } = require('./middleware/audit');
+const { sanitiseText } = require('./middleware/sanitiseText');
+
 
 // const VALID_ROLES = new Set(['admin', 'maintenance', 'cashier', 'slideshow']);
 const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
@@ -39,7 +41,11 @@ const {
     MAX_ITEMS,
     PPTX_CONFIG_DIR,
     OUTPUT_DIR,
-    CURRENCY_SYMBOL
+    CURRENCY_SYMBOL,
+    RATE_LIMIT_WINDOW,
+    RATE_LIMIT_MAX,
+    LOGIN_LOCKOUT_AFTER,
+    LOGIN_LOCKOUT
 } = require('./config');
 
 const { authenticateRole } = require('./middleware/authenticateRole');
@@ -50,9 +56,81 @@ const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('.
 log('General', logLevels.INFO, '~~ Starting up Auction backend ~~');
 log('Logger', logLevels.INFO, `Logging framework initialized. `);
 
-
+const sessionTime = 12 * 60 * 60; // 12 hours
 
 const { api: paymentsApi, paymentProcessorVer } = require('./payments');
+
+const loginRateState = new Map();
+const loginLockoutState = new Map();
+
+function getClientIp(req) {
+  return req.ip || req.connection?.remoteAddress || 'unknown';
+}
+
+function checkRateLimit(req) {
+   // log('RateLimit', logLevels.DEBUG, `Checking rate limit for IP ${getClientIp(req)}, current state: ${JSON.stringify([...loginRateState])}, config: max ${RATE_LIMIT_MAX} per ${RATE_LIMIT_WINDOW}s`);
+  const ip = getClientIp(req);
+  const now = Date.now();
+  let entry = loginRateState.get(ip);
+
+  if (!entry || now - entry.windowStart >= (RATE_LIMIT_WINDOW * 1000)) {
+    entry = { windowStart: now, count: 0 };
+  }
+
+  entry.count += 1;
+  loginRateState.set(ip, entry);
+
+  if (entry.count > RATE_LIMIT_MAX) {
+    const retryAfterMs = entry.windowStart + (RATE_LIMIT_WINDOW * 1000) - now;
+    return { limited: true, retryAfterMs: Math.max(retryAfterMs, 0) };
+  }
+
+  return { limited: false };
+}
+
+function getLockoutKey(req, role) {
+  return `${getClientIp(req)}::${role || 'unknown'}`;
+}
+
+function isLoginLockedOut(req, role) {
+  const now = Date.now();
+  const key = getLockoutKey(req, role);
+  const entry = loginLockoutState.get(key);
+
+  if (!entry) return { locked: false };
+  if (entry.lockedUntil && entry.lockedUntil > now) {
+    return { locked: true, retryAfterMs: entry.lockedUntil - now };
+  }
+
+  if (entry.lockedUntil && entry.lockedUntil <= now) {
+    loginLockoutState.set(key, { failures: 0, lockedUntil: 0 });
+  }
+
+  return { locked: false };
+}
+
+function recordLoginFailure(req, role) {
+  const now = Date.now();
+  const key = getLockoutKey(req, role);
+  let entry = loginLockoutState.get(key);
+
+  if (!entry || (entry.lockedUntil && entry.lockedUntil <= now)) {
+    entry = { failures: 0, lockedUntil: 0 };
+  }
+
+  entry.failures += 1;
+
+  if (entry.failures >= LOGIN_LOCKOUT_AFTER) {
+    entry.lockedUntil = now + (LOGIN_LOCKOUT * 1000);
+    entry.failures = 0;
+  }
+
+  loginLockoutState.set(key, entry);
+}
+
+function clearLoginFailures(req, role) {
+  loginLockoutState.delete(getLockoutKey(req, role));
+}
 
 
 // collect up version info
@@ -100,6 +178,17 @@ setLogLevel(LOG_LEVEL.toUpperCase());
 
 // Then generic parsers and other routes
 app.use(express.json());
+
+app.use((err, req, res, next) => {
+  // Body parser error for invalid JSON
+  if (err && err.type === 'entity.parse.failed') {
+    logFromRequest(req, logLevels.WARN, `Invalid JSON payload: ${err.message}`);
+    return res.status(400).json({ error: 'Invalid JSON payload' });
+  }
+
+  return next(err);
+});
+
 app.use(express.urlencoded({ extended: true }));
 app.use(bodyParser.urlencoded({ extended: true }));
 
@@ -162,12 +251,20 @@ app.post('/validate', async (req, res) => {
 // Login route. Checks pw and returns a jwt
 // Also returns currency symbol + version data (as this route is the entry point to all users)
 //--------------------------------------------------------------------------
-
 app.post('/login', (req, res) => {
+
     const { password, role } = req.body;
     if (!password || !role) {
         logFromRequest(req, logLevels.ERROR, `No password provided`);
         return res.status(400).json({ error: "Password required" });
+    }
+
+    const lockout = isLoginLockedOut(req, role);
+    if (lockout.locked) {
+        const retryAfterSeconds = Math.ceil(lockout.retryAfterMs / 1000);
+        res.set('Retry-After', retryAfterSeconds.toString());
+        logFromRequest(req, logLevels.WARN, `Login locked out for role ${role} from ${getClientIp(req)}`);
+        return res.status(429).json({ error: "Too many failed attempts. Please try again later." });
     }
 
     db.get(`SELECT password FROM passwords WHERE role = ?`, [role], (err, row) => {
@@ -175,7 +272,8 @@ app.post('/login', (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         if (!row || !row.password) {
             logFromRequest(req, logLevels.WARN, `Invalid password for role ${role} entered`);
-            return res.status(401).json({ error: "Invalid password" });
+            recordLoginFailure(req, role);
+            return res.status(403).json({ error: "Invalid password" });
         }
 
         const stored = row.password;
@@ -184,7 +282,7 @@ app.post('/login', (req, res) => {
         const isHash = typeof stored === 'string' && stored.startsWith('$2');
 
         const handleSuccess = () => {
-          const token = jwt.sign({ role }, SECRET_KEY, { expiresIn: "8h" });
+          const token = jwt.sign({ role }, SECRET_KEY, { expiresIn: sessionTime });
           res.json({ token, currency: CURRENCY_SYMBOL, versions: 
               { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer } 
           });
@@ -198,15 +296,18 @@ app.post('/login', (req, res) => {
                 if (bErr) return res.status(500).json({ error: bErr.message });
                 if (!match) {
                     logFromRequest(req, logLevels.WARN, `Invalid password for role ${role} entered`);
-                    return res.status(401).json({ error: "Invalid password" });
+                    recordLoginFailure(req, role);
+                    return res.status(403).json({ error: "Invalid password" });
                 }
+                clearLoginFailures(req, role);
                 return handleSuccess();
             });
         } else {
             // legacy plaintext entry - validate then upgrade to hashed password
             if (stored !== password) {
                 logFromRequest(req, logLevels.WARN, `Invalid password for role ${role} entered`);
-                return res.status(401).json({ error: "Invalid password" });
+                recordLoginFailure(req, role);
+                return res.status(403).json({ error: "Invalid password" });
             }
 
             // upgrade - hash and store
@@ -217,6 +318,7 @@ app.post('/login', (req, res) => {
                 } else {
                     logFromRequest(req, logLevels.INFO, `Upgraded plaintext password to bcrypt for role ${role}`);
                 }
+                clearLoginFailures(req, role);
                 return handleSuccess();
             });
         }
@@ -231,7 +333,7 @@ app.post('/login', (req, res) => {
 
 app.get('/slideshow-auth', authenticateRole("admin"), (req, res) => {
     const role = 'slideshow';
-    const token = jwt.sign({ role }, SECRET_KEY, { expiresIn: "8h" });
+    const token = jwt.sign({ role }, SECRET_KEY, { expiresIn: sessionTime });
     res.json({ token });
 });
 
@@ -247,13 +349,36 @@ function getNextItemNumber(auction_id, callback) {
 //--------------------------------------------------------------------------
 // POST /auctions/:auctionId/newitem
 // API to handle item submission
+// This a a public route but uses checkAuctionState to ensure auction is accepting submissions
 //--------------------------------------------------------------------------
+// notable difference: uses :publicId not :auctionId - conversion handled in checkAuctionState
 
-app.post('/auctions/:auctionId/newitem', checkAuctionState(['setup', 'locked']), async (req, res) => {
+app.post('/auctions/:publicId/newitem', checkAuctionState(['setup', 'locked']), async (req, res) => {
     //    logFromRequest(req, logLevels.DEBUG, `Request received`);
     try {
+        const auth = req.header(`Authorization`);
+        let is_admin = false;
+        if (auth) {
+            try {
+                jwt.verify(auth, SECRET_KEY);
+                is_admin = true;
+                logFromRequest(req, logLevels.DEBUG, `New item request (admin) passed check`);
+            } catch (err) {
+                return res.status(403).json({ error: "Not authorised" });
+            }
+        }
 
-    await awaitMiddleware(upload.single('photo'))(req, res);
+        if (!is_admin) {
+            const rateLimit = checkRateLimit(req);
+            if (rateLimit.limited) {
+                const retryAfterSeconds = Math.ceil(rateLimit.retryAfterMs / 1000);
+                res.set('Retry-After', retryAfterSeconds.toString());
+                logFromRequest(req, logLevels.WARN, `Item submission rate limit exceeded from IP ${getClientIp(req)} (max ${RATE_LIMIT_MAX} per ${RATE_LIMIT_WINDOW}s)`);
+                return res.status(429).json({ error: "Too many submissions. Please try again in " + retryAfterSeconds.toString() + " seconds." }); // 429 Too Many Requests
+            }
+        }
+
+        await awaitMiddleware(upload.single('photo'))(req, res);
 
 
         // Check item count first
@@ -267,30 +392,26 @@ app.post('/auctions/:auctionId/newitem', checkAuctionState(['setup', 'locked']),
 
             let photoPath = req.file ? req.file.filename : null;
             const { description, contributor, artist, notes } = req.body;
-            const auth = req.header(`Authorization`);
-            const auction_id = Number(req.params.auctionId);
+            // auction_id is set in req by checkAuctionState
+            const auction_id = req.auction.id;
+        
 
             logFromRequest(req, logLevels.DEBUG, `New item being added to auction id ${auction_id}`);
+
+            logFromRequest(req, logLevels.DEBUG, `Auction identified as ${req.auction.id} from checkAuctionState`);
+
+            const sanitisedDescription = sanitiseText(description, 1024);
+            const sanitisedContributor = sanitiseText(contributor, 512);
+            const sanitisedArtist = sanitiseText(artist, 512);
+            const sanitisedNotes = sanitiseText(notes, 1024);
 
             if (!auction_id) {
                 logFromRequest(req, logLevels.ERROR, `Missing auction ID`);
                 return res.status(400).json({ error: "Missing auction ID" });
 
-            } else if (!description || !contributor) {
+            } else if (!sanitisedDescription || !sanitisedContributor) {
                 logFromRequest(req, logLevels.ERROR, `Missing item description or contributor`);
                 return res.status(400).json({ error: "Missing item description or contributor" });
-            }
-
-            // See if we were called from the admin page - if so, they sent a token
-            var is_admin = false;
-            if (auth) {
-
-                jwt.verify(auth, SECRET_KEY, (err, decoded) => {
-                    if (!err) {
-                        is_admin = true;
-                        logFromRequest(req, logLevels.DEBUG, `Add req has provided admin credentials`);
-                    }
-                })
             }
 
 
@@ -302,7 +423,7 @@ app.post('/auctions/:auctionId/newitem', checkAuctionState(['setup', 'locked']),
                 }
 
                 if (!row) {
-                    return res.status(404).json({ error: "Auction not found" });
+                    return res.status(400).json({ error: "Auction not found" });
                 }
 
                 // checkAuctionState() has already checked for scenarios which shouldn't happen, so the test here is simpler
@@ -321,25 +442,30 @@ app.post('/auctions/:auctionId/newitem', checkAuctionState(['setup', 'locked']),
                     const resizedPath = path.join(UPLOAD_DIR, `resized_${photoPath}`);
                     const previewPath = path.join(UPLOAD_DIR, `preview_resized_${photoPath}`);
 
-                    await sharp(req.file.path).metadata(); // Will throw if not an image
+                    try {
+                        await sharp(req.file.path).metadata(); // Will throw if not an image
 
-                    await sharp(req.file.path)
-                        .resize(2000, 2000, {
-                            fit: 'inside',
-                        })
-                        .jpeg({ quality: 90 })
-                        .toFile(resizedPath);
+                        await sharp(req.file.path)
+                            .resize(2000, 2000, {
+                                fit: 'inside',
+                            })
+                            .jpeg({ quality: 90 })
+                            .toFile(resizedPath);
 
-                    await sharp(req.file.path)
-                        .resize(400, 400, {
-                            fit: 'inside'
-                        })
-                        .jpeg({ quality: 70 })
-                        .toFile(previewPath);
+                        await sharp(req.file.path)
+                            .resize(400, 400, {
+                                fit: 'inside'
+                            })
+                            .jpeg({ quality: 70 })
+                            .toFile(previewPath);
 
-                    fs.unlinkSync(req.file.path);
-                    photoPath = `resized_${photoPath}`;
-                    logFromRequest(req, logLevels.INFO, `Photo captured and saved`);
+                        fs.unlinkSync(req.file.path);
+                        photoPath = `resized_${photoPath}`;
+                        logFromRequest(req, logLevels.INFO, `Photo captured and saved`);
+                    } catch (err) {
+                        logFromRequest(req, logLevels.ERROR, `Photo processing failed: ${err.message}`);
+                        return res.status(400).json({ error: "Invalid image upload" });
+                    }
 
                 }
 
@@ -351,17 +477,17 @@ app.post('/auctions/:auctionId/newitem', checkAuctionState(['setup', 'locked']),
                     }
 
                     db.run(`INSERT INTO items (item_number, description, contributor, artist, notes, photo, auction_id, date) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%d-%m-%Y %H:%M', 'now'))`,
-                        [itemNumber, description, contributor, artist, notes, photoPath, auction_id],
+                        [itemNumber, sanitisedDescription, sanitisedContributor, sanitisedArtist, sanitisedNotes, photoPath, auction_id],
                         function (err) {
                             if (err) {
                                 logFromRequest(req, logLevels.ERROR, `Database error ${err.message}`);
                                 return res.status(500).json({ error: err.message });
 
                             }
-                            res.json({ id: this.lastID, description, contributor, artist, photo: photoPath });
+                            res.json({ id: this.lastID, sanitisedDescription, sanitisedContributor, sanitisedArtist, photo: photoPath });
                             logFromRequest(req, logLevels.INFO, `Item ${this.lastID} stored for auction ${auction_id} as item #${itemNumber}`);
                             const user = is_admin ? "admin" : "public";
-                            audit(user, 'new item', 'item', this.lastID, { description: description, initial_number: itemNumber });
+                            audit(user, 'new item', 'item', this.lastID, { description: sanitisedDescription, initial_number: itemNumber });
 
                         }
                     );
@@ -465,7 +591,7 @@ try {
         }
         if (!row) {
             logFromRequest(req, logLevels.ERROR, `Update: Item not found`);
-            return res.status(404).json({ error: 'Item not found' });
+            return res.status(400).json({ error: 'Item not found' });
         }
 
         let photoPath = row.photo;
@@ -614,16 +740,19 @@ catch {
 //--------------------------------------------------------------------------
 
 app.delete('/items/:id', authenticateRole("admin"), checkAuctionState(['setup', 'locked']), (req, res) => {
-    const { id } = req.params;
+    const { id: itemId } = req.params;
 
-    logFromRequest(req, logLevels.DEBUG, `Delete: Request Recieved for ${id}`);
+    logFromRequest(req, logLevels.DEBUG, `Delete: Request Recieved for ${itemId}`);
 
-    db.get('SELECT photo, auction_id FROM items WHERE id = ?', [id], (err, row) => {
+    try {
+    db.get('SELECT photo, auction_id FROM items WHERE id = ?', [itemId], (err, row) => {
         if (err) {
+            logFromRequest(req, logLevels.ERROR, `Delete: error ${err.message}`);
             return res.status(500).json({ error: err.message });
         }
         if (!row) {
-            return res.status(404).json({ error: 'Item not found' });
+            logFromRequest(req, logLevels.ERROR, `Delete: Item id ${itemId} not found`);
+            return res.status(400).json({ error: 'Item not found' });
         }
 
         if (row.photo) {
@@ -640,13 +769,13 @@ app.delete('/items/:id', authenticateRole("admin"), checkAuctionState(['setup', 
             }
         }
 
-        db.run('DELETE FROM items WHERE id = ?', [id], function (err) {
+        db.run('DELETE FROM items WHERE id = ?', [itemId], function (err) {
             if (err) {
                 logFromRequest(req, logLevels.ERROR, `Delete: error ${err.message}`);
                 return res.status(500).json({ error: err.message });
             }
 
-            logFromRequest(req, logLevels.INFO, `Deleted item ${id}`);
+            logFromRequest(req, logLevels.INFO, `Deleted item ${itemId}`);
 
             renumberAuctionItems(row.auction_id, (err, count) => {
                 if (err) {
@@ -660,6 +789,10 @@ app.delete('/items/:id', authenticateRole("admin"), checkAuctionState(['setup', 
             res.json({ message: 'Item deleted' });
         });
     });
+} catch (err) {
+        logFromRequest(req, logLevels.ERROR, `Delete: error ${err.message}`);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 //--------------------------------------------------------------------------
@@ -908,15 +1041,12 @@ app.post('/rotate-photo', authenticateRole("admin"), async (req, res) => {
 // GET /auctions/:auctionId/slideshow-items
 // API to fetch items with photos only. Used for slideshow display
 // return only items that have an associated photo
+// Uses :publicId not :auctionId - conversion handled in checkAuctionState
 //--------------------------------------------------------------------------
 
-app.get('/auctions/:auctionId/slideshow-items', authenticateRole("slideshow"), (req, res) => {
-    const auction_id = Number(req.params.auctionId);
+app.get('/auctions/:publicId/slideshow-items', authenticateRole("slideshow"), checkAuctionState(['setup', 'locked', 'live','settlement','archive']), (req, res) => {
+    const auction_id = Number(req.auction.id);
 
-    if (!auction_id || isNaN(Number(auction_id))) {
-        logFromRequest(req, logLevels.ERROR, "Missing or invalid auction ID");
-        return res.status(400).json({ error: "Missing or invalid auction_id" });
-    }
 
     try {
         const rows = db.all(
@@ -943,73 +1073,85 @@ app.get('/auctions/:auctionId/slideshow-items', authenticateRole("slideshow"), (
 //--------------------------------------------------------------------------
 // GET /config/pptx
 // API to get current pptx config
+// Think this is unused?
 //--------------------------------------------------------------------------
 
-app.get('/config/pptx', authenticateRole("maintenance"), (req, res) => {
-    logFromRequest(req, logLevels.DEBUG, `Current PPTX config requested`);
-    fs.readFile('./pptxConfig.json', 'utf8', (err, data) => {
-        if (err) return res.status(500).json({ error: 'Unable to read config' });
-        res.type('application/json').send(data);
-    });
-});
+// app.get('/config/pptx', authenticateRole("maintenance"), (req, res) => {
+//     logFromRequest(req, logLevels.DEBUG, `Current PPTX config requested`);
+//     fs.readFile('./pptxConfig.json', 'utf8', (err, data) => {
+//         if (err) return res.status(500).json({ error: 'Unable to read config' });
+//         res.type('application/json').send(data);
+//     });
+// });
 
 //--------------------------------------------------------------------------
 // POST /config/pptx
 // API to save pptx config
+// Think this is unused?
 //--------------------------------------------------------------------------
 
-app.post('/config/pptx', authenticateRole("maintenance"), (req, res) => {
-    try {
-        const newConfig = JSON.stringify(req.body, null, 2); // Pretty print
-        fs.writeFile('./pptxConfig.json', newConfig, 'utf8', err => {
-            if (err) {
-                logFromRequest(req, logLevels.ERROR, `PPTX config save failed` + err);
-                return res.status(500).json({ error: 'Unable to save config' });
-            }
-            res.json({ message: 'Configuration updated successfully' });
-            logFromRequest(req, logLevels.INFO, `PPTX config updated`);
-        });
-    } catch (err) {
-        res.status(400).json({ error: 'Invalid JSON' });
-        logFromRequest(req, logLevels.ERROR, `Invalid JSON in file` + err);
+// app.post('/config/pptx', authenticateRole("maintenance"), (req, res) => {
+//     try {
+//         const newConfig = JSON.stringify(req.body, null, 2); // Pretty print
+//         fs.writeFile('./pptxConfig.json', newConfig, 'utf8', err => {
+//             if (err) {
+//                 logFromRequest(req, logLevels.ERROR, `PPTX config save failed` + err);
+//                 return res.status(500).json({ error: 'Unable to save config' });
+//             }
+//             res.json({ message: 'Configuration updated successfully' });
+//             logFromRequest(req, logLevels.INFO, `PPTX config updated`);
+//         });
+//     } catch (err) {
+//         res.status(400).json({ error: 'Invalid JSON' });
+//         logFromRequest(req, logLevels.ERROR, `Invalid JSON in file` + err);
 
-    }
-});
+//     }
+// });
 
 //--------------------------------------------------------------------------
 // POST /validate-auction
-// API to check whether the publically entered auction id exists and is active
+// API to check whether the publically entered auction short name exists and is active
+// This is a public endpoint and does not expose auction IDs
 //--------------------------------------------------------------------------
 
 app.post("/validate-auction", async (req, res) => {
     const { short_name } = req.body;
-    logFromRequest(req, logLevels.DEBUG, `Auction name received: ${short_name}`);
-
-
-    if (!short_name) {
-        logFromRequest(req, logLevels.ERROR, `No auction name received`);
-        return res.status(400).json({ valid: false, error: "Auction name required" });
+    if (!short_name || typeof short_name !== 'string'|| short_name.trim() === ''|| short_name.length > 64) {
+        logFromRequest(req, logLevels.ERROR, `No or bad auction name received`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return res.status(400).json({ valid: false, error: "Invalid auction name" });
     }
+    const sanitised_short_name = sanitiseText(short_name, 64);
+    logFromRequest(req, logLevels.DEBUG, `Auction name received: ${short_name}`);
 
     try {
 
-        db.get('SELECT id, short_name, full_name, status, logo FROM auctions WHERE short_name = ?', [short_name.toLowerCase()], async (err, row) => {
+        db.get('SELECT id, short_name, full_name, status, logo, public_id FROM auctions WHERE short_name = ?', [sanitised_short_name.toLowerCase()], async (err, row) => {
             if (err) {
                 logFromRequest(req, logLevels.ERROR, `Error ${err}`);
 
-                return res.status(500).json({ error: err.message });
+                return res.status(500).json({ error: `Validation error` });
             }
-            if (!row) {
+            else if (!row) {
                 logFromRequest(req, logLevels.WARN, `Auction name "${short_name}" not in database`);
-                return res.status(403).json({ error: "Auction name not found" });
+                //delay response to hinder brute-force attempts
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                return res.status(400).json({ valid: false, error: "Auction name not found" });
             }
 
-            res.json({ valid: true, id: row.id, short_name: row.short_name, full_name: row.full_name, status: row.status, logo: row.logo });
+            else if (row.status !== `setup`) {
+                logFromRequest(req, logLevels.WARN, `Auction "${short_name}" not active (status: ${row.status})`);
+                return res.status(400).json({ valid: false, error: "This auction is not currently accepting submissions" });
+            }
+
+            logFromRequest(req, logLevels.INFO, `Auction "${short_name}" exists and accepting submissions`);
+
+            res.json({ valid: true, short_name: row.short_name, full_name: row.full_name, logo: row.logo, public_id: row.public_id });
         }
         )
     } catch (err) {
         logFromRequest(req, logLevels.ERROR, `Auction validation error: ${err}`);
-        res.status(500).json({ valid: false, error: "Internal error" });
+        res.status(500).json({ valid: false, error: "Validation error" });
     }
 });
 
@@ -1032,7 +1174,7 @@ app.post("/list-auctions", authenticateRole(["maintenance", "admin", "cashier"])
         return res.status(400).json({ error: "Invalid status parameter" });
     }
 
-    let sql = "SELECT id, short_name, full_name, status, admin_can_change_state FROM auctions";
+    let sql = "SELECT id, short_name, full_name, status, admin_can_change_state, public_id FROM auctions";
     const params = [];
     if (status !== undefined) {           // filter only when caller asked for it
         sql += " WHERE status = ?";
@@ -1073,10 +1215,10 @@ app.post('/auctions/:auctionId/items/:id/move-after/:after_id', authenticateRole
             "SELECT id FROM items WHERE auction_id = ? ORDER BY item_number ASC",
             [auctionId]
         );
-        if (!rows.length) return res.status(404).json({ error: "Auction empty" });
+        if (!rows.length) return res.status(400).json({ error: "Auction empty" });
 
         const movingIdx = rows.findIndex(r => r.id === id);
-        if (movingIdx === -1) return res.status(404).json({ error: "Item not found" });
+        if (movingIdx === -1) return res.status(400).json({ error: "Item not found" });
 
         // 2. build new order
         const remaining = rows.filter(r => r.id !== id);
@@ -1084,7 +1226,7 @@ app.post('/auctions/:auctionId/items/:id/move-after/:after_id', authenticateRole
             ? remaining.findIndex(r => r.id === afterId) + 1
             : 0;
 
-        if (insertPos === 0 && afterId) return res.status(404).json({ error: "after_id not found" });
+        if (insertPos === 0 && afterId) return res.status(400).json({ error: "after_id not found" });
 
         const reordered = [
             ...remaining.slice(0, insertPos),
@@ -1235,7 +1377,7 @@ app.post("/auctions/update-status", authenticateRole(["admin", "maintenance"]), 
 
         // Check if the auction is already in the requested status - We seem to get duplicate requests
         if (auction.status === normalizedStatus) {
-            return res.status(200);
+            return res.sendStatus(200).end();
         }
 
         if (!allowedStatuses.includes(normalizedStatus)) {
@@ -1293,4 +1435,3 @@ app.use((err, req, res, next) => {
     console.error("Unhandled error:", err.message || err);
     res.status(500).json({ error: "Server error" });
 });
-

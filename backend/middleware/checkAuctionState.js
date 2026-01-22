@@ -102,7 +102,7 @@ module.exports = (db, options = {}) => {
    */
   function checkAuctionState(allowedStates) {
     if (!Array.isArray(allowedStates) || allowedStates.length === 0) {
-      throw new Error('checkAuctionState: allowedStates must be a non-empty array');
+      throw new Error('CAS: allowedStates must be a non-empty array');
     }
 
     // Normalise to upper‑case strings for comparison
@@ -118,6 +118,7 @@ module.exports = (db, options = {}) => {
         // Sometimes we used this form too.....
         const { auction_id: bodyAuctionIdAlt } = req.body ?? {};
 
+        const { publicId: paramPublicId } = req.params ?? {};
 
         // set auction id from the inputs
         let auctionId = paramAuctionId || bodyAuctionId || bodyAuctionIdAlt;
@@ -127,27 +128,40 @@ module.exports = (db, options = {}) => {
           const itemValid = stmtCheckConsistency.get(id, auctionId);
 
           if (!itemValid) {
-            logFromRequest(req, logLevels.ERROR, `Item #${id} is not part of auction ${auctionId}`);
-            return res.status(404).json({ error: 'Item and auction mismatch' });
+            logFromRequest(req, logLevels.ERROR, `CAS: Item #${id} is not part of auction ${auctionId}`);
+            return res.status(400).json({ error: 'Item and auction mismatch' });
           }
           auctionId = itemValid.auction_id;
         }
 
         /* 2️⃣ Resolve via itemNumber → auction_id (if needed) */
         else if (!auctionId && id) {
-          logFromRequest(req, logLevels.DEBUG, `Looking up item #${id} to get aucton ID`);
+          logFromRequest(req, logLevels.DEBUG, `CAS: Looking up item #${id} to get aucton ID`);
           const itemRow = stmtGetItemAuction.get(id);
 
           if (!itemRow) {
-            logFromRequest(req, logLevels.ERROR, `Item #${id} not found whilst resolving auction id`);
-            return res.status(404).json({ error: 'Item not found' });
+            logFromRequest(req, logLevels.ERROR, `CAS: Item #${id} not found whilst resolving auction id`);
+            return res.status(400).json({ error: 'Item not found' });
           }
+          logFromRequest(req, logLevels.DEBUG, `CAS: Resolved item #${id} to auction id ${itemRow.auction_id}`);
           auctionId = itemRow.auction_id;
+        }
+        // 2️⃣ Resolve via public ID → auction_id (if needed)
+        else if (!auctionId && paramPublicId) {
+          logFromRequest(req, logLevels.DEBUG, `CAS: Looking up auction with public id ${paramPublicId} to get auction ID`);
+          const auctionRow = db.prepare('SELECT id FROM auctions WHERE public_id = ?').get(paramPublicId);
+
+          if (!auctionRow) {
+            logFromRequest(req, logLevels.ERROR, `CAS: Auction with public id ${paramPublicId} not found whilst resolving auction id`);
+            return res.status(400).json({ error: 'Auction not found' });
+          }
+          logFromRequest(req, logLevels.DEBUG, `CAS: Resolved public id ${paramPublicId} to auction id ${auctionRow.id}`);
+          auctionId = auctionRow.id;
         }
 
         /* 3️⃣ Validate we have an ID */
         else if (!auctionId) {
-          logFromRequest(req, logLevels.ERROR, `checkAuctionState → no auction id or item number provided`);
+          logFromRequest(req, logLevels.ERROR, `CAS: Unable to determine auction id from request`);
           return res.status(400).json({ error: 'Auction identifier missing' });
         }
 
@@ -160,9 +174,9 @@ module.exports = (db, options = {}) => {
 
           if (!auction) {
             //       console.log(`Auction #${auctionId} not found`);
-            logFromRequest(req, logLevels.ERROR, `Auction #${auctionId} not found`);
+            logFromRequest(req, logLevels.ERROR, `CAS: Auction #${auctionId} not found`);
 
-            return res.status(404).json({ error: 'Auction not found' });
+            return res.status(400).json({ error: 'Auction not found' });
           }
 
           auctionStateCache.set(auctionId, auction);
@@ -174,21 +188,21 @@ module.exports = (db, options = {}) => {
           // console.log(
           //   `Auction #${auctionId} is ${currentState}; requires one of ${allowed.join(', ')}`
           // );
-          logFromRequest(req, logLevels.WARN, `Action blocked: Auction #${auctionId} state is ${currentState}; requires one of ${allowed.join(', ')}`);
+          logFromRequest(req, logLevels.WARN, `CAS: Action blocked: Auction #${auctionId} state is ${currentState}; requires one of ${allowed.join(', ')}`);
 
-          return res.status(409).json({
+          return res.status(400).json({
             error: `Operation requires auction to be in state(s): ${allowed.join(', ')}`,
           });
         }
 
         /* 7️⃣ All good – stash auction for downstream handlers and continue */
-        logFromRequest(req, logLevels.DEBUG, `State check passed for auction #${auctionId} (state ${currentState})`);
+        logFromRequest(req, logLevels.DEBUG, `CAS: State check passed for auction #${auctionId} (state ${currentState})`);
 
 
         req.auction = auction;
         return next();
       } catch (err) {
-        logFromRequest(req, logLevels.ERROR, `checkAuctionState middleware error` + err);
+        logFromRequest(req, logLevels.ERROR, `CAS: checkAuctionState middleware error` + err);
 
         //    console.log('checkAuctionState middleware error', err);
         return next(err);
