@@ -606,13 +606,33 @@ addTest("P-045","GET /settlement/summary failure wrong role", async () => {
   await expectStatus(res, 403);
 });
 
-// /lots/:id/undo failure payments exist (after payment)
-addTest("P-046","POST /lots/:id/undo failure payments exist", async () => {
+// /lots/:id/undo fail payments exist negative balance (after payment)
+addTest("P-046","POST /lots/:id/undo fail cause -ve balance", async () => {
   const { res } = await fetchJson(`${baseUrl}/lots/${testData.item1}/undo`, {
     method: "POST",
     headers: authHeaders(tokens.admin)
   });
   await expectStatus(res, 400);
+});
+
+// refund 9 to allow undo
+addTest("P-046a","POST /settlement/payment/:payid/reverse to allow undo success", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/settlement/payment/${testData.paymentId}/reverse`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ reason: "test reversal", amount: 9, auction_id: testData.auctionId })
+  });
+  await expectStatus(res, 201);
+  assert.ok(json && json.ok, "Reversal failed");
+});
+
+// /lots/:id/undo should now pass
+addTest("P-064b","POST /lots/:id/undo success payments exist ", async () => {
+  const { res } = await fetchJson(`${baseUrl}/lots/${testData.item1}/undo`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin)
+  });
+  await expectStatus(res, 200);
 });
 
 addTest("P-047","setup: create secondary auction for isolation tests", async () => {

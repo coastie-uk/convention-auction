@@ -105,9 +105,9 @@ function clearAuditLog() {
   showMenu();
 }
 
-function resetDatabase() {
+function resetDatabase(counters = false) {
 
-    rl.question("Are you sure you want to reset the database? This action cannot be undone. Type `reset` to proceed: ", (answer) => {
+    rl.question(`This will clear the database. ${counters ? ' and reset all counters' : ''}  This action cannot be undone. Type \`reset\` to proceed: `, (answer) => {
     const response = String(answer || "").trim().toLowerCase();
     if (response === "reset") {
   // TODO delete all data from all tables except passwords and audit_log
@@ -118,6 +118,11 @@ function resetDatabase() {
   db.prepare("DELETE FROM items").run();
   db.prepare("DELETE FROM payment_intents").run();
   db.prepare("DELETE FROM payments").run();
+  if (counters) {
+    db.prepare("DELETE FROM sqlite_sequence").run();
+    log("Server", logLevels.INFO, "Database counters reset.");
+    audit('system', 'reset database counters', 'server', null, { method: 'server-management.js', user: linuxusername });
+  }
   db.pragma('foreign_keys = ON');
   }
   catch (err) {
@@ -145,8 +150,10 @@ function showMenu() {
   console.log("Server Maintenance Tasks:");
   console.log("1) Set maintenance password");
   console.log("2) Clear database audit log");
-  console.log("3) Reset database to initial state");
-  console.log("4) Exit");
+  console.log("3) Reset database");
+  console.log("4) Reset database including counters");
+
+  console.log("5) Exit");
   console.log("==============================\n");
   rl.question("Select an option: ", (answer) => {
     const choice = String(answer || "").trim();
@@ -164,9 +171,12 @@ function showMenu() {
     
         showMenu();
       };
-    
-
     if (choice === "4") {
+      resetDatabase(true);
+      showMenu();
+    }
+
+    if (choice === "5") {
       rl.close();
       db.close();
       process.exit(0);

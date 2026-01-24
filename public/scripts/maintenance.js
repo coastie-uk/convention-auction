@@ -535,7 +535,7 @@ try {
 
       const confirmed = confirm(
         isLast
-          ? `⚠️ WARNING: This is the last auction and deleting it will reset internal counters and clear all tables. Audit data will NOT be deleted. Proceed?`
+          ? `⚠️ WARNING: This is the last auction and deleting it will reset the database. Audit data and counters will NOT be reset. Proceed?`
           : `Are you sure you want to delete auction ${auction.full_name}?`
       );
 

@@ -204,7 +204,7 @@ const API = "/api"
       rowEl.classList.remove('sold-row');
       rowEl.querySelector('.btn-undo')?.remove();
       enhanceRows(); // re-show Finalize button
-      showMessage("Bid retracted successfully", "info");
+      showMessage(data.message, "info");
 
               /* --- update paddle & price cells immediately --- */
         const cells = rowEl.children;        

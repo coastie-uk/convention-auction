@@ -121,14 +121,25 @@ module.exports = function phase1Patch (app) {
     
     const rows = db.all(`
       SELECT b.id, b.paddle_number, b.name,
-             SUM(CASE WHEN i.hammer_price IS NULL THEN 0 ELSE i.hammer_price END) AS lots_total,
-             IFNULL((SELECT SUM(amount) FROM payments p WHERE p.bidder_id = b.id),0) AS payments_total
+             IFNULL(i.lots_total, 0) AS lots_total,
+             IFNULL(p.payments_total, 0) AS payments_total
         FROM bidders b
-   LEFT JOIN items i ON i.winning_bidder_id = b.id
-   WHERE i.auction_id = ?
-    GROUP BY b.id
-      ORDER BY b.paddle_number
-    `,[id]);
+        LEFT JOIN (
+          SELECT winning_bidder_id AS bidder_id,
+                 SUM(CASE WHEN hammer_price IS NULL THEN 0 ELSE hammer_price END) AS lots_total
+            FROM items
+           WHERE auction_id = ?
+           GROUP BY winning_bidder_id
+        ) i ON i.bidder_id = b.id
+        LEFT JOIN (
+          SELECT bidder_id, SUM(amount) AS payments_total
+            FROM payments
+           GROUP BY bidder_id
+        ) p ON p.bidder_id = b.id
+       WHERE b.auction_id = ?
+         AND (i.bidder_id IS NOT NULL OR p.payments_total IS NOT NULL)
+       ORDER BY b.paddle_number
+    `,[id, id]);
     rows.forEach(r => {
       r.balance = (r.lots_total || 0) - (r.payments_total || 0);
     });
@@ -476,26 +487,50 @@ if (info.changes === 0) {
 
   //--------------------------------------------------------------------------
   // Undo/retract bid (admin)
-  // Checks for payment by bidder
+  // Updated to allow undo but not it would cause negative balance if payment exists
+  // Original version simply blocked undos if payment existed
   //--------------------------------------------------------------------------
 
 
   sales.post('/:id/undo', authenticateRole('admin'), checkAuctionState(['live', 'settlement']), (req, res) => {
     const itemId = Number(req.params.id);
-    const row = db.get(`SELECT winning_bidder_id FROM items WHERE id = ?`, [itemId]);
-    if (!row) return res.status(400).json({ error: 'Item not found' });
 
-    const paid = db.get(`SELECT 1 FROM payments WHERE bidder_id = ? LIMIT 1`, [row.winning_bidder_id]);
-    if (paid) {
-       logFromRequest(req, logLevels.WARN, `Bid retract failed for item ${itemId} by bidder ${row.winning_bidder_id} - Payment exists`);
-      return res.status(400).json({ error: 'Cannot undo – payments exist' });
+    if (!itemId || isNaN(itemId)) return res.status(400).json({ error: 'item # required' });
+    try {
+      const row = db.get(`SELECT winning_bidder_id, hammer_price FROM items WHERE id = ?`, [itemId]);
+      if (!row) return res.status(400).json({ error: 'Item not found' });
+
+      const paid = db.get(`SELECT 1 FROM payments WHERE bidder_id = ? LIMIT 1`, [row.winning_bidder_id]);
+
+      // Check if undoing the bid would result in a negative balance
+      if (paid) {
+        const sums = db.get(`
+          SELECT
+            IFNULL((SELECT SUM(hammer_price) FROM items WHERE winning_bidder_id = ?), 0) AS lots_total,
+            IFNULL((SELECT SUM(amount) FROM payments WHERE bidder_id = ?), 0) AS payments_total
+        `, [row.winning_bidder_id, row.winning_bidder_id]);
+        const newBalance = (sums.lots_total || 0) - (row.hammer_price || 0) - (sums.payments_total || 0);
+        if (Number(newBalance) < 0) {
+          logFromRequest(req, logLevels.WARN, `Cannot retract bid for item ${itemId} by bidder ${row.winning_bidder_id} - would result in negative balance`);
+          return res.status(400).json({ error: `Undo would result in bidder negative balance. Issue a refund of ${CURRENCY} ${Math.abs(newBalance)} and retry` });
+        }
+      }
+
+      db.run(`UPDATE items SET winning_bidder_id = NULL, hammer_price = NULL WHERE id = ?`, [itemId]);
+      if (paid) {
+        logFromRequest(req, logLevels.INFO, `Bid retracted for item ${itemId} by bidder ${row.winning_bidder_id} but payment exists`);
+        audit(req.user.role, 'undo-bid', 'item', itemId, { item: itemId, bidder: row.winning_bidder_id, note: 'Payment exists for bidder' });
+        return res.json({ ok: true, message: 'Bid retracted but payment exists - Verify cashier totals' });
+      }
+
+      logFromRequest(req, logLevels.INFO, `Bid retracted for item ${itemId} by bidder ${row.winning_bidder_id}`);
+      audit(req.user.role, 'undo-bid', 'item', itemId, { item: itemId, bidder: row.winning_bidder_id });
+      return res.json({ ok: true, message: 'Bid retracted' });
+    } catch (error) {
+      logFromRequest(req, logLevels.ERROR, `Failed to retract bid for item ${itemId}: ${error.message}`);
+
+      res.status(500).json({ error: `Failed to retract bid for item ${itemId}: ${error.message}` });
     }
-    db.run(`UPDATE items SET winning_bidder_id = NULL, hammer_price = NULL WHERE id = ?`, [itemId]);
-    audit(req.user.role, 'undo-bid', 'item', itemId);
-
-    logFromRequest(req, logLevels.INFO, `Bid retracted for item ${itemId} by bidder ${row.winning_bidder_id}`);
-
-    res.json({ ok: true });
   });
 
   //--------------------------------------------------------------------------
@@ -527,16 +562,16 @@ if (!auctionId || !id) return res.status(400).json({ error: 'item # and auction_
 
   const summary = db.get(`
       SELECT b.id, b.paddle_number,
-             SUM(i.hammer_price)               AS lots_total,
+             IFNULL((SELECT SUM(i.hammer_price) FROM items i WHERE i.winning_bidder_id = b.id AND i.auction_id = ?), 0) AS lots_total,
              IFNULL((SELECT SUM(amount) FROM payments p WHERE p.bidder_id = b.id),0) AS payments_total
         FROM bidders b
-   LEFT JOIN items i ON i.winning_bidder_id = b.id
-       WHERE b.id = ? AND i.auction_id =?
-    GROUP BY b.id`, [id, auctionId]);
+       WHERE b.id = ? AND b.auction_id = ?
+    GROUP BY b.id`, [auctionId, id, auctionId]);
 
    // console.log(summary.lots_total)
-
-  const balance = (summary.lots_total || 0) - (summary.payments_total || 0);
+const lotsTotal = Number(summary.lots_total || 0);
+const paymentsTotal = Number(summary.payments_total || 0);
+  const balance = (lotsTotal) - (paymentsTotal);
 
   res.json({ ...summary, lots, payments, balance });
 });

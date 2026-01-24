@@ -1108,7 +1108,7 @@ router.post("/auctions/delete", (req, res) => {
             logFromRequest(req, logLevels.INFO, `Deleting last auction. Resetiing database`);
 
             const deleteBatch = db.transaction(() => {
-
+              db.pragma("foreign_keys = OFF");
               db.prepare("DELETE FROM auctions").run();
               logFromRequest(req, logLevels.DEBUG, `Auctions table cleared`);
               
@@ -1122,18 +1122,9 @@ router.post("/auctions/delete", (req, res) => {
               db.prepare("DELETE FROM payments").run();
               logFromRequest(req, logLevels.DEBUG, `Payments table cleared`);
 
-              db.prepare("DELETE FROM sqlite_sequence WHERE name = 'auctions'").run();
-              logFromRequest(req, logLevels.DEBUG, `Auction ID counter reset`);
-
-              db.prepare("DELETE FROM sqlite_sequence WHERE name = 'bidders'").run();
-              logFromRequest(req, logLevels.DEBUG, `Bidder ID counter reset`);
-
-              db.prepare("DELETE FROM sqlite_sequence WHERE name = 'payments'").run();
-              logFromRequest(req, logLevels.DEBUG, `Payment ID counter reset`);
-
-
-              db.prepare("DELETE FROM sqlite_sequence WHERE name = 'items'").run();
-              logFromRequest(req, logLevels.DEBUG, `Item ID counter reset`);
+              db.prepare("DELETE FROM payment_intents").run();
+              logFromRequest(req, logLevels.DEBUG, `Payment Intents table cleared`);
+              db.pragma("foreign_keys = ON");
 
             });
 

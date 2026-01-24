@@ -146,10 +146,12 @@ buttons.forEach(btn => {
 
   
   function renderBidders(){
+   
     bidderBody.innerHTML='';
     sortBidders(bidders).forEach(b=>{
       const tr=document.createElement('tr');
       tr.className='bidder-row'+(b.balance===0?' bidder-paid':'');
+      if(b.balance<0) tr.classList.add('bidder-negative');
       tr.dataset.id=b.id;
       tr.innerHTML=`<td>${b.paddle_number}</td><td>${money(b.balance)}</td>`;
       tr.onclick=()=>selectBidder(b);

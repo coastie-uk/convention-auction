@@ -47,5 +47,6 @@ tbody tr:nth-child(even) { background:#fafafa; }
 .bidder-row { cursor:pointer; }
 .bidder-row.sel { background:#e0f7ff; }
 .bidder-paid    { background:#e5ffe5 !important; }
+.bidder-negative    { background:#ffeae5 !important; }
 .pay-list td{ font-size:0.85rem; }
 .disabled   { opacity:0.5; pointer-events:none; }
