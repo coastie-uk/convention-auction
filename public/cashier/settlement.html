@@ -41,7 +41,7 @@
     <h2 id="title">Select a bidder…</h2>
     <div id="detail" style="display:none;">
       <h3>Lots won</h3>
-      <table id="lotsTable"><thead><tr><th>Lot</th><th>Title</th><th>Price</th></tr></thead><tbody></tbody></table>
+      <table id="lotsTable"><thead><tr><th>Lot</th><th>Title (hover to preview)</th><th>Price</th></tr></thead><tbody></tbody></table>
       <h3>Payments</h3>
       <table id="payTable" class="pay-list"><thead><tr><th>Id</th><th>Time</th><th>Method</th><th>Amount</th><th>Notes</th><th></th></tr></thead><tbody></tbody></table>
       <div id="totals" style="margin-top:8px;"></div>
@@ -90,6 +90,7 @@
   </div>
 </template>
 
+<script src="/scripts/hover-photo.js"></script>
 <script src="/scripts/settlement.js"></script>
 <script src="/scripts/banner.js"></script>
 <script src="/scripts/daypilot-modal-3.15.1.min.js"></script>

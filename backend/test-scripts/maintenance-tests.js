@@ -579,14 +579,32 @@ addTest("M-050","maintenance/download-full failure unauthenticated", async () =>
 });
 
 addTest("M-051","maintenance/audit-log failure invalid filter", async () => {
-  const res = await fetch(`${baseUrl}/maintenance/audit-log?object_type=invalid`, {
+  const res = await fetch(`${baseUrl}/audit-log?object_type=invalid`, {
     headers: authHeaders(context.token)
   });
   await expectStatus(res, 400);
 });
 
+addTest("M-051b","maintenance/audit-log success with filter", async () => {
+  const { res, json, text } = await fetchJson(`${baseUrl}/audit-log?object_type=item`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+    assert.ok(json && Array.isArray(json.logs), `Unexpected response: ${text}`);
+
+});
+
+addTest("M-051b","maintenance/audit-log success with full filter", async () => {
+  const { res, json, text } = await fetchJson(`${baseUrl}/audit-log?object_type=auction&object_id=1`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+    assert.ok(json && Array.isArray(json.logs), `Unexpected response: ${text}`);
+
+});
+
 addTest("M-052","maintenance/audit-log success", async () => {
-  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/audit-log`, {
+  const { res, json, text } = await fetchJson(`${baseUrl}/audit-log`, {
     headers: authHeaders(context.token)
   });
   await expectStatus(res, 200);

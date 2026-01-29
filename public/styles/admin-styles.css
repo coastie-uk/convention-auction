@@ -188,24 +188,66 @@ form button:hover {
 /* Mobile Optimization */
 @media (max-width: 600px) {
     .sticky-controls {
+        position: static;
         flex-direction: column;
         align-items: stretch;
+        padding: 8px 10px;
+        gap: 8px;
     }
 
     .button-group-left,
     .button-group-right {
         flex-direction: column;
         width: 100%;
+        gap: 8px;
+    }
+
+    .button-group-left {
+        flex-wrap: wrap;
+    }
+
+    .auction-filter {
+        flex-wrap: wrap;
+    }
+
+    .auction-filter > * {
+        flex: 1 1 140px;
+    }
+
+    .button-group-left > *,
+    .button-group-right > * {
+        width: 100%;
+    }
+
+    .dropdown,
+    .dropdown-button {
+        width: 100%;
+    }
+
+    .dropdown-button {
+        text-align: left;
     }
 
     .dropdown-content {
         min-width: 100%;
+        width: 100%;
         position: static;
         box-shadow: none;
     }
 
     .dropdown-content button {
         padding: 12px;
+    }
+
+    main {
+        padding: 12px;
+    }
+
+    #itemsTable th,
+    #itemsTable td,
+    #feed th,
+    #feed td {
+        padding: 8px;
     }
 }
 

@@ -8,7 +8,7 @@
 const Database = require('better-sqlite3');
 const path     = require('path');
 const fs       = require('fs');
-const schemaVersion = '2.2';
+const schemaVersion = '2.3'; 
 const { logLevels, log } = require('./logger');
 const bcrypt = require('bcryptjs');
 const {
@@ -22,11 +22,12 @@ const {
 // 2.0   Adds auctions, bidders, payments and audit tables to align with convention-auction 1.0
 // 2.1   Add admin_can_change_state to auctions table
 // 2.2  Add payment_intents table and additional payments columns for SumUp integration
+// 2.3  Adds reversals
 
 let dbPath = path.join(DB_PATH, DB_NAME);
 if (DB_PATH === ".") {
 
-  log('General', logLevels.WARN, 'Using current directory for database path; this is not recommended for production use.');
+  log('General', logLevels.WARN, 'Using relative directory for database path; this is not recommended for production use.');
   // get the absolute path
   dbPath = path.resolve(DB_NAME);
 }
@@ -38,12 +39,33 @@ if (isNewDatabase) {
   log('General', logLevels.INFO, 'Using existing database at ' + dbPath);
 }
 
-const db = new Database(dbPath);
+let db = new Database(dbPath);
+let connectionId = 1;
+let maintenanceLock = false;
+
+let existingSchemaVersion = null;
+try {
+  const row = db.prepare("SELECT value FROM metadata WHERE data = 'schema_version'").get();
+  if (row && row.value != null) {
+    existingSchemaVersion = String(row.value);
+  }
+} catch (e) {
+  existingSchemaVersion = null;
+}
+
+if(existingSchemaVersion !== schemaVersion || isNewDatabase)
+{
+  log(
+    'General',
+    logLevels.WARN,
+    `Schema version missing or mismatched (db=${existingSchemaVersion ?? 'missing'}, expected=${schemaVersion}); Running DB setup`
+  );
 
 
 // Initial schema setup
 
-try {
+
+  try {
 
     db.exec(`CREATE TABLE IF NOT EXISTS auctions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -125,75 +147,92 @@ try {
       FOREIGN KEY (bidder_id) REFERENCES bidders(id)
     )`);
 
+      db.exec("CREATE TABLE IF NOT EXISTS metadata (data TEXT UNIQUE NOT NULL, value TEXT)");
 
-} catch (err) {
+
+  } catch (err) {
     log('General', logLevels.ERROR, `Database error: ${err.message}`);
-}
+  }
 
-// Modifications to existing tables for schema version upgrades - Try to add columns/indexes, ignore errors if they already exist
+  // Modifications to existing tables for schema version upgrades - Try to add columns/indexes, ignore errors if they already exist
 
-// 2.2 - 2.3: Add reversals to payments table (deprecates delete payment)
-try { db.exec("ALTER TABLE payments ADD COLUMN reverses_payment_id INTEGER"); } catch (e) { /* already exists */ }
-try { db.exec("ALTER TABLE payments ADD COLUMN reversal_reason TEXT"); } catch (e) { /* already exists */ }
-try { db.exec("CREATE INDEX IF NOT EXISTS ix_payments_reverses_payment_id ON payments(reverses_payment_id)"); } catch (e) { /* already exists */ }
-try { db.exec("CREATE INDEX IF NOT EXISTS ix_payments_bidder_created_at ON payments(bidder_id, created_at)"); } catch (e) { /* already exists */ }
-try { db.exec("ALTER TABLE auctions ADD COLUMN public_id TEXT"); } catch (e) { /* already exists */ }
-
-// 2.1 -> 2.2: Add payment provider metadata to payments table
-try { db.exec("ALTER TABLE payments ADD COLUMN provider TEXT not null default 'unknown'"); } catch (e) { /* already exists */ }
-try { db.exec("ALTER TABLE payments ADD COLUMN provider_txn_id TEXT"); } catch (e) { /* already exists */ }
-try { db.exec("ALTER TABLE payments ADD COLUMN intent_id TEXT"); } catch (e) { /* already exists */ }
-try { db.exec("ALTER TABLE payments ADD COLUMN currency TEXT"); } catch (e) { /* already exists */ }
-try { db.exec("ALTER TABLE payments ADD COLUMN raw_payload TEXT"); } catch (e) { /* already exists */ }
-try { db.exec("ALTER TABLE payments ADD COLUMN FOREIGN KEY (intent_id) REFERENCES payment_intents(intent_id)"); } catch (e) { /* already exists */ }
-try { db.exec("ALTER TABLE payment_intents ADD COLUMN note TEXT"); } catch (e) { /* already exists */ }
+  // 2.2 - 2.3: Add reversals to payments table (deprecates delete payment)
+  try { db.exec("ALTER TABLE payments ADD COLUMN reverses_payment_id INTEGER"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE payments ADD COLUMN reversal_reason TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("CREATE INDEX IF NOT EXISTS ix_payments_reverses_payment_id ON payments(reverses_payment_id)"); } catch (e) { /* already exists */ }
+  try { db.exec("CREATE INDEX IF NOT EXISTS ix_payments_bidder_created_at ON payments(bidder_id, created_at)"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE auctions ADD COLUMN public_id TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("CREATE TABLE IF NOT EXISTS metadata (data TEXT UNIQUE NOT NULL, value TEXT)"); } catch (e) { }
 
 
-// These are critical to prevent duplicate payment records for the same provider transaction - SumUp may send multiple notifications for the same payment
-try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_provider_payments_txn ON payments(provider, provider_txn_id)`); } catch (e) { /* already exists */ }
-try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_provider_payments_intent ON payments(provider, intent_id)`); } catch (e) { /* already exists */ }
+  // 2.1 -> 2.2: Add payment provider metadata to payments table
+  try { db.exec("ALTER TABLE payments ADD COLUMN provider TEXT not null default 'unknown'"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE payments ADD COLUMN provider_txn_id TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE payments ADD COLUMN intent_id TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE payments ADD COLUMN currency TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE payments ADD COLUMN raw_payload TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE payments ADD COLUMN FOREIGN KEY (intent_id) REFERENCES payment_intents(intent_id)"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE payment_intents ADD COLUMN note TEXT"); } catch (e) { /* already exists */ }
 
 
-// 2.0 -> 2.1 Add admin_state_change
-try { db.exec("ALTER TABLE auctions ADD COLUMN admin_can_change_state INTEGER NOT NULL DEFAULT 0; -- 0=false, 1=true"); } catch (e) { /* already exists */ }
+  // These are critical to prevent duplicate payment records for the same provider transaction - SumUp may send multiple notifications for the same payment
+  try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_provider_payments_txn ON payments(provider, provider_txn_id)`); } catch (e) { /* already exists */ }
+  try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_provider_payments_intent ON payments(provider, intent_id)`); } catch (e) { /* already exists */ }
 
 
+  // 2.0 -> 2.1 Add admin_state_change
+  try { db.exec("ALTER TABLE auctions ADD COLUMN admin_can_change_state INTEGER NOT NULL DEFAULT 0; -- 0=false, 1=true"); } catch (e) { /* already exists */ }
 
-// one-time default passwords (stored as bcrypt hashes)
-const defaultPasswords = [
-  { role: "admin",       password: "a1234" },
-  { role: "maintenance", password: "m1234" },
-  { role: "cashier",     password: "c1234" }
-];
+  // one-time default passwords (stored as bcrypt hashes)
+  const defaultPasswords = [
+    { role: "admin",       password: "a1234" },
+    { role: "maintenance", password: "m1234" },
+    { role: "cashier",     password: "c1234" }
+  ];
 
-const insertPwd = db.prepare(
-  "INSERT OR IGNORE INTO passwords (role, password) VALUES (?, ?)"
-);
+  const insertPwd = db.prepare(
+    "INSERT OR IGNORE INTO passwords (role, password) VALUES (?, ?)"
+  );
 
-for (const { role, password } of defaultPasswords) {
-  // Hash defaults synchronously at startup with a reasonable cost factor
-  const hashed = bcrypt.hashSync(password, 12);
-  insertPwd.run(role, hashed);
-}
+  for (const { role, password } of defaultPasswords) {
+    // Hash defaults synchronously at startup with a reasonable cost factor
+    const hashed = bcrypt.hashSync(password, 12);
+    insertPwd.run(role, hashed);
+  }
 
-// Ensure any existing plaintext passwords are upgraded to bcrypt hashes.
-try {
-  const rows = db.prepare('SELECT role, password FROM passwords').all();
-  for (const r of rows) {
-    const p = r.password || '';
-    if (typeof p === 'string' && !p.startsWith('$2')) {
-      // Likely plaintext; hash and update
-      try {
-        const h = bcrypt.hashSync(p, 12);
-        db.prepare('UPDATE passwords SET password = ? WHERE role = ?').run(h, r.role);
-        log('General', logLevels.INFO, `Upgraded plaintext password to bcrypt for role ${r.role}`);
-      } catch (e) {
-        log('General', logLevels.ERROR, `Failed to hash password for role ${r.role}: ${e.message}`);
+  // Ensure any existing plaintext passwords are upgraded to bcrypt hashes.
+  try {
+    const rows = db.prepare('SELECT role, password FROM passwords').all();
+    for (const r of rows) {
+      const p = r.password || '';
+      if (typeof p === 'string' && !p.startsWith('$2')) {
+        // Likely plaintext; hash and update
+        try {
+          const h = bcrypt.hashSync(p, 12);
+          db.prepare('UPDATE passwords SET password = ? WHERE role = ?').run(h, r.role);
+          log('General', logLevels.INFO, `Upgraded plaintext password to bcrypt for role ${r.role}`);
+        } catch (e) {
+          log('General', logLevels.ERROR, `Failed to hash password for role ${r.role}: ${e.message}`);
+        }
       }
     }
+  } catch (e) {
+    log('General', logLevels.ERROR, `Password migration check failed: ${e.message}`);
   }
-} catch (e) {
-  log('General', logLevels.ERROR, `Password migration check failed: ${e.message}`);
+
+  try {
+    const updateSchema = db.prepare("UPDATE metadata SET value = ? WHERE data = 'schema_version'");
+    const result = updateSchema.run(schemaVersion);
+    if (result.changes === 0) {
+      db.prepare("INSERT INTO metadata (data, value) VALUES ('schema_version', ?)").run(schemaVersion);
+    }
+  } catch (e) {
+    log('General', logLevels.ERROR, `Failed to write schema version metadata: ${e.message}`);
+  }
+} else {
+    log('General', logLevels.INFO, `Database schema version is current, skipping DB setup`);
+
+
 }
 
 log('General', logLevels.INFO, 'Database opened');
@@ -289,5 +328,28 @@ const stmt = db.prepare(...args);
   },
 
   transaction : (...args) => db.transaction(...args),
-  close    : () => db.close()
+  close    : () => db.close(),
+  reopen({ skipClose = false } = {}) {
+    if (!skipClose) {
+      try {
+        db.close();
+        log('DB', logLevels.INFO, "Database closed");
+      } catch (e) {
+        log('DB', logLevels.WARN, `DB close during reopen failed: ${e.message}`);
+      }
+    }
+    db = new Database(dbPath);
+    connectionId += 1;
+            log('DB', logLevels.INFO, "database connection re-established. ID=" + connectionId);
+
+  },
+  getConnectionId() {
+    return connectionId;
+  },
+  setMaintenanceLock(value) {
+    maintenanceLock = Boolean(value);
+  },
+  isMaintenanceLocked() {
+    return maintenanceLock;
+  }
 };

@@ -63,6 +63,7 @@ const API_ROOT = "/api"
     const prc  = r.price  != null ? money(r.price) : '';
     const prc2 = r.test_bid != null ? `${prc} <b>[T]</b>` : prc;
     const desc = r.test_item != null ? `${r.description} <b>[T]</b>` : r.description;
+    const photoUrl = r.photo_url || r.photoUrl || r.photo || '';
 
     const rowHtml = `
     <td>${pad}</td>
@@ -72,6 +73,8 @@ const API_ROOT = "/api"
       tr.style.setProperty('background', getColor(r.bidder), 'important'); // force tint
 
     tr.innerHTML = rowHtml;
+    if (photoUrl) tr.dataset.photoUrl = photoUrl;
+    else delete tr.dataset.photoUrl;
     // style switch if became sold
     if (!r.unsold) tr.classList.remove('unsold-row');
   }
@@ -121,6 +124,14 @@ if (!token) {
 
 
   chkUnsold.onchange = () => { clearTable(); poll() }; // re-poll will rebuild
+  if (typeof initPhotoHoverPopup === 'function') {
+    initPhotoHoverPopup({
+      container: tbody,
+      delayMs: 1000,
+       maxSize: 220,
+      getUrl: tr => tr.dataset.photoUrl ? `${API_ROOT}/uploads/preview_${tr.dataset.photoUrl}` : null
+    });
+  }
 
   async function poll(){
     try{
@@ -130,6 +141,7 @@ if (!token) {
       if(!res.ok) throw 0;
       const rows = await res.json();
       rows.forEach(r => {
+
         // filter paddle (if filter field present)
         const filterVal = document.getElementById('filter')?.value.trim();
         if (filterVal && Number(filterVal)!== (r.bidder??0)) return;

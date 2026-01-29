@@ -14,9 +14,7 @@ const db = require('./db');
 const { logLevels, logFromRequest, log } = require('./logger');
 const { request } = require('undici');
 const { authenticateRole } = require('./middleware/authenticateRole');
-const checkAuctionState = require('./middleware/checkAuctionState')(
-    db, { ttlSeconds: 2 }   
- );
+const { checkAuctionState } = require('./middleware/checkAuctionState');
 const { sanitiseText } = require('./middleware/sanitiseText');
 const {
   SUMUP_WEB_ENABLED,
@@ -100,7 +98,7 @@ if (channel !== 'hosted' && channel !== 'app') {
       return res.status(503).json({ error: `Requested payment method SumUp-${channel} is disabled` });
     }
 
-
+  //  TODO
     db.prepare(`
       INSERT INTO payment_intents (intent_id, bidder_id, amount_minor, currency, status, channel, expires_at, note)
       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
@@ -573,16 +571,13 @@ function expireStaleIntents() {
   }
 }
 
-// --- Get payment label for bidder ---
-const stmtGetAuctionLabelForBidder = db.prepare(`
+const getPaymentLabelForBidder = (bidderId) => {
+  const row = db.prepare(`
   SELECT a.id AS auction_id, a.short_name, a.full_name
   FROM bidders b
   JOIN auctions a ON a.id = b.auction_id
   WHERE b.id = ?
-`);
-
-const getPaymentLabelForBidder = (bidderId) => {
-  const row = stmtGetAuctionLabelForBidder.get(bidderId);
+`).get(bidderId);
   if (!row) return `Bidder ${bidderId}`;
   const auctionName = row.full_name || row.short_name;
   return `${auctionName} - Bidder ${bidderId}`;

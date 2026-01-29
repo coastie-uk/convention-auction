@@ -12,7 +12,7 @@ const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 const baseUrl = (process.env.BASE_URL || `http://localhost:${config.PORT}`).replace(/\/$/, "");
 const adminPassword = process.env.ADMIN_PASSWORD || "a1234";
 const maintenancePassword = process.env.MAINTENANCE_PASSWORD || "m1234";
-const cashierPassword = process.env.CASHIER_PASSWORD || "c1234";
+const cashierPassword = process.env.CASHIER_PASSWORD || "c12345";
 const logFilePath = process.env.LOG_FILE || path.join(__dirname, "bid_payment-tests.log");
 
 const framework = initFramework({
@@ -57,6 +57,8 @@ const testData = {
   auction2ShortName: null,
   auction2Item1: null,
   auction2BidderId: null,
+  moveAuctionId: null,
+  moveAuctionShortName: null,
   isolationBidderId: null,
   isolationPaddle: null,
   sumupIntentId: null,
@@ -300,7 +302,7 @@ addTest("P-011","GET /settlement/payment-methods success", async () => {
     headers: authHeaders(context.token)
   });
   await expectStatus(res, 200);
-  assert.ok(json && json.cash, "Missing payment methods");
+  assert.ok(json && json.paymentMethods, "Missing payment methods");
 });
 
 addTest("P-012","GET /settlement/payment-methods failure unauthenticated", async () => {
@@ -372,6 +374,73 @@ addTest("P-019","POST /lots/:itemid/finalize failure unauthenticated", async () 
     body: JSON.stringify({ paddle: 102, price: 60, auctionId: testData.auctionId })
   });
   await expectStatus(res, 403);
+});
+
+addTest("P-019a","setup: create target auction for bid edit protections", async () => {
+  const stamp = Date.now();
+  testData.moveAuctionShortName = `test_phase1_move_${stamp}`;
+  const { res, json } = await maintenanceRequest("/maintenance/auctions/create", {
+    short_name: testData.moveAuctionShortName,
+    full_name: `Phase1 Move Target Auction ${stamp}`,
+    logo: "default_logo.png"
+  });
+  await expectStatus(res, 201);
+  assert.ok(json && json.message, "Move target auction create failed");
+
+  const list = await fetchJson(`${baseUrl}/list-auctions`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({})
+  });
+  await expectStatus(list.res, 200);
+  const found = list.json.find(a => a.short_name === testData.moveAuctionShortName);
+  assert.ok(found, "Move target auction not found");
+  testData.moveAuctionId = found.id;
+
+  await maintenanceRequest("/maintenance/auctions/set-admin-state-permission", {
+    auction_id: testData.moveAuctionId,
+    admin_can_change_state: true
+  });
+
+  await setAuctionStatusFor(testData.moveAuctionId, "setup");
+});
+
+addTest("P-019b","POST /auctions/:auctionId/items/:id/update blocked for finalized item in setup", async () => {
+  await setAuctionStatusFor(testData.auctionId, "setup");
+  const form = new FormData();
+  form.append("description", "Attempt edit finalized item");
+  const { res, json, text } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/${testData.item1}/update`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin),
+    body: form
+  });
+  await expectStatus(res, 400);
+  assert.ok(json?.error || text, "Expected edit block error response");
+});
+
+addTest("P-019c","POST /auctions/:auctionId/items/:id/move-auction/:targetAuctionId blocked for finalized item in setup", async () => {
+
+  await setAuctionStatusFor(testData.moveAuctionId, "setup");
+  const { res, json, text } = await fetchJson(
+    `${baseUrl}/auctions/${testData.auctionId}/items/${testData.item1}/move-auction/${testData.moveAuctionId}`,
+    {
+      method: "POST",
+      headers: authHeaders(tokens.admin)
+    }
+  );
+  await expectStatus(res, 400);
+  assert.ok(json?.error || text, "Expected move block error response");
+});
+
+addTest("P-019d","DELETE /items/:id blocked for finalized item in setup", async () => {
+
+  const { res, json, text } = await fetchJson(`${baseUrl}/items/${testData.item1}`, {
+    method: "DELETE",
+    headers: authHeaders(tokens.admin)
+  });
+  await expectStatus(res, 400);
+  assert.ok(json?.error || text, "Expected delete block error response");
+  await setAuctionStatusFor(testData.auctionId, "live");
 });
 
 // /lots/:id/undo

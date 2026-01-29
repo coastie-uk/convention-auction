@@ -20,7 +20,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const app = express();
 const fsp = require('fs').promises;
-const { audit } = require('./middleware/audit');
+const { audit, auditTypes } = require('./middleware/audit');
 const { sanitiseText } = require('./middleware/sanitiseText');
 
 
@@ -29,7 +29,6 @@ const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
 
 const {
     CONFIG_IMG_DIR,
-    SAMPLE_DIR,
     UPLOAD_DIR,
     DB_PATH,
     BACKUP_DIR,
@@ -45,8 +44,12 @@ const {
     RATE_LIMIT_WINDOW,
     RATE_LIMIT_MAX,
     LOGIN_LOCKOUT_AFTER,
-    LOGIN_LOCKOUT
+    LOGIN_LOCKOUT,
+    ALLOWED_ORIGINS,
+    ENABLE_CORS
 } = require('./config');
+
+const allowedExtensionsSet = new Set(allowedExtensions.map((ext) => ext.toLowerCase()));
 
 const { authenticateRole } = require('./middleware/authenticateRole');
 
@@ -140,10 +143,11 @@ const { schemaVersion } = require('./db'); // get schema version from db.js
 
 const db = require('./db');
 
-const checkAuctionState = require('./middleware/checkAuctionState')(
-    db,
-    { ttlSeconds: 2 }
-);
+const { checkAuctionState } = require('./middleware/checkAuctionState')
+// (
+
+//     { ttlSeconds: 2 }
+// );
 
 log('General', logLevels.INFO, `Backend version: ${backendVersion}, DB schema version: ${schemaVersion}`);
 log('General', logLevels.INFO, `Payment processor: ${paymentProcessorVer}`);
@@ -154,26 +158,27 @@ setLogLevel(LOG_LEVEL.toUpperCase());
 // CORS
 // Needed if the frontend and backend are separated
 //--------------------------------------------------------------------------
+if (ENABLE_CORS) {
+const allowedOrigins = Array.isArray(ALLOWED_ORIGINS)
+  ? Array.from(new Set(ALLOWED_ORIGINS))
+  : [];
+const corsOptions = {
+  credentials: true,
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.length === 0) {
+      return callback(null, true);
+    }
+    return allowedOrigins.includes(origin)
+      ? callback(null, true)
+      : callback(new Error('Not allowed by CORS'));
+  }
+};
+log('General', logLevels.INFO, `CORS enabled. Allowed origins: ${allowedOrigins.join(', ')}`);
+app.use(cors(corsOptions));
+} else {
+    log('General', logLevels.INFO, 'CORS is disabled.');
+}
 
-// Add CORS headers before the routes are defined
-// app.use(function (req, res, next) {
-
-//    res.setHeader('Access-Control-Allow-Origin', '*'); // Either this OR a specific origin list
-//    res.setHeader('Access-Control-Allow-Origin', 'https://example.co.uk');
-//     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
-//     res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With,content-type');
-//     res.setHeader('Access-Control-Allow-Credentials', true);
-//     next();
-// });
-
-// Define the CORS options
-// const corsOptions = {
-//     credentials: true,
-//     origin: ['http://localhost:3000', 'http://localhost:80', 'https://example.co.uk', ] // Whitelist the domains you want to allow
-// };
-
-// Enable CORS
-// app.use(cors(corsOptions)); // Use the cors middleware with your options
 
 
 // Then generic parsers and other routes
@@ -185,12 +190,26 @@ app.use((err, req, res, next) => {
     logFromRequest(req, logLevels.WARN, `Invalid JSON payload: ${err.message}`);
     return res.status(400).json({ error: 'Invalid JSON payload' });
   }
+  if (err && err.message === 'Not allowed by CORS') {
+    logFromRequest(req, logLevels.WARN, `CORS rejected origin: ${req.headers.origin || 'unknown'}`);
+    return res.status(403).json({ error: 'CORS origin not allowed' });
+  }
 
   return next(err);
 });
 
 app.use(express.urlencoded({ extended: true }));
 app.use(bodyParser.urlencoded({ extended: true }));
+
+app.use((req, res, next) => {
+  if (req.path && req.path.startsWith('/maintenance')) {
+    return next();
+  }
+  if (typeof db.isMaintenanceLocked === 'function' && db.isMaintenanceLocked()) {
+    return res.status(503).json({ error: 'Database maintenance in progress' });
+  }
+  return next();
+});
 
 // Must come after body parsers
 require('./phase1-patch')(app);
@@ -442,6 +461,12 @@ app.post('/auctions/:publicId/newitem', checkAuctionState(['setup', 'locked']), 
                     const resizedPath = path.join(UPLOAD_DIR, `resized_${photoPath}`);
                     const previewPath = path.join(UPLOAD_DIR, `preview_resized_${photoPath}`);
 
+                    const fileExtension = path.extname(req.file?.originalname || photoPath).toLowerCase();
+                    if (!allowedExtensionsSet.has(fileExtension)) {
+                        logFromRequest(req, logLevels.ERROR, `Invalid image extension: ${fileExtension}`);
+                        return res.status(400).json({ error: "Invalid image upload" });
+                    }
+
                     try {
                         await sharp(req.file.path).metadata(); // Will throw if not an image
 
@@ -576,7 +601,6 @@ app.get('/auctions/:auctionId/items', authenticateRole("admin"), (req, res) => {
 app.post('/auctions/:auctionId/items/:id/update', authenticateRole("admin"), checkAuctionState(['setup', 'locked']), async (req, res) => {
     const auction_id = Number(req.params.auctionId);
     const id = Number(req.params.id);
-    const target_auction_id = req.body.target_auction_id;
 
     logFromRequest(req, logLevels.DEBUG, `Request received to update item ${id}`);
 
@@ -584,24 +608,30 @@ try {
     
   await awaitMiddleware(upload.single('photo'))(req, res);
 
-    db.get('SELECT photo, auction_id FROM items WHERE id = ?', [id], async (err, row) => {
+    db.get('SELECT photo, auction_id, description, contributor, artist, notes, winning_bidder_id, hammer_price FROM items WHERE id = ?', [id], async (err, row) => {
         if (err) {
             logFromRequest(req, logLevels.ERROR, `Update: Error ${err.message}`);
             return res.status(500).json({ error: err.message });
         }
-        if (!row) {
+        else if (!row) {
             logFromRequest(req, logLevels.ERROR, `Update: Item not found`);
             return res.status(400).json({ error: 'Item not found' });
         }
+        else if (row.auction_id !== req.auction.id) {
+            logFromRequest(req, logLevels.ERROR, `Update: Item ${id} auction ID mismatch. Item is in auction ${row.auction_id}, request is for auction ${req.auction.id}`);
+            return res.status(400).json({ error: "Item auction ID mismatch" });
+        }
+        else if (row.winning_bidder_id != null || row.hammer_price != null) {
+                 logFromRequest(req, logLevels.WARN, `Edit blocked: item ${id} has bids`);
+                return res.status(400).json({ error: "Item has a bid and cannot be edited" });
+            }
+
 
         let photoPath = row.photo;
 
         // Process new photo
         if (req.file) {
             let targetFilename = row.photo?.startsWith("resized_") ? row.photo : `resized_${uuidv4()}.jpg`;
-
-            // const resizedPath = `./uploads/${targetFilename}`;
-            // const previewPath = `./uploads/preview_${targetFilename}`;
 
            const resizedPath = path.join(UPLOAD_DIR, targetFilename);
            const previewPath = path.join(UPLOAD_DIR, `preview_${targetFilename}`);
@@ -651,9 +681,10 @@ try {
         const updates = [];
         const params = [];
 
+        // For each field, check if it's provided and different from current value. If so, add to updates (minimize DB writes)
         const fields = ["description", "contributor", "artist", "notes"];
         fields.forEach(field => {
-            if (req.body[field] !== undefined) {
+            if (req.body[field] !== undefined && req.body[field] !== null && req.body[field] !== row[field]) {
                 updates.push(`${field} = ?`);
                 params.push(req.body[field]);
             }
@@ -665,54 +696,15 @@ try {
             params.push(photoPath);
         }
 
-        // Always update mod_date
-        updates.push("mod_date = strftime('%d-%m-%Y %H:%M', 'now')");
 
-        const oldAuctionId = row.auction_id;
-        const newAuctionId = parseInt(target_auction_id);
-
-        if (!isNaN(newAuctionId) && newAuctionId !== oldAuctionId) {
-            logFromRequest(req, logLevels.DEBUG, `Moving ${id} from auction ${oldAuctionId} to auction ${newAuctionId}`);
-            db.get("SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ?", [newAuctionId], (err2, result) => {
-                if (err2) {
-                    logFromRequest(req, logLevels.ERROR, `Update: Error getting next item number → ${err2.message}`);
-                    return res.status(500).json({ error: err2.message });
-                }
-
-                const newNumber = result?.next || 1;
-                updates.push("auction_id = ?");
-                updates.push("item_number = ?");
-                params.push(newAuctionId, newNumber);
-                const sql = `UPDATE items SET ${updates.join(", ")} WHERE id = ?`;
-                params.push(id);
-
-                logFromRequest(req, logLevels.DEBUG, `Updating fields for item ${id}: ${updates.map(u => u.split(" = ")[0]).join(", ")}`);
-
-                db.run(sql, params, function (err3) {
-                    if (err3) {
-                        logFromRequest(req, logLevels.ERROR, `Database error: ` + err3.message);
-                        return res.status(500).json({ error: err3.message });
-                    }
-
-                    logFromRequest(req, logLevels.INFO, `Moved ${id} from auction ${oldAuctionId} to ${newAuctionId}`);
-
-                    renumberAuctionItems(oldAuctionId, (err4, count) => {
-                        if (err4) {
-                            logFromRequest(req, logLevels.ERROR, `Renumber failed for old auction ${oldAuctionId}: ${err4.message}`);
-                            return res.status(500).json({ error: err4.message });
-                        }
-                        logFromRequest(req, logLevels.DEBUG, `Renumbered ${count} items in old auction ${oldAuctionId}`);
-                    });
-                    audit(req.user.role, 'moved auction', 'item', id, { old_auction: oldAuctionId, new_auction: newAuctionId, new_no: newNumber });
-
-                    res.json({ message: 'Item moved and updated', item_number: newNumber, photo: photoPath });
-                });
-            });
-        } else {
-            // No auction move
+        // For each field, check if it's provided and different from current value. If so, add to updates (minimize DB writes)
+        // update mod_date if there are any updates
+        if (updates.length > 0) {
+            const updateSummary = JSON.stringify(updates) + " / " + JSON.stringify(params);
+            logFromRequest(req, logLevels.DEBUG, `updates and values: ${updateSummary}, photo: ${req.file ? photoPath : 'no file'}`);
+            updates.push("mod_date = strftime('%d-%m-%Y %H:%M', 'now')");
             const sql = `UPDATE items SET ${updates.join(", ")} WHERE id = ?`;
             params.push(id);
-            logFromRequest(req, logLevels.INFO, `Updating fields for item ${id}: ${updates.map(u => u.split(" = ")[0]).join(", ")}`);
 
             db.run(sql, params, function (err5) {
                 if (err5) {
@@ -721,18 +713,117 @@ try {
                 }
                 res.json({ message: 'Item updated', photo: photoPath });
                 logFromRequest(req, logLevels.INFO, `Update item completed for ${id}`);
-                audit(req.user.role, 'updated', 'item', id, {});
+                audit(req.user.role, 'updated', 'item', id, { changes: updateSummary, photo_updated: !!req.file });
 
             });
+        } else {
+            res.json({ message: 'No changes found', photo: photoPath });
+            logFromRequest(req, logLevels.INFO, `No changes detected for item ${id}`);
         }
-    });
-}
-catch {
+    }
+    );
+    }
+    catch {
         logFromRequest(req, logLevels.ERROR, "Error editing: " + err.message);
         res.status(500).json({ error: err.message });
-}
+    }
 
 });
+
+//--------------------------------------------------------------------------
+// POST /auctions/:auctionId/items/:id/move
+// API to move an item to a new auction
+//--------------------------------------------------------------------------
+
+app.post('/auctions/:auctionId/items/:id/move-auction/:targetAuctionId', authenticateRole("admin"), checkAuctionState(['setup', 'locked']), (req, res) => {
+    const id = Number(req.params.id);
+    const target_auction_id = req.params.targetAuctionId;
+    const newAuctionId = parseInt(target_auction_id);
+
+    if (!target_auction_id || isNaN(parseInt(target_auction_id))) {
+        logFromRequest(req, logLevels.ERROR, `Move: Missing or invalid target auction ID: ` + target_auction_id);
+        return res.status(400).json({ error: "Missing or invalid target auction ID" });
+    }
+
+    logFromRequest(req, logLevels.DEBUG, `Request received to move item ${id} to auction ${newAuctionId}`);
+    try {
+            // get current auction ID from req set by checkAuctionState
+            const oldAuctionId = Number(req.auction.id);
+
+            if (!oldAuctionId || isNaN(oldAuctionId) || oldAuctionId !== Number(req.params.auctionId)) {
+                logFromRequest(req, logLevels.ERROR, `Move: Missing or bad current auction ID. Request: ${req.params.auctionId} Item is: ${oldAuctionId}`);
+                return res.status(400).json({ error: "Missing or bad current auction ID" });
+            }
+ 
+            if (newAuctionId === oldAuctionId) {
+                return res.status(400).json({ error: "Item is already in the target auction" });
+            }
+            
+            // Moving an item with bids messes up our data integrity - block it
+            const itemBidState = db.get("SELECT winning_bidder_id, hammer_price FROM items WHERE id = ?", [id]);
+            if (itemBidState?.winning_bidder_id != null || itemBidState?.hammer_price != null) {
+                logFromRequest(req, logLevels.WARN, `Move blocked: item ${id} has bids`);
+                return res.status(400).json({ error: "Item has bids and cannot be moved" });
+            }
+            // target auction must be in setup or locked state
+            // let targetAuction = checkAuctionState.auctionStateCache?.get(newAuctionId);
+            // if (!targetAuction) {
+              let  targetAuction = db.get("SELECT id, status FROM auctions WHERE id = ?", [newAuctionId]);
+                // if (targetAuction) {
+                //    checkAuctionState.auctionStateCache?.set(newAuctionId, targetAuction);
+                // }
+            // }
+
+            if (!targetAuction) {
+                logFromRequest(req, logLevels.ERROR, `Move: Target auction ${newAuctionId} not found`);
+                return res.status(400).json({ error: "Target auction not found" });
+            }
+
+            const targetState = String(targetAuction.status).toLowerCase();
+            if (targetState !== "setup" && targetState !== "locked") {
+                logFromRequest(req, logLevels.WARN, `Move blocked: target auction ${newAuctionId} state is ${targetAuction.status}`);
+                return res.status(400).json({ error: "Target auction must be in setup or locked state" });
+            }
+
+            logFromRequest(req, logLevels.DEBUG, `Moving ${id} from auction ${oldAuctionId} to auction ${newAuctionId}`);
+            db.get("SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ?", [newAuctionId], (err2, result) => {
+                if (err2) {
+                    logFromRequest(req, logLevels.ERROR, `Update: Error getting next item number → ${err2.message}`);
+                    return res.status(500).json({ error: err2.message });
+                }
+                const newNumber = result?.next || 1;
+                db.run("UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M', 'now'), auction_id = ?, item_number = ? WHERE id = ?",
+                    [newAuctionId, newNumber, id],
+                    function (err3) {
+                        if (err3) {
+                            logFromRequest(req, logLevels.ERROR, `Database error: ` + err3.message);
+                            return res.status(500).json({ error: err3.message });
+                        }
+
+                        logFromRequest(req, logLevels.INFO, `Moved item ${id} from auction ${oldAuctionId} to ${newAuctionId}`);
+
+                        renumberAuctionItems(oldAuctionId, (err4, count) => {
+                            if (err4) {
+                                logFromRequest(req, logLevels.ERROR, `Renumber failed for old auction ${oldAuctionId}: ${err4.message}`);
+                                return res.status(500).json({ error: err4.message });
+                            }
+                            logFromRequest(req, logLevels.DEBUG, `Renumbered ${count} items in old auction ${oldAuctionId}`);
+                        });
+                        audit(req.user.role, 'moved auction', 'item', id, { old_auction: oldAuctionId, new_auction: newAuctionId, new_no: newNumber });
+
+                        res.json({ message: `Item moved to auction ${newAuctionId}`, item_number: newNumber });
+                    });
+            });
+
+
+  
+    }
+    catch (err) {
+        logFromRequest(req, logLevels.ERROR, "Error moving: " + err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 
 //--------------------------------------------------------------------------
 // DELETE /items/:id
@@ -745,24 +836,31 @@ app.delete('/items/:id', authenticateRole("admin"), checkAuctionState(['setup', 
     logFromRequest(req, logLevels.DEBUG, `Delete: Request Recieved for ${itemId}`);
 
     try {
-    db.get('SELECT photo, auction_id FROM items WHERE id = ?', [itemId], (err, row) => {
+
+    db.get('SELECT description, photo, auction_id, winning_bidder_id, hammer_price FROM items WHERE id = ?', [itemId], (err, row) => {
         if (err) {
             logFromRequest(req, logLevels.ERROR, `Delete: error ${err.message}`);
             return res.status(500).json({ error: err.message });
         }
-        if (!row) {
+        else if (!row) {
             logFromRequest(req, logLevels.ERROR, `Delete: Item id ${itemId} not found`);
             return res.status(400).json({ error: 'Item not found' });
         }
+       else if (row.winning_bidder_id != null || row.hammer_price != null) {
+            logFromRequest(req, logLevels.WARN, `Delete blocked: item ${itemId} has bids`);
+            return res.status(400).json({ error: "Item has bids and cannot be deleted" });
+        }
+        else if (row.auction_id !== req.auction.id) {
+            logFromRequest(req, logLevels.ERROR, `Delete: Item ${itemId} auction ID mismatch. Item is in auction ${row.auction_id}, request is for auction ${req.auction.id}`);
+            return res.status(400).json({ error: "Item auction ID mismatch" });
+        }
 
         if (row.photo) {
-      //      const photoPath = `./uploads/${row.photo}`;
             const photoPath = path.join(UPLOAD_DIR, row.photo);
             if (fs.existsSync(photoPath)) {
                 fs.unlinkSync(photoPath);
             }
 
-     //       const oldPreviewPath = `./uploads/preview_${row.photo}`;
             const oldPreviewPath = path.join(UPLOAD_DIR, `preview_${row.photo}`);
             if (fs.existsSync(oldPreviewPath)) {
                 fs.unlinkSync(oldPreviewPath);
@@ -775,7 +873,7 @@ app.delete('/items/:id', authenticateRole("admin"), checkAuctionState(['setup', 
                 return res.status(500).json({ error: err.message });
             }
 
-            logFromRequest(req, logLevels.INFO, `Deleted item ${itemId}`);
+            logFromRequest(req, logLevels.INFO, `Deleted item ${itemId} from auction ${row.auction_id}. Description: ${row.description}`);
 
             renumberAuctionItems(row.auction_id, (err, count) => {
                 if (err) {
@@ -785,7 +883,7 @@ app.delete('/items/:id', authenticateRole("admin"), checkAuctionState(['setup', 
                     logFromRequest(req, logLevels.INFO, `Renumbered ${count} items in auction ${row.auction_id} after deletion`);
                 }
             });
-
+            audit(req.user.role, 'delete', 'item', itemId, { auction_id: row.auction_id, description: row.description });
             res.json({ message: 'Item deleted' });
         });
     });
@@ -999,9 +1097,7 @@ app.post('/rotate-photo', authenticateRole("admin"), async (req, res) => {
         }
 
         const photoFilename = row.photo;
-     //   const photoPath = `./uploads/${photoFilename}`;
         const photoPath = path.join(UPLOAD_DIR, photoFilename);
-     //   const previewPath = `./uploads/preview_${photoFilename}`;
         const previewPath = path.join(UPLOAD_DIR, `preview_${photoFilename}`);
         const angle = direction === 'left' ? -90 : 90;
 
@@ -1069,44 +1165,6 @@ app.get('/auctions/:publicId/slideshow-items', authenticateRole("slideshow"), ch
         res.status(500).json({ error: err.message });
     }
 });
-
-//--------------------------------------------------------------------------
-// GET /config/pptx
-// API to get current pptx config
-// Think this is unused?
-//--------------------------------------------------------------------------
-
-// app.get('/config/pptx', authenticateRole("maintenance"), (req, res) => {
-//     logFromRequest(req, logLevels.DEBUG, `Current PPTX config requested`);
-//     fs.readFile('./pptxConfig.json', 'utf8', (err, data) => {
-//         if (err) return res.status(500).json({ error: 'Unable to read config' });
-//         res.type('application/json').send(data);
-//     });
-// });
-
-//--------------------------------------------------------------------------
-// POST /config/pptx
-// API to save pptx config
-// Think this is unused?
-//--------------------------------------------------------------------------
-
-// app.post('/config/pptx', authenticateRole("maintenance"), (req, res) => {
-//     try {
-//         const newConfig = JSON.stringify(req.body, null, 2); // Pretty print
-//         fs.writeFile('./pptxConfig.json', newConfig, 'utf8', err => {
-//             if (err) {
-//                 logFromRequest(req, logLevels.ERROR, `PPTX config save failed` + err);
-//                 return res.status(500).json({ error: 'Unable to save config' });
-//             }
-//             res.json({ message: 'Configuration updated successfully' });
-//             logFromRequest(req, logLevels.INFO, `PPTX config updated`);
-//         });
-//     } catch (err) {
-//         res.status(400).json({ error: 'Invalid JSON' });
-//         logFromRequest(req, logLevels.ERROR, `Invalid JSON in file` + err);
-
-//     }
-// });
 
 //--------------------------------------------------------------------------
 // POST /validate-auction
@@ -1313,28 +1371,58 @@ app.post('/auction-status', authenticateRole('admin'), (req, res) => {
     res.json({ status: row ? row.status : 'live' });
 });
 
+
 //--------------------------------------------------------------------------
-// GET /items/:id/history
-// API to get the audit logs. Accpets an optional item ID
+// GET /audit-log
+// API to view audit log with item details
+// Used by admin for item history and maintenance for general audit
 //--------------------------------------------------------------------------
 
-app.get("/items/:id/history", authenticateRole(["admin", "maintenance"]), (req, res) => {
-    const itemId = parseInt(req.params.id, 10);
+app.get("/audit-log", authenticateRole(["admin", "maintenance"]), (req, res) => {
+  const { object_id, object_type } = req.query;
 
-    try {
-        const stmt = db.prepare(`
-            SELECT created_at, action, user, details
-            FROM audit_log
-            WHERE object_id = ?
-            ORDER BY created_at DESC
-        `);
-        const rows = stmt.all(itemId);
-        res.json(rows);
-    } catch (err) {
-        console.error("Audit fetch error:", err);
-        res.status(500).json({ error: "Failed to fetch audit history" });
-    }
+if ((object_type && !auditTypes.includes(object_type)) || (object_id && isNaN(Number(object_id)))) {
+    return res.status(400).json({ error: "Invalid filter settings." });
+  }
+
+ logFromRequest(req, logLevels.DEBUG, `Audit log requested. Filter - object_id: ${object_id || 'none'}, object_type: ${object_type || 'none'}`); 
+
+  let query = `
+  SELECT 
+  audit_log.*, 
+  items.auction_id, 
+  items.item_number, 
+  auctions.short_name
+FROM audit_log
+LEFT JOIN items ON audit_log.object_type = 'item' AND audit_log.object_id = items.id
+LEFT JOIN auctions ON audit_log.object_type = 'item' AND items.auction_id = auctions.id
+    `
+
+
+  const params = [];
+  if (Number(object_id)) {
+    query += ` WHERE audit_log.object_id = ?`;
+    params.push(object_id);
+  }
+
+  if (object_type) {
+    query += object_id ? ` AND audit_log.object_type = ?` : ` WHERE audit_log.object_type = ?`;
+    params.push(object_type);
+  }
+
+  query += ` ORDER BY audit_log.created_at DESC`;
+
+
+  try {
+    const rows = db.prepare(query).all(...params);
+
+    res.json({ logs: rows });
+  } catch (err) {
+    console.error("Error fetching audit log:", err.message);
+    res.status(500).json({ error: "Failed to retrieve audit log." });
+  }
 });
+
 
 function awaitMiddleware(middleware) {
   return (req, res) =>
@@ -1391,7 +1479,7 @@ app.post("/auctions/update-status", authenticateRole(["admin", "maintenance"]), 
 // TODO fix auction state change audit entry
             audit(role, 'state change', 'auction', auction_id, { auction: auction_id, name: auction.short_name, new_state: normalizedStatus });
             // clear the auction state cache
-            checkAuctionState.auctionStateCache.del(auction_id);
+       //     checkAuctionState.auctionStateCache.del(auction_id);
             res.json({ message: `Auction ${auction_id} ${auction.short_name} status updated to ${normalizedStatus}` });
         });
 

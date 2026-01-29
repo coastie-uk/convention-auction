@@ -77,8 +77,11 @@
       <details class="group">
         <summary>Database</summary>
         <button id="backup-db">Create Backup on server</button>
+        <button id="download-db-file">Download current database file</button>
+        <button id="download-db">Download archive (database and photos)</button>
         <input type="file" id="restore-file">
         <button id="restore-db">Restore database from local backup</button>
+        <p> Caution: These commands will momentarily close the database. Ensure no users are making changes</p>
 
       </details>
 
@@ -88,8 +91,7 @@
         <input type="file" id="import-csv">
         <button id="import-csv-btn">Import CSV</button>
         <p>Column headings: description, artist, contributor, notes, and auction_id</p>
-        <button id="download-db">Download database and photos</button>
-      </details>
+        </details>
 
       <details class="group">
         <summary>Diagnostics</summary>
@@ -203,7 +205,9 @@
           <tbody></tbody>
         </table>
       <p> See documentation for instructions on configuring payment processing options. </p>
-      <p>The default cashier password must be changed to allow SumUp payments.</p>
+      <p id="pay-error" style="color: red;"></p>
+
+      <!-- <p>The default cashier password must be changed to allow SumUp payments.</p> -->
       </details>
 
 <details class="group">

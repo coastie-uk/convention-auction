@@ -100,6 +100,33 @@ document.getElementById("download-db").onclick = async () => {
   window.URL.revokeObjectURL(url);
 };
 
+document.getElementById("download-db-file").onclick = async () => {
+  const res = await fetch(`${API}/maintenance/download-db`, {
+    headers: { Authorization: token }
+  });
+
+  const disposition = res.headers.get("Content-Disposition");
+  let filename = "auction.db";
+
+  if (disposition && disposition.includes("filename=")) {
+    const match = disposition.match(/filename=\"?([^\";]+)\"?/);
+    if (match && match[1]) {
+      filename = match[1];
+    }
+  }
+
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.setAttribute("download", filename);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+};
+
 
 
 
@@ -793,6 +820,8 @@ async function checkIntegrity() {
   const summary = document.getElementById("integrity-summary");
   const details = document.getElementById("invalid-items-list");
 
+// TODO: Update this function to also process invalidBidders and invalidPayments
+
   if (data.invalidItems.length === 0) {
     summary.textContent = "No invalid items found.";
     details.textContent = "";
@@ -1042,7 +1071,7 @@ document.getElementById("fetch-audit-log").onclick = async () => {
   const typeQuery = selectedType ? (idQuery ? `&object_type=${selectedType}` : `?object_type=${selectedType}`) : "";
   const finalQuery = idQuery + typeQuery;
 
-  const res = await fetch(`${API}/maintenance/audit-log${finalQuery}`, {
+  const res = await fetch(`${API}/audit-log${finalQuery}`, {
     headers: { Authorization: token }
   });
 
@@ -1097,7 +1126,12 @@ async function loadEnabledPaymentMethods() {
   }
 
   const methods = await res.json();
-  Object.entries(methods).forEach(([key, cfg]) => {
+  const blocked = methods.blockedFlag;
+
+if (methods.blockedFlag) { document.getElementById('pay-error').textContent = "Default cashier password detected - The default must be changed to allow SumUp payments." };
+
+
+  Object.entries(methods.paymentMethods).forEach(([key, cfg]) => {
     const label = cfg?.label || key;
     const enabled = !!cfg?.enabled;
     const url  = cfg?.url || null;

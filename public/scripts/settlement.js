@@ -16,6 +16,7 @@ const API_ROOT = `${API}/settlement`;
   const titleEl    = document.getElementById('title');
   const currencySymbol = localStorage.getItem("currencySymbol") || "£";
   const money = v => `${currencySymbol}${Number(v).toFixed(2)}`;
+  const uploadBase = "/api/uploads";
 
   const urlParams  = new URLSearchParams(location.search);
   const AUCTION_ID = Number(urlParams.get('auctionId'));
@@ -25,6 +26,15 @@ const API_ROOT = `${API}/settlement`;
     alert('This page must be opened with ?auctionId=<number>');
 
     throw new Error('auctionId missing');     // halt script
+  }
+
+  if (typeof initPhotoHoverPopup === 'function') {
+    initPhotoHoverPopup({
+      container: lotsBody,
+      delayMs: 1000,
+      maxSize: 220,
+      getUrl: tr => tr.dataset.photoUrl ? `${uploadBase}/preview_${tr.dataset.photoUrl}` : null
+    });
   }
 
 
@@ -215,9 +225,12 @@ updateTotals();
 
     const prc = l.test_bid != null ? `${money(l.hammer_price)} <b>[T]</b>` : money(l.hammer_price);
     const desc = l.test_item != null ? `${l.description} <b>[T]</b>` : l.description;
+    const photoUrl = l.photo_url || l.photoUrl || l.photo || '';
 
       const tr=document.createElement('tr');
       tr.innerHTML=`<td>${l.item_number}</td><td>${desc}</td><td>${prc}</td>`;
+      if (photoUrl) tr.dataset.photoUrl = photoUrl;
+      else delete tr.dataset.photoUrl;
       lotsBody.appendChild(tr);
     });
   }
@@ -403,10 +416,11 @@ overlay.querySelector('#amt').focus();
     overlay.querySelector('#cancel').onclick=()=>overlay.remove();
     overlay.querySelector('#ok').onclick=async()=>{
       const amt=Number(amtIn.value);
-        if(!amt)return alert('Amount?');
       const reason=overlay.querySelector('#note').value;
+        if(!amt)return alert('Amount?');
+        if(!reason)return alert('Reason?');
 
-       const modal = await DayPilot.Modal.confirm("Confirm refund of " + money(amt) + " for payment ID " + id + "?");
+       const modal = await DayPilot.Modal.confirm("Confirm refund of " + money(amt) + " for payment ID " + id + " for reason: `" + reason + "` ?");
         if (modal.canceled) {
             showMessage("Refund cancelled", "info");
             return;

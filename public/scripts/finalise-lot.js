@@ -76,7 +76,7 @@ const API = "/api"
       // Finalize button (only for unsold lots)
       if (!isSold && !cell.querySelector('.btn-finalize')) {
         const btn = document.createElement('button');
-        btn.textContent = 'Finalize';
+        btn.textContent = 'Record Bid';
         btn.className   = 'btn-finalize';
         btn.onclick     = () => openFinalizeModal(id, item_no, description, tr);
         cell.appendChild(btn);
@@ -100,14 +100,14 @@ const API = "/api"
     wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;justify-content:center;align-items:center;z-index:9999;';
     wrap.innerHTML = `
       <div style="background:#fff;padding:20px;border-radius:8px;width:260px;font-family:Arial;">
-        <h3>Finalize Lot #${itemNo} - ${itemDesc}</h3>
+        <h3>Record bid for Lot #${itemNo} - ${itemDesc}</h3>
         <label>Paddle #</label>
         <input id="paddle" type="number" min="1" max="999" style="width:100%" autofocus>
         <label>Hammer £</label>
         <input id="price" type="number" min="1" step="0.01" style="width:100%">
         <div style="margin-top:1rem;display:flex;gap:6px;justify-content:flex-end;">
           <button id="cancel">Cancel</button>
-          <button id="ok">Finalize</button>
+          <button id="ok">Record Bid</button>
         </div>
       </div>`;
     document.body.appendChild(wrap);

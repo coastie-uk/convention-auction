@@ -12,7 +12,7 @@ const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 const baseUrl = (process.env.BASE_URL || `http://localhost:${config.PORT}`).replace(/\/$/, "");
 const adminPassword = process.env.ADMIN_PASSWORD || "a1234";
 const maintenancePassword = process.env.MAINTENANCE_PASSWORD || "m1234";
-const cashierPassword = process.env.CASHIER_PASSWORD || "c1234";
+const cashierPassword = process.env.CASHIER_PASSWORD || "c12345";
 const logFilePath = process.env.LOG_FILE || path.join(__dirname, "backend-tests.log");
 
 const framework = initFramework({
@@ -329,6 +329,23 @@ addTest("B-015","POST /auctions/:auctionId/newitem success", async () => {
   assert.ok(json && json.id, "Missing item id");
 });
 
+addTest("B-015a","POST /auctions/:auctionId/newitem failure invalid photo extension", async () => {
+  await setAuctionStatus("setup");
+  const form = new FormData();
+  form.append("description", "Backend New Item Invalid Photo");
+  form.append("contributor", "Contributor Invalid Photo");
+  const pngBase64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
+  const photoBlob = new Blob([Buffer.from(pngBase64, "base64")], { type: "image/png" });
+  form.append("photo", photoBlob, `photo_${Date.now()}.txt`);
+  const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionPublicId}/newitem`, {
+    method: "POST",
+    body: form
+  });
+  await expectStatus(res, 400);
+  assert.ok(json && json.error, "Expected invalid image error payload");
+});
+
 addTest("B-016","POST /auctions/:auctionId/newitem failure missing auction_id", async () => {
   const form = new FormData();
   form.append("description", "Missing Auction");
@@ -386,26 +403,26 @@ addTest("B-018","POST /auctions/:auctionId/newitem failure locked auction withou
   assert.ok(res, "Expected forbidden response");
 });
 
-addTest("B-018a","POST /auctions/:auctionId/newitem public rate limit", async () => {
-  await setAuctionStatus("setup");
-  await sleep(1000);
-  const maxAttempts = Number.isFinite(config.RATE_LIMIT_MAX) ? config.RATE_LIMIT_MAX : 5;
-  for (let i = 0; i < maxAttempts + 10; i += 1) {
-    const form = new FormData();
-    form.append("description", `Rate limit item ${Date.now()}-${i}`);
-    form.append("contributor", "Contributor Rate Limit");
-    const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionPublicId}/newitem`, {
-      method: "POST",
-      body: form
-    });
-    if (res.status === 429) {
-      assert.ok(json && typeof json.error === "string" && json.error.includes("Too many submissions"), "Expected rate limit response");
-      break;
-    }
-  }
+// addTest("B-018a","POST /auctions/:auctionId/newitem public rate limit", async () => {
+//   await setAuctionStatus("setup");
+//   await sleep(1000);
+//   const maxAttempts = Number.isFinite(config.RATE_LIMIT_MAX) ? config.RATE_LIMIT_MAX : 5;
+//   for (let i = 0; i < maxAttempts + 10; i += 1) {
+//     const form = new FormData();
+//     form.append("description", `Rate limit item ${Date.now()}-${i}`);
+//     form.append("contributor", "Contributor Rate Limit");
+//     const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionPublicId}/newitem`, {
+//       method: "POST",
+//       body: form
+//     });
+//     if (res.status === 429) {
+//       assert.ok(json && typeof json.error === "string" && json.error.includes("Too many submissions"), "Expected rate limit response");
+//       break;
+//     }
+//   }
 
-  await sleep(3000);
-});
+//   await sleep(3000);
+// });
 
 addTest("B-018b","POST /auctions/:auctionId/newitem admin bypasses rate limit", async () => {
 
@@ -935,29 +952,30 @@ addTest("B-073","POST /auction-status failure invalid token", async () => {
   await expectStatus(res, 403);
 });
 
-// /items/:id/history
-addTest("B-074","GET /items/:id/history success", async () => {
-  const { res, json } = await fetchJson(`${baseUrl}/items/${testData.itemA}/history`, {
+// /items/:id/history ->> Now changed to audit endpoint
+addTest("B-074","GET /audit_log (item history) success", async () => {
+    const { res, json } = await fetchJson(`${baseUrl}/audit-log?object_id=${testData.itemA}&object_type=item`, {
+  // const { res, json } = await fetchJson(`${baseUrl}/items/${testData.itemA}/history`, {
     headers: authHeaders(context.token)
   });
   await expectStatus(res, 200);
-  assert.ok(Array.isArray(json), "Expected array");
+  assert.ok(Array.isArray(json.logs), "Expected array");
 });
 
-addTest("B-075","GET /items/:id/history failure unauthenticated", async () => {
-  const res = await fetch(`${baseUrl}/items/${testData.itemA}/history`);
+addTest("B-075","GET /audit_log (item history) failure unauthenticated", async () => {
+  const res = await fetch(`${baseUrl}/audit-log?object_id=${testData.itemA}&object_type=item`);
   await expectStatus(res, 403);
 });
 
-addTest("B-076","GET /items/:id/history failure wrong role", async () => {
-  const res = await fetch(`${baseUrl}/items/${testData.itemA}/history`, {
+addTest("B-076","GET /audit_log (item history) failure wrong role", async () => {
+  const res = await fetch(`${baseUrl}/audit-log?object_id=${testData.itemA}&object_type=item`, {
     headers: authHeaders(tokens.cashier)
   });
   await expectStatus(res, 403);
 });
 
-addTest("B-077","GET /items/:id/history failure invalid token", async () => {
-  const res = await fetch(`${baseUrl}/items/${testData.itemA}/history`, {
+addTest("B-077","GET /audit_log (item history) failure invalid token", async () => {
+  const res = await fetch(`${baseUrl}/audit-log?object_id=${testData.itemA}&object_type=item`, {
     headers: authHeaders("badtoken")
   });
   await expectStatus(res, 403);

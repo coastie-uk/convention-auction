@@ -224,7 +224,37 @@ document.addEventListener("DOMContentLoaded", function () {
         loadItems();
         loadAuctions();
     })
-    // Escaping "" and '' is becoming too much of a headache to fix, so we're just going to remove quotes from things if they get edited
+    function normalizeString(value) {
+        if (value === null || value === undefined) return "";
+        return typeof value === "string" ? value : String(value);
+    }
+
+    function escapeHtml(str) {
+        return normalizeString(str).replace(/[&<>"']/g, (char) => {
+            switch (char) {
+                case "&":
+                    return "&amp;";
+                case "<":
+                    return "&lt;";
+                case ">":
+                    return "&gt;";
+                case '"':
+                    return "&quot;";
+                case "'":
+                    return "&#39;";
+                case "`":
+                    return "&#x60;";    
+                default:
+                    return char;
+            }
+        });
+    }
+
+    function encodeItemData(data) {
+        // encodeURIComponent does not escape single quotes, which breaks inline onclick strings
+        return encodeURIComponent(JSON.stringify(data)).replace(/'/g, "%27");
+    }
+        // Escaping "" and '' is becoming too much of a headache to fix, so we're just going to remove quotes from things if they get edited
     function removeQuotes(str) {
         if (typeof str !== "string" || str === null) return ""; // Handle null, undefined, and non-strings safely
         return str
@@ -282,24 +312,27 @@ document.addEventListener("DOMContentLoaded", function () {
 
             items.forEach(item => {
 
-                // Escape quotes
-                const escapedDescription = removeQuotes(item.description);
-                const escapedContributor = removeQuotes(item.contributor);
-                const escapedArtist = removeQuotes(item.artist);
-                const escapedNotes = removeQuotes(item.notes);
+                const description = normalizeString(item.description);
+                const contributor = normalizeString(item.contributor);
+                const artist = normalizeString(item.artist);
+                const notes = normalizeString(item.notes);
 
-                const encodedItem = encodeURIComponent(JSON.stringify({
+                const escapedDescription = escapeHtml(description);
+                const escapedContributor = escapeHtml(contributor);
+                const escapedArtist = escapeHtml(artist);
+
+                const encodedItem = encodeItemData({
                     id: item.id,
-                    description: escapedDescription,
-                    contributor: escapedContributor,
-                    artist: escapedArtist,
+                    description,
+                    contributor,
+                    artist,
                     photo: item.photo,
                     date: item.date,
-                    notes: escapedNotes,
+                    notes,
                     mod_date: item.mod_date,
                     item_number: item.item_number,
                     auction_id: item.auction_id
-                }));
+                });
 
                 const modToken = item.mod_date ? `?v=${encodeURIComponent(item.mod_date)}` : '';
                 const imgSrc = item.photo ? `${API}/uploads/preview_${item.photo}${modToken}` : '';
@@ -312,7 +345,6 @@ document.addEventListener("DOMContentLoaded", function () {
                 row.dataset.sold = item.hammer_price ? "1" : "0";   // 1 = already sold
                 row.dataset.item_number = item.item_number;
                 row.dataset.description = item.description;
-
                 row.innerHTML = `
                 <td>${item.item_number}</td>
                 <td>${escapedDescription}</td>
@@ -387,15 +419,16 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
                 if (!targetAuctionId || isNaN(targetAuctionId)) return;
-
-                const formData = new FormData();
-                formData.append("id", currentEditId);
-                formData.append("target_auction_id", targetAuctionId);
+                console.log(`Moving item ${currentEditId} to auction ${targetAuctionId}`);
+                // const formData = new FormData();
+                // formData.append("id", currentEditId);
+                // formData.append("target_auction_id", targetAuctionId);
 
                 try {
-                    const response = await fetch(`${API}/auctions/${auctionId}/items/${currentEditId}/update`, {
+                    const response = await fetch(`${API}/auctions/${auctionId}/items/${currentEditId}/move-auction/${targetAuctionId}`, {
                         method: "POST",
-                        body: formData,
+                //        body: formData,
+                        
                         headers: { Authorization: token }
 
                     })
@@ -403,7 +436,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     const result = await response.json();
                     if (!response.ok) throw new Error(result.error || "Move failed");
 
-                    showMessage("Item moved to different auction", "success");
+                    showMessage(result.message || "Item moved to different auction", "success");
                     loadItems(); // Refresh the list
                 } catch (err) {
                     showMessage("Move failed: " + err.message, "error");
@@ -413,6 +446,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
         window.showItemHistory = async function editItem(itemId) {
 
+         
+
             const token = localStorage.getItem("token");
             const modal = document.getElementById("history-modal");
             const tbody = document.getElementById("history-table-body");
@@ -421,7 +456,7 @@ document.addEventListener("DOMContentLoaded", function () {
             modal.style.display = "flex";
 
             try {
-                const res = await fetch(`${API}/items/${itemId}/history`, {
+                const res = await fetch(`${API}/audit-log?object_type=item&object_id=${itemId}`, {
                     headers: { Authorization: token }
                 });
 
@@ -429,12 +464,12 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 const history = await res.json();
 
-                if (!Array.isArray(history) || history.length === 0) {
+                if (!Array.isArray(history.logs) || history.logs.length === 0) {
                     tbody.innerHTML = `<tr><td colspan="4" style="padding:6px;">No history found for this item.</td></tr>`;
                     return;
                 }
 
-                tbody.innerHTML = history.map(record => `
+                tbody.innerHTML = history.logs.map(record => `
             <tr>
                 <td style="padding:6px;">${record.created_at}</td>
                 <td style="padding:6px;">${record.user || "?"}</td>
@@ -461,7 +496,9 @@ document.addEventListener("DOMContentLoaded", function () {
                 .replace(/^{|}$/g, "")       // remove surrounding { and }
                 .replace(/"/g, "")           // remove quotes
                 .replace(/,/g, ", ")         // add space after commas
-                .replace(/:/g, ": ");        // add space after colons
+                .replace(/:/g, ": ")        // add space after colons
+                .replace(/\n/g, "<br>")      // convert newlines to <br>
+                .replace(/_/g, " "); // replace _ with spaces
         }
 
     }
@@ -748,7 +785,14 @@ document.addEventListener("DOMContentLoaded", function () {
         editSection.style.display = "block";
         adminSection.style.display = "none";
         currentEditId = item.id;
+        
+// // TODO why doesn't this work???
+//             editForm.addEventListener('keydown', e => {
+//   if (e.key === 'Escape') { e.preventDefault(); cancelEditButton.click(); }
+//     });
     };
+
+
 
     editForm.addEventListener("submit", function (event) {
         var token = localStorage.getItem("token");
@@ -781,11 +825,12 @@ document.addEventListener("DOMContentLoaded", function () {
         })
 
             .then(async res => {
+                const data = await res.json();
                 if (!res.ok) {
-                    const data = await res.json();
+                    
                     throw new Error(data.error || "Unknown error");
                 }
-                showMessage("Item updated successfully", "success");
+                showMessage(data.message || "Item updated successfully", "success");
                 const now = new Date().getTime();
                 modifiedImages[currentEditId] = now;
 
@@ -817,12 +862,13 @@ document.addEventListener("DOMContentLoaded", function () {
                 headers: { "Authorization": token }
             })
                 .then(async res => {
+                    const data = await res.json();
                     if (!res.ok) {
-                        const data = await res.json();
+                        
                         throw new Error(data.error || "Unknown error");
                     }
 
-                    showMessage(`Item deleted successfully`, "success");
+                    showMessage(data.message || "Item deleted successfully", "success");
                     loadItems();
                     editSection.style.display = "none";
                     adminSection.style.display = "block";
@@ -1014,6 +1060,26 @@ document.addEventListener("DOMContentLoaded", function () {
             console.error('Change state error', e);
             alert('Network error while changing auction state.');
         }
+    });
+    // Global keydown listener for useful keyboardshortcuts
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && editSection.style.display === 'block') {
+            e.preventDefault();
+            cancelEditButton.click();
+        }
+        else if (e.key === 'Escape' && addSection.style.display === 'block') {
+            e.preventDefault();
+            cancelAddButton.click();
+        }
+        else if (e.key === 'd' && editSection.style.display === 'block') {
+            e.preventDefault();
+            deleteButton.click();
+        }
+        else if (e.key === 'Escape' || e.key === `Enter` && document.getElementById("history-modal").style.display === 'flex') {
+            e.preventDefault();
+            closeHistoryModal();
+        }
+ 
     });
 
 

@@ -16,7 +16,6 @@ const { CONFIG_IMG_DIR, SAMPLE_DIR, UPLOAD_DIR, DB_PATH, DB_NAME, BACKUP_DIR, MA
 const crypto = require('crypto');
 const { validateJsonPaths } = require('./middleware/json-path-validator');
 const { sanitiseText } = require('./middleware/sanitiseText');
-
 const upload = multer({ dest: UPLOAD_DIR });
 const sharp = require("sharp");
 const db = require('./db');
@@ -36,23 +35,53 @@ const CONFIG_PATHS = {
   card: path.join(PPTX_CONFIG_DIR, 'cardConfig.json')
 };
 
-const { audit, auditTypes } = require('./middleware/audit');
+const { audit } = require('./middleware/audit');
 const bcrypt = require('bcryptjs');
 const maintenanceRoutes = require('./maintenance');
 const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
 
-const checkAuctionState = require('./middleware/checkAuctionState')(
-  db, { ttlSeconds: 2 }   // optional – default is 5
-);
+const { checkAuctionState } = require('./middleware/checkAuctionState');
+
+// (
+//  { ttlSeconds: 2 }   // optional – default is 5
+// );
 
 const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
 
+// Ensure PPTX_CONFIG_DIR exists and has default config files (removes a manual setup step)
+if (!fs.existsSync(PPTX_CONFIG_DIR)) fs.mkdirSync(PPTX_CONFIG_DIR, { recursive: true });
 
+const defaultConfigs = [
+  { src: 'default.cardConfig.json', dest: 'cardConfig.json' },
+  { src: 'default.pptxConfig.json', dest: 'pptxConfig.json' }
+];
+
+for (const { src, dest } of defaultConfigs) {
+  const destPath = path.join(PPTX_CONFIG_DIR, dest);
+  if (!fs.existsSync(destPath)) {
+    fs.copyFileSync(path.join(__dirname, src), destPath);
+    log("Server", logLevels.INFO, `Default pptx config file created: ${dest}`);
+  }
+}
+
+if (!fs.existsSync(CONFIG_IMG_DIR)) fs.mkdirSync(CONFIG_IMG_DIR);
+
+const resourcesDir = path.join(__dirname, "resources");
+if (fs.existsSync(resourcesDir)) {
+  for (const entry of fs.readdirSync(resourcesDir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const destPath = path.join(CONFIG_IMG_DIR, entry.name);
+    if (!fs.existsSync(destPath)) {
+      fs.copyFileSync(path.join(resourcesDir, entry.name), destPath);
+      log("Server", logLevels.INFO, `Default resource file copied: ${entry.name}`);
+    }
+  }
+}
 
 if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR);
 
 // const CONFIG_IMG_DIR = path.join(__dirname, "resources");
-if (!fs.existsSync(CONFIG_IMG_DIR)) fs.mkdirSync(CONFIG_IMG_DIR);
+
 
 //--------------------------------------------------------------------------
 // POST /backup
@@ -62,9 +91,18 @@ if (!fs.existsSync(CONFIG_IMG_DIR)) fs.mkdirSync(CONFIG_IMG_DIR);
 router.post("/backup", (req, res) => {
   const backupPath = path.join(BACKUP_DIR, `auction_backup_${Date.now()}.db`);
   const databaseFile = path.join(DB_PATH, DB_NAME);
-  fs.copyFileSync(databaseFile, backupPath);
-  res.json({ message: "Backup created", path: backupPath });
-  logFromRequest(req, logLevels.INFO, `Database backup created ${backupPath}`);
+  db.setMaintenanceLock(true);
+  try {
+    db.close();
+    fs.copyFileSync(databaseFile, backupPath);
+    if (typeof db.reopen === "function") {
+      db.reopen({ skipClose: true });
+    }
+    res.json({ message: "Backup created", path: backupPath });
+    logFromRequest(req, logLevels.INFO, `Database backup created ${backupPath}`);
+  } finally {
+    db.setMaintenanceLock(false);
+  }
 });
 
 //--------------------------------------------------------------------------
@@ -73,26 +111,29 @@ router.post("/backup", (req, res) => {
 //--------------------------------------------------------------------------
 
 router.get("/download-db", (req, res) => {
-  res.download(path.join(DB_PATH, DB_NAME));
+  const now = new Date();
+  const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const ext = path.extname(DB_NAME);
+  const base = path.basename(DB_NAME, ext);
+  const filename = `${base}_${timestamp}${ext}`;
+
+  db.setMaintenanceLock(true);
+  try {
+    db.close;
+    res.download(path.join(DB_PATH, DB_NAME), filename);
+    if (typeof db.reopen === "function") {
+      db.reopen({ skipClose: true });
+    }
+  } finally {
+    db.setMaintenanceLock(false);
+  }
+
 });
 
 //--------------------------------------------------------------------------
 // POST /restore
 // API to restore full DB from an uploaded copy
 //--------------------------------------------------------------------------
-
-// router.post("/restore", async (req, res) => {
-//   try {
-//     await awaitMiddleware(upload.single('backup'))(req, res);
-
-//     fs.copyFileSync(req.file.path, DB_PATH);
-//     fs.unlinkSync(req.file.path);
-//     res.json({ message: "Database restored." });
-//     logFromRequest(req, logLevels.INFO, `Database restored`);
-//   } catch (err) {
-//     res.status(500).json({ error: err.message });
-//   }
-// });
 
 const Database = require("better-sqlite3");
 
@@ -106,22 +147,83 @@ router.post("/restore", async (req, res) => {
 
     const filePath = req.file.path;
 
-    //  Try opening the uploaded DB
+
+    let header;
     try {
-      const testDB = new Database(filePath, { readonly: true });
-      testDB.pragma("user_version"); // simple test query
-      testDB.close();
-    } catch (dbErr) {
-      fs.unlinkSync(filePath);
-          logFromRequest(req, logLevels.ERROR, `Database restore failed. mot a database`);
+      const fd = fs.openSync(filePath, "r");
+      const buffer = Buffer.alloc(16);
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+      fs.closeSync(fd);
+      header = bytesRead;
+      const signature = Buffer.from("SQLite format 3\u0000", "utf8");
+      if (bytesRead < signature.length || !buffer.equals(signature)) {
+        fs.unlinkSync(filePath);
+        logFromRequest(req, logLevels.ERROR, "Database restore failed. Not a SQLite database");
         return res.status(400).json({ error: "Uploaded file is not a valid SQLite database." });
+      }
+    } catch (ioErr) {
+      fs.unlinkSync(filePath);
+      logFromRequest(req, logLevels.ERROR, "Database restore failed. Unable to read uploaded file");
+      return res.status(400).json({ error: "Unable to read uploaded file." });
     }
 
-    //  Valid DB – restore it
-    fs.copyFileSync(filePath, path.join(DB_PATH, DB_NAME));
-    fs.unlinkSync(filePath);
+    try {
+      const testDB = new Database(filePath, { readonly: true });
+      let importSchemaVersion = null;
 
-    logFromRequest(req, logLevels.INFO, `Database restored`);
+      try {
+        const metadataTable = testDB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'metadata'").get();
+        console.log(metadataTable);
+        if (metadataTable) {
+          const row = testDB.prepare("SELECT value FROM metadata WHERE data = 'schema_version'").get();
+          if (row && row.value != null && String(row.value).length > 0) {
+            importSchemaVersion = String(row.value);
+          }
+        }
+      } finally {
+        testDB.close();
+      }
+
+      if (!importSchemaVersion) {
+        fs.unlinkSync(filePath);
+        logFromRequest(req, logLevels.ERROR, "Database restore failed. Missing schema_version");
+        return res.status(400).json({ error: "Uploaded database is missing schema version." });
+      }
+
+      if (importSchemaVersion !== String(db.schemaVersion)) {
+        fs.unlinkSync(filePath);
+        logFromRequest(
+          req,
+          logLevels.ERROR,
+          `Database restore failed. Schema version mismatch (db=${importSchemaVersion}, expected=${db.schemaVersion})`
+        );
+        return res.status(400).json({ error: `Uploaded database schema version does not match. (import=${importSchemaVersion}, required=${db.schemaVersion})` });
+      }
+    } catch (dbErr) {
+      fs.unlinkSync(filePath);
+      logFromRequest(req, logLevels.ERROR, "Database restore failed " + dbErr);
+      return res.status(400).json({ error: "Error" + dbErr });
+    }
+
+    const dbFilePath = path.join(DB_PATH, DB_NAME);
+    const walPath = `${dbFilePath}-wal`;
+    const shmPath = `${dbFilePath}-shm`;
+
+    db.setMaintenanceLock(true);
+    try {
+      db.close();
+      fs.copyFileSync(filePath, dbFilePath);
+      fs.unlinkSync(filePath);
+      fs.rmSync(walPath, { force: true });
+      fs.rmSync(shmPath, { force: true });
+      if (typeof db.reopen === "function") {
+        db.reopen({ skipClose: true });
+      }
+    } finally {
+      db.setMaintenanceLock(false);
+    }
+
+    logFromRequest(req, logLevels.INFO, "Database restored");
     res.json({ message: "Database restored." });
 
   } catch (err) {
@@ -480,7 +582,7 @@ router.get("/check-integrity", (req, res) => {
           const invalidPaymentDetails = payments.map(payment => {
             const issues = [];
 
-            if (!Number.isFinite(payment.amount) || payment.amount <= 0) {
+            if (!Number.isFinite(payment.amount)) {
               issues.push("Invalid amount");
             }
             if (payment.reverses_payment_id) {
@@ -678,7 +780,16 @@ router.get("/download-full", (req, res) => {
   res.setHeader("Content-Type", "application/zip");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
-
+  // close and reopen the database to make sure changes are written back
+  db.setMaintenanceLock(true);
+  try {
+    db.close();
+    if (typeof db.reopen === "function") {
+      db.reopen({ skipClose: true });
+    }
+  } finally {
+    db.setMaintenanceLock(false);
+  }
 
   archive.pipe(res);
 
@@ -1471,13 +1582,15 @@ router.post("/generate-bids", checkAuctionState(['live', 'settlement']), (req, r
   if (!auction_id || !Number.isInteger(num_bids) || !Number.isInteger(num_bidders)) {
     return res.status(400).json({ error: "Missing or invalid input." });
   }
+      logFromRequest(req, logLevels.DEBUG, `Generate bid request received`);
 
   // Step 1: get items without bids
   db.all("SELECT id, description FROM items WHERE auction_id = ? AND winning_bidder_id IS NULL", [auction_id], (err, items) => {
     if (err) return res.status(500).json({ error: err.message });
 
     const availableItems = items.map(i => i.id);
-    if (availableItems.length === 0) return res.status(400).json({ error: "No items without bids." });
+    
+    if (availableItems.length === 0) return res.status(400).json({ error: "No items / No items without bids." });
 
     if (num_bids < 1 || num_bids > availableItems.length) {
       return res.status(400).json({ error: `Number of bids must be between 1 and ${availableItems.length}` });
@@ -1536,6 +1649,7 @@ router.post("/delete-test-bids", checkAuctionState(['live', 'settlement']), (req
   }
 
   try {
+    db.pragma('foreign_keys = OFF');
     // Clear test bids from the items table
     const result = db.prepare(`
       UPDATE items
@@ -1551,6 +1665,7 @@ router.post("/delete-test-bids", checkAuctionState(['live', 'settlement']), (req
       WHERE auction_id = ?
         AND id NOT IN (SELECT winning_bidder_id FROM items WHERE auction_id = ? AND winning_bidder_id IS NOT NULL)
     `).run(auction_id, auction_id);
+    db.pragma('foreign_keys = ON');
 
     logFromRequest(req, logLevels.INFO, `Deleted ${result.changes} test bid(s) and ${deleted.changes} unreferenced bidder(s) from auction ${auction_id}`);
     audit(req.user.role, 'delete test bids', 'auction', auction_id, { test_bids_deleted: result.changes, bidders_deleted: deleted.changes });
@@ -1563,55 +1678,7 @@ router.post("/delete-test-bids", checkAuctionState(['live', 'settlement']), (req
   }
 });
 
-//--------------------------------------------------------------------------
-// GET /audit-log
-// API to view audit log with item details
-//--------------------------------------------------------------------------
 
-router.get("/audit-log", (req, res) => {
-  const { object_id, object_type } = req.query;
-
-if ((object_type && !auditTypes.includes(object_type)) || (object_id && isNaN(Number(object_id)))) {
-    return res.status(400).json({ error: "Invalid filter settings." });
-  }
-
- logFromRequest(req, logLevels.DEBUG, `Audit log requested. Filter - object_id: ${object_id || 'none'}, object_type: ${object_type || 'none'}`); 
-
-  let query = `
-  SELECT 
-  audit_log.*, 
-  items.auction_id, 
-  items.item_number, 
-  auctions.short_name
-FROM audit_log
-LEFT JOIN items ON audit_log.object_type = 'item' AND audit_log.object_id = items.id
-LEFT JOIN auctions ON audit_log.object_type = 'item' AND items.auction_id = auctions.id
-    `
-
-
-  const params = [];
-  if (Number(object_id)) {
-    query += ` WHERE audit_log.object_id = ?`;
-    params.push(object_id);
-  }
-
-  if (object_type) {
-    query += object_id ? ` AND audit_log.object_type = ?` : ` WHERE audit_log.object_type = ?`;
-    params.push(object_type);
-  }
-
-  query += ` ORDER BY audit_log.created_at DESC`;
-
-
-  try {
-    const rows = db.prepare(query).all(...params);
-
-    res.json({ logs: rows });
-  } catch (err) {
-    console.error("Error fetching audit log:", err.message);
-    res.status(500).json({ error: "Failed to retrieve audit log." });
-  }
-});
 
 //--------------------------------------------------------------------------
 // GET /audit-log/export

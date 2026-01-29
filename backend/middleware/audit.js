@@ -3,29 +3,52 @@ const db = require('../db');
 const { logLevels, log } = require('../logger');
 const auditTypes = ['item', 'bidder', 'payment', 'auction', 'database','server'];
 
-const stmtGetItemAuditInfo = db.prepare(
-    `SELECT i.auction_id, i.description, a.short_name
-       FROM items i
-       LEFT JOIN auctions a ON a.id = i.auction_id
-      WHERE i.id = ?`
-);
-const stmtGetBidderAuctionId = db.prepare(
-    'SELECT auction_id FROM bidders WHERE id = ?'
-);
-const stmtGetPaymentAuctionId = db.prepare(
-    `SELECT b.auction_id
-       FROM payments p
-       JOIN bidders b ON b.id = p.bidder_id
-      WHERE p.id = ?`
-);
-const stmtGetAuctionShortName = db.prepare(
-    'SELECT short_name FROM auctions WHERE id = ?'
-);
+let stmtGetItemAuditInfo;
+let stmtGetBidderAuctionId;
+let stmtGetPaymentAuctionId;
+let stmtGetAuctionShortName;
+let lastConnectionId = null;
+
+function prepareStatements() {
+    stmtGetItemAuditInfo = db.prepare(
+        `SELECT i.auction_id, i.description, a.short_name
+           FROM items i
+           LEFT JOIN auctions a ON a.id = i.auction_id
+          WHERE i.id = ?`
+    );
+    stmtGetBidderAuctionId = db.prepare(
+        'SELECT auction_id FROM bidders WHERE id = ?'
+    );
+    stmtGetPaymentAuctionId = db.prepare(
+        `SELECT b.auction_id
+           FROM payments p
+           JOIN bidders b ON b.id = p.bidder_id
+          WHERE p.id = ?`
+    );
+    stmtGetAuctionShortName = db.prepare(
+        'SELECT short_name FROM auctions WHERE id = ?'
+    );
+    lastConnectionId = typeof db.getConnectionId === 'function' ? db.getConnectionId() : lastConnectionId;
+}
+
+function ensureStatements() {
+    if (!stmtGetItemAuditInfo) {
+        prepareStatements();
+        return;
+    }
+    if (typeof db.getConnectionId === 'function') {
+        const currentId = db.getConnectionId();
+        if (currentId !== lastConnectionId) {
+            prepareStatements();
+        }
+    }
+}
 
 //--------------------------------------------------------------------------
 // Helper to record audit events
 //--------------------------------------------------------------------------
 function audit(user, action, type, id, details = {}) {
+    ensureStatements();
     if (!auditTypes.includes(type)) {
         log(logLevels.WARN, `Audit log: unknown type '${type}'`);
         

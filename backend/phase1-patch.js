@@ -10,9 +10,7 @@
 
 const express = require('express');
 const db       = require('./db');
-const checkAuctionState = require('./middleware/checkAuctionState')(
-    db, { ttlSeconds: 2 }   
- );
+const { checkAuctionState } = require('./middleware/checkAuctionState');
 const { authenticateRole } = require('./middleware/authenticateRole');
 const { CASH_ENABLED, MANUAL_CARD_ENABLED, PAYPAL_ENABLED, SUMUP_WEB_ENABLED, SUMUP_CARD_PRESENT_ENABLED, CURRENCY, SUMUP_CALLBACK_SUCCESS, SUMUP_RETURN_URL } = require('./config');
 
@@ -20,7 +18,8 @@ const { logLevels, logFromRequest, log } = require('./logger');
 const { json } = require('body-parser');
 const { sanitiseText } = require('./middleware/sanitiseText');
 const { audit, recomputeBalanceAndAudit } = require('./middleware/audit');
-
+const bcrypt = require('bcryptjs');
+const { block } = require('sharp');
 
 // Prepare payment methods object - this is static at runtime
 
@@ -72,7 +71,7 @@ module.exports = function phase1Patch (app) {
     if (!Number.isInteger(id) || id <= 0) {
       return res.status(400).json({ error: 'auction_id required' });
     }
-  
+  try {
     // sold lots
     const sold = db.all(`
       SELECT i.item_number AS lot,
@@ -81,7 +80,8 @@ module.exports = function phase1Patch (app) {
              i.hammer_price  AS price,
              i.ROWID         AS rowid,
              i.test_item,
-             i.test_bid
+             i.test_bid,
+             i.photo
         FROM items i
         LEFT JOIN bidders b ON b.id = i.winning_bidder_id
        WHERE i.auction_id = ? AND i.hammer_price IS NOT NULL
@@ -92,6 +92,7 @@ module.exports = function phase1Patch (app) {
       ? db.all(`
           SELECT i.item_number AS lot,
                  i.description,
+                 i.photo,
                  NULL            AS paddle,
                  NULL            AS price,
                  i.ROWID         AS rowid,
@@ -102,6 +103,10 @@ module.exports = function phase1Patch (app) {
       : [];
   
     res.json([...sold, ...unsold]);          // sold first, unsold after
+  } catch (error) {
+    logFromRequest(req, logLevels.ERROR, `Failed to fetch live feed for auction ${id}: ${error.message}`);
+    res.status(500).json({ error: `Failed to fetch live feed for auction ${id}: ${error.message}` });
+  }
   });
   
 
@@ -149,11 +154,30 @@ module.exports = function phase1Patch (app) {
   //--------------------------------------------------------------------------
   // API to fetch the enabled payment methods
   //--------------------------------------------------------------------------
-  settlement.get('/payment-methods', authenticateRole(['cashier','maintenance']), (req, res) => {
-  logFromRequest(req, logLevels.DEBUG, `Payment methods requested`);
-    res.json(paymentMethods);
-  });
+  settlement.get('/payment-methods', authenticateRole(['cashier', 'maintenance']), (req, res) => {
+    logFromRequest(req, logLevels.DEBUG, `Payment methods requested`);
+    try {
+      const rows = db.prepare(`SELECT password FROM passwords WHERE role = 'cashier'`).get();
+      const pw = `c1234`; // default password
 
+      bcrypt.compare( pw, rows.password, (bErr, match) => {
+        if (bErr) { throw error; }
+        if (match)
+       {
+        logFromRequest(req, logLevels.WARN, `Cashier account has default or no password - disabling SumUp payment methods`);
+        const blockedFlag = 1;
+        res.json({paymentMethods, blockedFlag});
+      }
+            else {
+        res.json({paymentMethods});
+      }
+    }      ); 
+
+    } catch (error) {
+      logFromRequest(req, logLevels.ERROR, `Failed to fetch payment methods: ${error.message}`);
+      res.status(500).json({ error: `Failed to fetch payment methods: ${error.message}` });
+    }
+  });
   //--------------------------------------------------------------------------
   // Settlement (record paymeny) for non-hosted payments
   //--------------------------------------------------------------------------
@@ -247,7 +271,7 @@ settlement.post('/payment/:payid/reverse', authenticateRole(['cashier', 'admin']
     const extraNote = sanitiseText(body.note, 255);
 
     if (!reason) {
-      return res.status(400).json({ error: 'reason_required' });
+      return res.status(400).json({ error: 'Reason Required' });
     }
 
     const getOriginal = db.prepare(`
@@ -438,7 +462,7 @@ if (info.changes === 0) {
 }
 
 //    db.run(`UPDATE items SET winning_bidder_id = ?, hammer_price = ? WHERE id = ?`, [bidder.id, price, itemId]);
-    audit(req.user.role, 'finalize', 'item', itemId, { bidder: paddle, price });
+    audit(req.user.role, 'finalize', 'item', itemId, { paddle_no: paddle, price });
     logFromRequest(req, logLevels.INFO, `Bid recorded for auction ${auctionId}, bidder ${paddle}, item ${itemId}, price ${price}`);
 
 
@@ -457,8 +481,7 @@ if (info.changes === 0) {
     // flip to settlement
     db.run(`UPDATE auctions SET status = 'settlement' WHERE id = ?`, [auctionId]);
 
-    // clear the auction state cache
-    checkAuctionState.auctionStateCache.del(auctionId);
+
 
     // audit entry for traceability
     audit(req.user.role, 'auto_settlement', 'auction', auctionId, {
@@ -549,7 +572,7 @@ if (!auctionId || !id) return res.status(400).json({ error: 'item # and auction_
    if (!bidder) return res.status(400).json({ error: 'Bidder not found for this auction' });
 
   const lots = db.all(`
-      SELECT item_number, description, hammer_price, test_item, test_bid
+      SELECT item_number, description, hammer_price, test_item, test_bid, photo
         FROM items
        WHERE winning_bidder_id = ? AND auction_id = ?
        ORDER BY item_number`, [id, auctionId]);

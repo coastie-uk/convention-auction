@@ -134,6 +134,13 @@ try {
   const LOGIN_LOCKOUT_AFTER = reqNum(json, 'LOGIN_LOCKOUT_AFTER', 1, 1000);
   const LOGIN_LOCKOUT = reqNum(json, 'LOGIN_LOCKOUT', 1, 86400); // in seconds
   const SERVICE_NAME = reqStr(json, 'SERVICE_NAME', 1, 100); // e.g., "Auction_Backend"
+  const ALLOWED_ORIGINS = Array.isArray(json.ALLOWED_ORIGINS)
+    ? json.ALLOWED_ORIGINS
+        .filter((v) => typeof v === 'string')
+        .map((v) => v.trim())
+        .filter((v) => v !== '')
+    : [];
+  const ENABLE_CORS = Boolean(json.ENABLE_CORS);
   cfg = {
     // secret (env)
     SECRET_KEY,
@@ -162,6 +169,8 @@ try {
     LOGIN_LOCKOUT_AFTER,
     LOGIN_LOCKOUT,
     SERVICE_NAME,
+    ALLOWED_ORIGINS,
+    ENABLE_CORS,
 
   // SumUp – web (hosted payments)
     SUMUP_WEB_ENABLED,

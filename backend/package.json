@@ -1,7 +1,7 @@
 {
-    "name": "charity-auction-backend",
-    "version": "1.1.0-dev-007/sumup01",
-    "description": "Backend for Charity Auction Submission Management",
+    "name": "convention-auction-backend",
+    "version": "2.0.0-RC1",
+    "description": "Backend for Convention Auction Submission Management",
     "main": "backend.js",
     "scripts": {
         "start": "node backend.js",
