@@ -12,7 +12,7 @@ const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 const baseUrl = (process.env.BASE_URL || `http://localhost:${config.PORT}`).replace(/\/$/, "");
 const adminPassword = process.env.ADMIN_PASSWORD || "a1234";
 const maintenancePassword = process.env.MAINTENANCE_PASSWORD || "m1234";
-const cashierPassword = process.env.CASHIER_PASSWORD || "c12345";
+const cashierPassword = process.env.CASHIER_PASSWORD || "c1234";
 const logFilePath = process.env.LOG_FILE || path.join(__dirname, "backend-tests.log");
 
 const framework = initFramework({
