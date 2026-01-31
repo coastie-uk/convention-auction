@@ -268,7 +268,7 @@
             }
 
             function togglePause() {
-                console.log("toggle")
+                
                 if (slideshowRunning) {
                     if (paused) {
                         resumeSlideshow();
@@ -471,7 +471,7 @@
 
                         // const shortName = auctionInput.value.trim();
 
-                        const id = await validateAuctionShortName(auctionInput.value.trim());
+                        const id = await validateAuctionShortName(auctionInput.value.trim(), slideshowToken);
                         auctionId = id;
 
 
@@ -521,19 +521,20 @@
                 }
             }
 
-            // TODO: This needs fixing as validate-auction is a public endpoint and only returns public_id and not id. Consider building a new endpoint for this. May be better to call list auctions
-            async function validateAuctionShortName(shortName) {
-                console.log("validate called");
+            async function validateAuctionShortName(shortName, token) {
+                
                 if (!shortName) throw new Error("Auction name required");
 
                 const res = await fetch(`${API}/validate-auction`, {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: { "Content-Type": "application/json",
+                             Authorization: token
+                    },
                     body: JSON.stringify({ short_name: shortName })
                 });
 
                 const data = await res.json();
-                //    console.log(data);
+                
                 if (res.ok && data.public_id) {
                     localStorage.setItem("slideshowAuctionId", data.public_id);
                     localStorage.setItem("slideshowFullName", data.full_name);

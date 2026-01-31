@@ -718,19 +718,41 @@ router.post("/change-password", (req, res) => {
 router.post("/restart", (req, res) => {
   res.json({ message: "Restarting server. Check server log panel for status" });
   logFromRequest(req, logLevels.INFO, `Server restart requested`);
+
   setTimeout(() => {
+
     exec(`pm2 restart ${SERVICE_NAME}`, (err) => {
       if (!err) return;
-      exec(`systemctl restart ${SERVICE_NAME}`, (serviceErr) => {
-        if (!serviceErr) return;
-        exec(`systemctl --user restart ${SERVICE_NAME}`, (userServiceErr) => {
-          if (userServiceErr) {
-            logFromRequest(req, logLevels.ERROR, `Restart failed: ${userServiceErr.message}`);
+    })
+  }, 1000);
 
-          }
-        });
+  setTimeout(() => {
+
+
+    const attempts = [
+      { label: "systemctl", cmd: `systemctl restart ${SERVICE_NAME}` },
+      { label: "systemctl --user", cmd: `systemctl --user restart ${SERVICE_NAME}` },
+      { label: "sudo systemctl", cmd: `sudo systemctl restart ${SERVICE_NAME}` },
+      { label: "service", cmd: `service ${SERVICE_NAME} restart` },
+    ];
+    const errors = [];
+    const runAttempt = (index) => {
+      if (index >= attempts.length) {
+        if (errors.length > 0) {
+          const details = errors.map((e) => `${e.label}: ${e.error}`).join(" | ");
+          logFromRequest(req, logLevels.ERROR, `All restart attempts failed. ${details}`);
+        }
+        return;
+      }
+      const attempt = attempts[index];
+      exec(attempt.cmd, (err, _stdout, stderr) => {
+        if (!err) return;
+        const errorText = (stderr || err.message || "unknown error").trim();
+        errors.push({ label: attempt.label, error: errorText });
+        runAttempt(index + 1);
       });
-    });
+    };
+    runAttempt(0);
   }, 1000);
 });
 

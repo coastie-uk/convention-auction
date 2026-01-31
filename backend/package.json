@@ -1,6 +1,6 @@
 {
     "name": "convention-auction-backend",
-    "version": "2.0.0-RC1",
+    "version": "2.0.0-RC2",
     "description": "Backend for Convention Auction Submission Management",
     "main": "backend.js",
     "scripts": {

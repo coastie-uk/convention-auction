@@ -798,7 +798,18 @@ addTest("B-060","POST /validate-auction failure unknown short_name", async () =>
   await expectStatus(res, 400);
 });
 
+addTest("B-060b","POST /validate-auction failure bad auth", async () => {
+  const { res } = await fetchJson(`${baseUrl}/validate-auction`, {
+    method: "POST",
+    headers: authHeaders("blah", { "Content-Type": "application/json" }),
+    body: JSON.stringify({ short_name: testData.auctionShortName })
+  });
+  await expectStatus(res, 403);
+});
+  
+
 addTest("B-061","POST /validate-auction failure empty short_name", async () => {
+
   const { res } = await fetchJson(`${baseUrl}/validate-auction`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -819,6 +830,14 @@ addTest("B-061a","POST /validate-auction failure short name OK but auction not i
   await expectStatus(res, 400);
 });
 
+addTest("B-061b","POST /validate-auction pass auth override", async () => {
+  const { res } = await fetchJson(`${baseUrl}/validate-auction`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ short_name: testData.auctionShortName })
+  });
+  await expectStatus(res, 200);
+});
 
 
 

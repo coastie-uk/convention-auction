@@ -23,7 +23,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const liveFeedButton = document.getElementById("livefeed");
     const publicButton = document.getElementById("public");
     const selectAuctionState = document.getElementById('auctionState');
-
+    const saveEditButton = document.getElementById("save-changes");
+    const saveNewButton = document.getElementById("save-new");
     const statusOptions = ["setup", "locked", "live", "settlement", "archived"];
 
     let currentEditId = null;
@@ -50,7 +51,7 @@ document.addEventListener("DOMContentLoaded", function () {
     // Check if admin is already authenticated
     async function checkToken() {
         const token = localStorage.getItem("token");
-        //   console.log(token);
+
         if (token) {
             const response = await fetch(`${API}/validate`, {
                 method: "POST",
@@ -131,7 +132,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const selectedAuction = auctions.find(a => a.id === selectedAuctionId);
         selectedAuctionCanChangeState = selectedAuction?.admin_can_change_state;
         const currentStatus = selectedAuction?.status;
-        console.log(selectedAuctionCanChangeState, currentStatus);
+   
 
         const select = document.getElementById("auctionState");
         select.innerHTML = statusOptions.map(opt =>
@@ -399,7 +400,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
         } catch (error) {
-            console.error("Error fetching items:", error);
             showMessage("Error fetching items: " + error.message, "error");
         }
 
@@ -419,10 +419,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
                 if (!targetAuctionId || isNaN(targetAuctionId)) return;
-                console.log(`Moving item ${currentEditId} to auction ${targetAuctionId}`);
-                // const formData = new FormData();
-                // formData.append("id", currentEditId);
-                // formData.append("target_auction_id", targetAuctionId);
+
 
                 try {
                     const response = await fetch(`${API}/auctions/${auctionId}/items/${currentEditId}/move-auction/${targetAuctionId}`, {
@@ -611,7 +608,6 @@ document.addEventListener("DOMContentLoaded", function () {
                 adminSection.style.display = "block";
             })
             .catch(error => {
-                console.error("Error adding item:", error);
                 showMessage("Error adding item: " + error, "error");
             })
     });
@@ -666,7 +662,6 @@ document.addEventListener("DOMContentLoaded", function () {
             a.remove();
             window.URL.revokeObjectURL(url);
         } catch (err) {
-            console.error("CSV export error:", err);
             showMessage("Failed to export CSV", "error");
         }
     });
@@ -705,7 +700,6 @@ document.addEventListener("DOMContentLoaded", function () {
             a.remove();
             window.URL.revokeObjectURL(url);
         } catch (err) {
-            console.error("Slide export error:", err);
             showMessage(`Failed to generate slides: ${err}`, "error");
         }
     });
@@ -743,7 +737,6 @@ document.addEventListener("DOMContentLoaded", function () {
             a.remove();
             window.URL.revokeObjectURL(url);
         } catch (err) {
-            console.error("Card export error:", err);
             showMessage(`Failed to generate cards: ${err}`, "error");
         }
     });
@@ -843,7 +836,6 @@ document.addEventListener("DOMContentLoaded", function () {
                 adminSection.style.display = "block";
             })
             .catch(error => {
-                console.error("Error updating item:", error);
                 showMessage("Error updating item: " + error, "error");
             })
     });
@@ -874,7 +866,6 @@ document.addEventListener("DOMContentLoaded", function () {
                     adminSection.style.display = "block";
                 })
                 .catch(error => {
-                    console.error("Error deleting item:", error);
                     showMessage("Error deleting item: " + error, "error");
                 })
 
@@ -914,7 +905,6 @@ document.addEventListener("DOMContentLoaded", function () {
                 modifiedImages[currentEditId] = now;
             })
             .catch(err => {
-                console.error("Rotation error:", err);
                 showMessage("Failed to rotate image", "error");
             });
     }
@@ -1057,8 +1047,7 @@ document.addEventListener("DOMContentLoaded", function () {
             }
 
         } catch (e) {
-            console.error('Change state error', e);
-            alert('Network error while changing auction state.');
+            showMessage("Network error while changing auction state.", "error");
         }
     });
     // Global keydown listener for useful keyboardshortcuts
@@ -1071,14 +1060,23 @@ document.addEventListener("DOMContentLoaded", function () {
             e.preventDefault();
             cancelAddButton.click();
         }
-        else if (e.key === 'd' && editSection.style.display === 'block') {
+        else if (e.key === 'd' && e.ctrlKey && editSection.style.display === 'block') {
             e.preventDefault();
             deleteButton.click();
+        }
+        else if (e.key === 's' && e.ctrlKey && editSection.style.display === 'block') {
+            e.preventDefault();
+            saveEditButton.click();
         }
         else if (e.key === 'Escape' || e.key === `Enter` && document.getElementById("history-modal").style.display === 'flex') {
             e.preventDefault();
             closeHistoryModal();
         }
+        else if (e.key === 's' && e.ctrlKey && addSection.style.display === 'block') {
+            e.preventDefault();
+            saveNewButton.click();
+        }
+
  
     });
 

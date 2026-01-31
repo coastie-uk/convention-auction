@@ -5,7 +5,7 @@
  * @license     GPL3
  */
 
-const paymentProcessorVer = 'SumUp 1.0.1(2026-1-10)';
+const paymentProcessorVer = 'SumUp 1.1.0(2026-01-24)';
 
 const express = require('express');
 const crypto = require('node:crypto');
@@ -127,7 +127,7 @@ if (channel !== 'hosted' && channel !== 'app') {
     res.status(201).json(payload);
   } catch (err) {
     logFromRequest(req, logLevels.ERROR, `intent_create_error ${err.message}`);
-    res.status(500).json({ error: 'internal_error' });
+    res.status(500).json({ error: 'Error creating payment' });
   }
 });
 
@@ -545,7 +545,15 @@ async function createHostedCheckout({ amount_minor, currency, checkout_reference
     body: JSON.stringify(body)
   });
   const data = await res.json();
-  if (!data?.hosted_checkout_url || !data?.id) throw new Error('Invalid SumUp checkout response');
+  if (!data?.hosted_checkout_url || !data?.id) {
+    log(
+      "Payment",
+      logLevels.ERROR,
+      `SumUp checkout response error: ${JSON.stringify(data)}`
+    );
+
+    throw new Error('Invalid SumUp checkout response');
+  }
   return { url: data.hosted_checkout_url, checkout_id: data.id };
 }
 

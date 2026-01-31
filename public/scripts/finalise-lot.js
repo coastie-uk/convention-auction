@@ -46,7 +46,7 @@ const API = "/api"
           window.currentAuctionStatus = auctionStatus;   // ← expose globally
 
         } catch (err) {
-          console.warn('Auction status check failed', err);
+
           auctionStatus = 'live';
         }
       }
@@ -59,7 +59,7 @@ const API = "/api"
     if (hideFinaliseStates.includes(auctionStatus)) return
 
     TABLE_BODY.querySelectorAll('tr').forEach(tr => {
-  //      console.log(tr.dataset);
+
       const id      = Number(tr.dataset.itemId);
       const item_no = Number(tr.dataset.item_number);
       const description = tr.dataset.description;
@@ -309,7 +309,7 @@ window.addEventListener("load", () => {
          initFinalise();
     })
     .catch(err => {
-        console.warn("Login required:", err.message);
+
         localStorage.removeItem("token");
         window.location.href = "/admin"; // or logout()
     });

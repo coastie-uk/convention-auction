@@ -595,8 +595,8 @@ try {
 isRendering = false;
 }
 
-  // Attached event listener for auction status dropdowns
-  document.getElementById("auction-table-body").addEventListener("change", async (e) => {
+  // Attached event handler for auction status dropdowns
+  document.getElementById("auction-table-body").onchange = async (e) => {
 
     if (isRendering) return; // Stop the listener while we render the table
     if (e.target.classList.contains("status-select")) {
@@ -658,7 +658,7 @@ isRendering = false;
     }
 
 
-  });
+  };
 
 
   // populate the test data dropdown

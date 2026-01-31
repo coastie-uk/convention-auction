@@ -65,7 +65,7 @@ async function refreshPaymentButtons() {
   const buttons = document.querySelectorAll('#payButtons button[data-method]');
 
   if (!buttons.length) {
-    console.warn('[payments] No payment buttons found under #payButtons');
+
     return;
   }
 
@@ -73,7 +73,6 @@ async function refreshPaymentButtons() {
     const res = await fetch(`${API_ROOT}/payment-methods`, { headers: { Authorization: token } });
 
     if (!res.ok) {
-      console.error('[payments] Failed to fetch payment methods:', res.status, res.statusText);
       // Fail-safe: disable all buttons if we can’t confirm what’s allowed
       buttons.forEach(btn => {
         btn.disabled = true;
@@ -89,7 +88,6 @@ async function refreshPaymentButtons() {
       : data;
 
     if (!methods || typeof methods !== 'object') {
-      console.error('[payments] Unexpected payload for payment methods:', data);
       buttons.forEach(btn => {
         btn.disabled = true;
         btn.classList.add('disabled');
@@ -142,9 +140,8 @@ buttons.forEach(btn => {
 });
 
 
-    console.info('[payments] Payment buttons updated from backend config:', methods);
   } catch (err) {
-    console.error('[payments] Error while loading payment methods:', err);
+    showMessage(`[payments] Error while loading payment methods: ${err}`, "error");
     // Conservative: disable everything if something goes wrong
     const buttons = document.querySelectorAll('#payButtons button[data-method]');
     buttons.forEach(btn => {
@@ -206,7 +203,7 @@ buttons.forEach(btn => {
 document.getElementById('payButtons').classList.remove('disabled');
 document.querySelectorAll('#payButtons button').forEach(btn => btn.disabled = false);
 document.querySelectorAll('#delPay button').forEach(btn => btn.disabled = false);
-// console.log("buttons enabled");
+
 
   } else {
   
@@ -316,87 +313,17 @@ updateTotals();
      window.open(url, '_blank', 'noopener');
 
 
-      if (typeof showMessage === 'function') {
+  
         showMessage(
           'SumUp payment started. Complete the card payment in the SumUp app, then refresh to see the updated balance.',
           'info'
         );
-      } else {
-        console.log('SumUp payment started for bidder', selBidder.id);
-      }
 
     } catch (err) {
-      if (typeof showMessage === 'function') {
+
         showMessage('SumUp error: ' + err.message, 'error');
-      } else {
-        alert('SumUp error: ' + err.message);
-      }
     }
   }
-
-// async function makePaymentRequest(amt,note) {
-// // TODO remove currency as this is configured on the backend
-// const currency = 'GBP';
-// const method = 'sumup-app';
-// const auctionId = AUCTION_ID;
-// const bidderId = selBidder.id
-
-//   // Basic front-end validation to fail fast
-//   if (!auctionId || !bidderId) {
-//     throw new Error('auctionId and bidderId are required to create a payment request');
-//   }
-
-//   const numericAmount = Number(amt);
-//   if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-//     throw new Error(`Invalid amount "${amt}" for payment request`);
-//   }
-
-//   const payload = {
-//     auction_id: auctionId,
-//     bidder_id: bidderId,
-//     amount: numericAmount,
-//     currency,
-//     method,
-//     note: note || null
-//   };
-
-//   let response;
-//   try {
-//     response = await fetch(`${API}/payments/payment-requests`, {
-//       method: 'POST',
-//         headers: {
-//           'Content-Type': 'application/json',
-//           Authorization: token   
-//         },
-//       body: JSON.stringify(payload)
-//     });
-//   } catch (err) {
-//     console.error('Network error creating payment request', err);
-//     throw new Error('Network error while creating payment request');
-//   }
-
-//   if (!response.ok) {
-//     let msg = `Server error (${response.status})`;
-//     try {
-//       const errBody = await response.json();
-//       if (errBody && errBody.error) {
-//         msg = errBody.error;
-//       }
-//     } catch {
-//       // ignore JSON parse errors, keep default message
-//     }
-//     console.warn('Backend rejected payment request:', msg);
-//     throw new Error(`Failed to create payment request: ${msg}`);
-//   }
-
-//   const data = await response.json();
-//   if (!data || !data.payment_request) {
-//     console.error('Unexpected backend payload for payment request', data);
-//     throw new Error('Backend returned an unexpected response when creating payment request');
-//   }
-
-//   return data.payment_request;
-// }
 
 
 function openRefundModal(id){

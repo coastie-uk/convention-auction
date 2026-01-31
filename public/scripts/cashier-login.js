@@ -6,7 +6,7 @@
 const API = "/api"                                 
     const REFRESH_MS   = 10000;           
   
-    const log = (...a) => console.debug("[cashier]", ...a);
+
   
     // ---------- DOM shortcuts --------------------------------------------------
     const $ = (id) => document.getElementById(id);
@@ -105,7 +105,7 @@ function loadLastView() {
       frame.height = "900";           // or flex-auto with height calc
 
       frame.style.border = "none";
-      frame.onload = () => log("Viewport loaded", { path, auctionId, status });
+
       els.viewport.appendChild(frame);
     }
   
@@ -147,33 +147,13 @@ function loadLastView() {
         ]);
   
         populateSelect(els.liveSel, live);
-        log("Auctions refreshed", { live: live.length
-          
-         });
+
   
     //    autoSwitchIfNeeded(live, settlement);
       } catch (e) {
-        console.error(e);
         showError("Could not refresh auctions");
       }
     }
-  
-    // ---------- Intelligent hand-off ------------------------------------------
-    // 
-    // function autoSwitchIfNeeded(liveAuctions, settlementAuctions) {
-    //   if (currentScreen !== "live" || !currentAuctionId) return; // nothing to do
-  
-    //   const stillLive = liveAuctions.some(a => a.id === Number(currentAuctionId));
-    //   if (stillLive) return;                                     // stay put
-  
-    //   const nowSettlement = settlementAuctions.some(a => a.id === Number(currentAuctionId));
-    //   if (nowSettlement) {
-    //     showMessage(`Auction ${currentAuctionId} moved from live → settlement; switching view`, "info");
-
-    //     log(`Auction ${currentAuctionId} moved from live → settlement; switching`);
-    //     loadIntoViewport("/settlement.html", currentAuctionId);
-    //   }
-    // }
   
 
     
@@ -213,7 +193,6 @@ function loadLastView() {
         localStorage.setItem("currencySymbol", currencySymbol);
         startDashboard();
       } catch (err) {
-        console.error(err);
         showError(err.message || "Unexpected error");
       }
     }

@@ -1170,10 +1170,12 @@ app.get('/auctions/:publicId/slideshow-items', authenticateRole("slideshow"), ch
 // POST /validate-auction
 // API to check whether the publically entered auction short name exists and is active
 // This is a public endpoint and does not expose auction IDs
+// It also accepts an auth token to allow bypass of the state check - This is needed for the slideshow
 //--------------------------------------------------------------------------
 
 app.post("/validate-auction", async (req, res) => {
     const { short_name } = req.body;
+    const auth = req.header(`Authorization`);
     if (!short_name || typeof short_name !== 'string'|| short_name.trim() === ''|| short_name.length > 64) {
         logFromRequest(req, logLevels.ERROR, `No or bad auction name received`);
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -1181,6 +1183,17 @@ app.post("/validate-auction", async (req, res) => {
     }
     const sanitised_short_name = sanitiseText(short_name, 64);
     logFromRequest(req, logLevels.DEBUG, `Auction name received: ${short_name}`);
+
+    let is_admin = false;
+    if (auth) {
+        try {
+            jwt.verify(auth, SECRET_KEY);
+            is_admin = true;
+            logFromRequest(req, logLevels.DEBUG, `Validate admin bypass accepted`);
+        } catch (err) {
+            return res.status(403).json({ error: "Not authorised" });
+        }
+    }
 
     try {
 
@@ -1196,13 +1209,14 @@ app.post("/validate-auction", async (req, res) => {
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 return res.status(400).json({ valid: false, error: "Auction name not found" });
             }
-
-            else if (row.status !== `setup`) {
+                // admin override to support slideshow function
+            else if (row.status !== `setup` && !is_admin) {
                 logFromRequest(req, logLevels.WARN, `Auction "${short_name}" not active (status: ${row.status})`);
                 return res.status(400).json({ valid: false, error: "This auction is not currently accepting submissions" });
             }
 
-            logFromRequest(req, logLevels.INFO, `Auction "${short_name}" exists and accepting submissions`);
+            if (!is_admin) logFromRequest(req, logLevels.INFO, `Auction "${short_name}" exists and accepting submissions`);
+            if (is_admin) logFromRequest(req, logLevels.INFO, `Auction "${short_name}" exists - state check ignored as valid auth supplied`);
 
             res.json({ valid: true, short_name: row.short_name, full_name: row.full_name, logo: row.logo, public_id: row.public_id });
         }
