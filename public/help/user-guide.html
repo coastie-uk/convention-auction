@@ -30,6 +30,26 @@ img.placeholder {
   padding: 10px;
 }
 
+img.screenshot-large {
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+}
+
+img.screenshot-small {
+  width: auto;
+  height: auto;
+  max-width: 620px;
+  /* max-height: 70vh; */
+  object-fit: contain;
+}
+
+@media (max-width: 640px) {
+  img.screenshot-small {
+    max-width: 100%;
+  }
+}
+
 
     body { font-family: Arial, sans-serif; max-width: 800px; margin: 2em auto; padding: 1em; line-height: 1.6; }
         h1 { color: #da931a; }
@@ -142,7 +162,7 @@ document.addEventListener("DOMContentLoaded", () => {
       <th>Locked</th>
       <th>Live</th>
       <th>Settlement</th>
-      <th>Archive</th>
+      <th>Archived</th>
     </tr>
   </thead>
   <tbody>
@@ -234,7 +254,7 @@ document.addEventListener("DOMContentLoaded", () => {
       <td class="tick-no">❌</td>
       <td class="tick-no">❌</td>
       <td class="tick-yes">✅</td>
-      <td class="tick-conditional">🟡 If bidder not paid</td>
+      <td class="tick-conditional">🟡 See text</td>
       <td class="tick-no">❌</td>
     </tr>
     <tr>
@@ -327,7 +347,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   <div class="section">
     <h2>Overview</h2>
-    <p>The Admin interface provides tools for managing auction items: submitting, editing, organizing, and exporting data for presentation and reporting.</p>
+    <p>The Admin interface provides tools for managing auction items: submitting, editing, organizing, recording bids, and exporting data for presentation and reporting.</p>
+    <img class="placeholder screenshot-large" src="/help/images/admin-overview.png" alt="Admin panel overview screenshot">
   </div>
 
   <div class="section">
@@ -335,46 +356,60 @@ document.addEventListener("DOMContentLoaded", () => {
 
     <h3>Auction Tools</h3>
     <ul>
-      <li><strong>Auction Selector:</strong> Choose which auction you're working in. The state is also shown</li>
+      <li><strong>Auction Selector:</strong> Choose which auction you're working in. The current state is also shown.</li>
+      <li><strong>State Changer:</strong> If enabled in Maintenance, admins can change the auction state from the dropdown.</li>
       <li><strong>Sorting Options:</strong> Sort the item list by item number, description, contributor, creator, bidder, or price, in ascending or descending order.</li>
-      <li><strong>Item counts and Value:</strong> Shows a live count of bids and the current total.</li>
+      <li><strong>Item counts and Value:</strong> Shows total raised plus a count of items with recorded bids.</li>
     </ul>
+    <img class="placeholder screenshot-small" src="/help/images/admin-auction-tools.png" alt="Admin auction tools screenshot">
 
     <h3>Item Management</h3>
-    <p>The controls available will depend on the auction state (and for moves, the state of the target auction)</p>
+    <p>The controls available will depend on the auction state (and for moves, the state of the target auction).</p>
     <ul>
       <li><strong>Create New Item:</strong> Opens the item form to enter a new submission with optional photo and notes.</li>
       <li><strong>Edit:</strong> Opens the edit form to modify the selected item.</li>
       <li><strong>Photo Tools:</strong> Rotate, crop, or replace an image.</li>
       <li><strong>Delete:</strong> Remove the item and its photos permanently.</li>
-      <li><strong>Move within auction:</strong> Move the item within the auction</li>
+      <li><strong>Move within auction:</strong> Move the item within the auction. It will be placed after the selected specific item.</li>
       <li><strong>Move to auction:</strong> Move the item to a different auction. The item will be placed at the end of the target auction</li>
-      <li><strong>Finalise:</strong> Record the bidder and hammer price for the item. When the bid is recorded, focus will automatically shift to the next un-finalised item in the table/li>
-      <li><strong>Undo bid:</strong> Undo a recorded bid.</li>
       <li><strong>History:</strong> Displays a detailed log of changes for a specific item, including timestamp, user, and action type.</li>
     </ul>
+    <img class="placeholder screenshot-small" src="/help/images/admin-edit.png" alt="Admin item management screenshot">
 
+    <h3>Bid controls</h3>
+      <img class="placeholder screenshot-small" src="/help/images/admin-bid-ctrl.png" alt="Admin bid management screenshot">
 
+        <p>These are shown when the auction is in live or settlement modes. Editing is disabled.</p>
+<ul>
+      <li><strong>Record Bid:</strong> Capture paddle number and hammer price for an item (available in live/settlement). Focus shifts automatically to the next un-finalised item.</li>
+      <li><strong>Undo bid:</strong> Retract a recorded bid. Note that a bid cannot be retracted if payments have been made and it would cause the bidder to be owed money. In this situation, create a refund first.</li>
+  </ul>
+  <img class="placeholder screenshot-small" src="/help/images/admin-bidding.png" alt="Admin bid management screenshot">
     <h3>Export Options</h3>
     <ul>
       <li><strong>Generate CSV Export:</strong> Download all items in spreadsheet format.</li>
       <li><strong>Generate Auction Slides:</strong> Create a PowerPoint deck with one slide per item, styled according to the current template configuration.</li>
       <li><strong>Generate Item Cards:</strong> Produces A6-sized slides/cards for printing and on-site use.</li>
     </ul>
+    <img class="placeholder screenshot-small" src="/help/images/admin-export.png" alt="Admin export options screenshot">
 
-    <h3>Navigation</h3>
+    <h3>Other Pages</h3>
     <ul>
       <li><strong>Public Form:</strong> Opens the public-facing item submission page.</li>
       <li><strong>Live Feed:</strong> Opens the auction live bid display.</li>
       <li><strong>Maintenance:</strong> Opens the maintenance panel (separate login required).</li>
       <li><strong>Cashier:</strong> Opens the cashier interface (separate login required).</li>
-      <li><strong>Slideshow:</strong> Opens the presentation slideshow mode (will end your current admin session).</li>
+      <li><strong>Slideshow:</strong> Opens the presentation slideshow mode</li>
     </ul>
+
+    <img class="placeholder screenshot-small" src="/help/images/admin-other-pg.png" alt="Admin other page screenshot">
+
 
     <h3>Session</h3>
     <ul>
       <li><strong>Logout:</strong> Ends your current admin session and returns you to the login screen.</li>
     </ul>
+ 
   </div>
 
   
@@ -383,8 +418,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   <div class="section">
     <h2>Overview</h2>
-    <p>This interface supports closing out payments after the auction. It shows what each bidder owes and tracks payments</p>
-  <p>Select an auction from the dropdown and then select to open Live View or Manage Payments</p>
+    <p>This interface supports closing out payments after the auction. It shows what each bidder owes, tracks payments, and supports refunds.</p>
+  <p>Select an auction from the dropdown and then choose Live View or Manage Payments.</p>
+    <img class="placeholder screenshot-large" src="/help/images/cashier-overview.png" alt="Cashier panel overview screenshot">
   </div>
 
   <div class="section">
@@ -396,28 +432,35 @@ document.addEventListener("DOMContentLoaded", () => {
       <li>Each row shows the paddle number and total amount due.</li>
       <li>Click a row to view details and process payments.</li>
       <li><strong>Green highlight</strong> indicates a bidder is fully settled.</li>
+      <li><strong>Payment Summary:</strong> Opens a quick breakdown of totals by payment method.</li>
       <li><strong>Download CSV:</strong> Exports bidder payment status summary.</li>
     </ul>
 
     <h3>Bidder Details (Right Panel)</h3>
     <ul>
-      <li><strong>Lots Won:</strong> Displays all winning bids and their prices.</li>
-      <li><strong>Payments:</strong> Shows recorded payment transactions.</li>
+      <li><strong>Lots Won:</strong> Displays all winning bids and their prices. Hover a lot title to preview the photo (if present).</li>
+      <li><strong>Payments:</strong> Shows recorded payment transactions. Use <strong>Refund</strong> to reverse a payment. Reason must be provided.</li>
       <li><strong>Totals:</strong> Calculates outstanding balance in real time.</li>
     </ul>
+    <img class="placeholder screenshot-small" src="/help/images/cashier-paid.png" alt="Cashier bidder details screenshot">
 
     <h3>Payment Buttons</h3>
     <ul>
-      <li>Options: <strong>Cash</strong>, <strong>Card (manual)</strong>, <strong>PayPal (manual)</strong></li>
+      <li>Options (as enabled by the server operator): <strong>Cash</strong>, <strong>Card (manual)</strong>, <strong>PayPal (manual)</strong>, <strong>SumUp (card reader)</strong>, <strong>SumUp (web)</strong></li>
       <li>Clicking a button opens a popup to enter amount and optional note.</li>
+      <li>Buttons are shown only for enabled payment methods.</li>
       <li>All payments are timestamped and listed immediately.</li>
+      <li>SumUp payments will open either the web checkout or SumUp app</li>
     </ul>
+    <img class="placeholder screenshot-small" src="/help/images/cashier-payment-buttons.png" alt="Cashier payment buttons screenshot">
+    <img class="placeholder screenshot-small" src="/help/images/cashier-summary.png" alt="Cashier summary screenshot">
   </div>
 
   <h2>Live Feed</h2>
   <p>
-    The Live Feed interface displays a real-time view of auction activity. It shows bidding outcomes as they are finalised
+    The Live Feed interface displays a real-time view of auction activity. It shows bidding outcomes as they are finalised. The intention is that this assists with the grouping of items by bidder before the end of the auction.
   </p>
+  <img class="placeholder screenshot-large" src="/help/images/live-feed-overview.png" alt="Live feed overview screenshot">
 
   <h3>Features</h3>
   <ul>
@@ -426,7 +469,9 @@ document.addEventListener("DOMContentLoaded", () => {
     <li><strong>Filter by Paddle:</strong> Enter a paddle number and press <strong>Go</strong> to view only that bidder’s wins.</li>
     <li><strong>Show Unsold:</strong> Toggle whether items with no recorded bid are shown in the list.</li>
     <li><strong>Live Updates:</strong> The page listens for changes without needing manual refreshes.</li>
+    <li>Hover a lot title to preview the photo (if present)</li>
   </ul>
+ 
 
 
   <h1>Slideshow</h1>
@@ -434,10 +479,12 @@ document.addEventListener("DOMContentLoaded", () => {
   <div class="section">
     <h2>Overview</h2>
     <p>This slideshow is designed for unattended display during the live auction. It cycles through item images with optional text overlays and supports remote updates from the admin panel.</p>
+    <img class="placeholder screenshot-large" src="/help/images/slideshow-view.png" alt="Slideshow overview screenshot">
   </div>
 
   <div class="section">
     <h2>Getting Started</h2>
+    <img class="placeholder screenshot-large" src="/help/images/slideshow-login.png" alt="Slideshow getting started screenshot">
     <ul>
       <li>On first load, you'll be prompted to enter the <strong>auction short name</strong> and <strong>admin password</strong>.</li>
       <li>Once validated, the system enters full-screen slideshow mode and logs out any existing elevated user sessions for security.</li>
@@ -457,6 +504,7 @@ document.addEventListener("DOMContentLoaded", () => {
   <div class="section">
     <h2>Configuration Panel</h2>
     <p>This overlay appears when triggered by keyboard or touch. It auto-hides after 10 seconds of inactivity.</p>
+    <img class="placeholder screenshot-small" src="/help/images/slideshow-controls.png" alt="Slideshow controls screenshot">
     <ul>
       <li><strong>Transition Time:</strong> Duration each slide is shown (in seconds)</li>
       <li><strong>Show Description:</strong> Toggle display of item description</li>
@@ -471,6 +519,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   <div class="section">
     <h2>How It Works</h2>
+    <img class="placeholder screenshot-large" src="/help/images/slideshow-how-it-works.png" alt="Slideshow how it works screenshot">
     <ul>
       <li>Items are loaded dynamically from the server, but only if a photo is present for the item.</li>
       <li>Items are shuffled (if enabled) and loop continuously. Once the queue is exhausted, it restarts.</li>
@@ -480,13 +529,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
  <h1>Maintenance Panel</h1>
 
-  <div class="section">
+ <div class="section">
     <h2>Overview</h2>
-    <p>This interface provides access to tools for managing auctions, data management, configuring export templates, and other tasks.</p>
+    <p>This interface provides access to tools for managing auctions, data management, configuring export templates, payments, and other tasks.</p>
+    <img class="placeholder screenshot-large" src="/help/images/maintenance-overview.png" alt="Maintenance panel overview screenshot">
   </div>
 
   <div class="section">
     <h2>Functional Areas</h2>
+
 
     <h3>Auction Management</h3>
     <ul>
@@ -496,18 +547,23 @@ document.addEventListener("DOMContentLoaded", () => {
         <ul>
           <li>Set auction state</li>
           <li>Allow admin to change auction state. If enabled, a state dropdown is provided on the admin interface </li>
-          <li>Reset - Remove all items from the auction. Only available in state "setup" or "archive"</li> 
-          <li>Delete - Only if empty. Deleting the last auction will delete the audit history and reset all counters in the database</li>, 
+          <li>Reset - Remove all items from the auction. Only available in state "setup" or "archived"</li> 
+          <li>Delete - Only if empty. Deleting the last auction will clear and reset all counters in the database.</li>
+          <li>Audit history cannot be cleared from the web interface. Use the server-management.js console tool</li>
         
           
         </ul></li>
     </ul>
+   
 
     <h3>Database</h3>
     <ul>
       <li><strong>Create Backup on Server:</strong> Makes a snapshot of the current database to a folder on the server.</li>
-      <li><strong>Restore Database:</strong> Upload a previously saved databse file.</li>
+      <li><strong>Restore Database:</strong> Upload a previously saved database file.</li>
+      <li><strong>Download Database File:</strong> Download the current database file.</li>
+      <li><strong>Download Database + Photos:</strong> Export a zipped archive of the database and all photos.</li>
     </ul>
+    <img class="placeholder screenshot-small" src="/help/images/maintenance-database.png" alt="Maintenance database screenshot">
 
     <h3>Import/Export</h3>
     <ul>
@@ -515,21 +571,23 @@ document.addEventListener("DOMContentLoaded", () => {
       <li><strong>Import CSV:</strong> Bulk import items using a CSV. Required column headers: <code>description</code>, <code>artist</code>, <code>contributor</code>, <code>notes</code>, and <code>auction_id</code>.</li>
       <li><strong>Download Database and Photos:</strong> Exports a zipped copy of the database and all photos.</li>
     </ul>
+    <img class="placeholder screenshot-small" src="/help/images/maintenance-import-export.png" alt="Maintenance import and export screenshot">
 
     <h3>Diagnostics</h3>
     <ul>
       <li><strong>Photo Storage Report:</strong> Shows number and total size of stored images.</li>
       <li><strong>Check for Invalid Items:</strong> Identifies broken item entries (e.g. missing auctions or photos).</li>
-      <li><strong>Delete Invalid Items:</strong> Permanently removes broken entries.</li>
       <li><strong>Clean Up Unused Photos:</strong> Finds and deletes orphaned photo files.</li>
-      <li><strong>Restart Server:</strong> Sends a soft restart command to the backend process. Requires that pm2 is used with the process name "auction"</li>
+      <li><strong>Restart Server:</strong> Sends a soft restart command to the backend process. Requires that the service name matches the SERVICE_NAME parameter in config.json. Note that this is unlikely to work where the backend is running as a service due to Linux security policy</li>
     </ul>
+    <img class="placeholder screenshot-small" src="/help/images/maintenance-diagnostics.png" alt="Maintenance diagnostics screenshot">
 
     <h3>Security</h3>
     <ul>
       <li><strong>Change Password:</strong> Update password for Admin, Cashier, or Maintenance roles </li>
-      <li>If the maintenance password is lost, it will need to be reset by running <code>node set-maint-pw.js</code> on the server</li>
+      <li>If the maintenance password is lost, it will need to be reset by running the <code>server-management.js</code> console tool on the server</li>
     </ul>
+    <img class="placeholder screenshot-small" src="/help/images/maintenance-security.png" alt="Maintenance security screenshot">
 
     <h3>Generate Test Data</h3>
     <ul>
@@ -537,32 +595,63 @@ document.addEventListener("DOMContentLoaded", () => {
       <li><strong>Generate Test Bids:</strong> Simulate activity by generating test bids and bidders.</li>
       <li><strong>Delete Test Bids:</strong> Clears all test bidding data.</li>
     </ul>
+    <img class="placeholder screenshot-small" src="/help/images/maintenance-generate-test-data.png" alt="Maintenance generate test data screenshot">
 
     <h3>PowerPoint Template Editor</h3>
     <ul>
       <li><strong>Edit Config:</strong> Select between <code>Slide Config</code> or <code>Card Config</code> to modify PowerPoint layout settings in JSON format.</li>
       <li><strong>Reset to Default:</strong> Revert selected config to factory settings.</li>
     </ul>
+    <img class="placeholder screenshot-small" src="/help/images/maintenance-pptx-template-editor.png" alt="Maintenance PowerPoint template editor screenshot">
 
     <h3>Image Manager</h3>
     <ul>
       <li><strong>Upload Images:</strong> Upload assets (e.g. logos or backgrounds) for use in PowerPoint and/or auction logos.</li>
       <li><strong>Delete:</strong> Remove previously uploaded image resources.</li>
     </ul>
+    <img class="placeholder screenshot-small" src="/help/images/maintenance-image-manager.png" alt="Maintenance image manager screenshot">
+
+    <h3>Payment Processing</h3>
+    <ul>
+      <li><strong>Payment Methods:</strong> View enabled/disabled payment methods and labels used by the cashier interface.</li>
+      <li><strong>Callback URL:</strong> Click to test connectivity to the payment callback endpoint.</li>
+    </ul>
+    <img class="placeholder screenshot-small" src="/help/images/maintenance-payment-processing.png" alt="Maintenance payment processing screenshot">
 
     <h3>Audit Log Viewer</h3>
     <ul>
       <li><strong>Fetch Audit Log:</strong> Loads audit history showing time, user, action, item details, and auction.</li>
-      <li><strong>Filter by Item ID:</strong> Narrow the log view to actions affecting a specific item. Note that this is a unique database internal item ID. </li>
+      <li><strong>Filter by ID:</strong> Narrow the log view to actions affecting a specific object. This is a database internal ID.</li>
+      <li><strong>Filter by Event Type:</strong> Limit results to item, bidder, payment, auction, or database events.</li>
       <li><strong>Download CSV:</strong> Export log data for offline review or archiving.</li>
     </ul>
+    <img class="placeholder screenshot-small" src="/help/images/maintenance-audit-log-viewer.png" alt="Maintenance audit log viewer screenshot">
 
     <h3>Server Logs</h3>
     <ul>
       <li><strong>View Logs:</strong> Show recent backend server output.</li>
       <li><strong>Auto-Refresh:</strong> Enable live updates every 5 seconds.</li>
     </ul>
+    <img class="placeholder screenshot-small" src="/help/images/maintenance-server-logs.png" alt="Maintenance server logs screenshot">
   </div>
+  <h1>Public Entry</h1>
+
+  <div class="section">
+    <h2>Overview</h2>
+    <p>This page is used for public (non-authenticated) adding of items. The auction can be selected automatically by appending the auction shortname to the URL
+      e.g. "?auction=test001". This allows easy use on QR codes.
+    </p>
+    <img class="placeholder screenshot-small" src="/help/images/public-submit.png" alt="Public page">
+    
+        <ul>
+      <li>If no auction is supplied, the user will be prompted to enter the auction short name</li>
+      <li>Item description and contributor are required as a minimum. Submission without a photo is allowed, but the "I don't have a photo" box must be clicked</li>
+      <li>Controls to both upload an existing photo and take one directly are provided</li>
+    </ul>
+      <img class="placeholder screenshot-small" src="/help/images/public-select.png" alt="Public page">
+
+  </div>
+
 
 </body>
 </html>
