@@ -45,9 +45,9 @@ Default passwords:
 
 | Role        | Pass  |
 |-------------|-------|
-| admin       | a1234 |
-| maintenance | m1234 |
-| cashier     | c1234 |
+| admin       | admin123 |
+| maintenance | maint123 |
+| cashier     | cashier123 |
 
 \[Maintenance\] Configure the auction template generator and item card generator (if needed). This uses the pptxgenjs library. Custom graphics can be added via the “manage resources” function.
 

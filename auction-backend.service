@@ -1,0 +1,48 @@
+[Unit]
+Description=Convention Auction Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=auction
+Group=auction
+WorkingDirectory=/srv/auction
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/auction/auction.env
+ExecStart=/usr/bin/node /srv/auction/backend.js
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+# Hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+PrivateMounts=yes
+RestrictNamespaces=yes
+
+
+# Allow writes only where needed
+ReadWritePaths=/var/lib/auction /var/log/auction
+ReadOnlyPaths=/srv/auction
+
+[Install]
+WantedBy=multi-user.target

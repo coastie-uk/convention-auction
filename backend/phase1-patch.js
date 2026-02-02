@@ -158,7 +158,7 @@ module.exports = function phase1Patch (app) {
     logFromRequest(req, logLevels.DEBUG, `Payment methods requested`);
     try {
       const rows = db.prepare(`SELECT password FROM passwords WHERE role = 'cashier'`).get();
-      const pw = `c1234`; // default password
+      const pw = `cashier123`; // default password
 
       bcrypt.compare( pw, rows.password, (bErr, match) => {
         if (bErr) { throw error; }

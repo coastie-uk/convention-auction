@@ -50,9 +50,9 @@ api.post('/payments/intents', authenticateRole("cashier"), checkAuctionState(['s
 try {
   const row = db.get(`SELECT password FROM passwords WHERE role = 'cashier'`);
   if (row) {
-    const isDefault = bcrypt.compareSync('c1234', row.password);
+    const isDefault = bcrypt.compareSync('cashier123', row.password);
     if (isDefault && (SUMUP_WEB_ENABLED || SUMUP_CARD_PRESENT_ENABLED)) {
-      log("Server", logLevels.WARN, `The cashier account is using the default password.SumUp payments cannot be processed until the cashier password is changed.`);
+      log("Server", logLevels.WARN, `The cashier account is using the default password with SumUp enabled. SumUp payments blocked.`);
       return res.status(403).json({ error: 'SumUp payments blocked due to default cashier password' });
     }
   } else {
@@ -363,7 +363,7 @@ if (!foreignTxId && !txCode && !failure.cause && !failure.message) {
     (function () {
       "use strict";
 
-      const AUTO_CLOSE_DELAY_MS = 5000;
+      const AUTO_CLOSE_DELAY_MS = 3000;
       const closeButton   = document.getElementById("closeButton");
       const fallbackMsg   = document.getElementById("fallback-msg");
 

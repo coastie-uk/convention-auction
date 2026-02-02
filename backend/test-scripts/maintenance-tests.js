@@ -10,7 +10,7 @@ const configPath = path.join(__dirname, "..", "config.json");
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 
 const baseUrl = (process.env.BASE_URL || `http://localhost:${config.PORT}`).replace(/\/$/, "");
-const maintenancePassword = process.env.MAINTENANCE_PASSWORD || "m1234";
+const maintenancePassword = process.env.MAINTENANCE_PASSWORD || "maint123";
 const allowRestart = process.env.ALLOW_RESTART === "true";
 const allowDeleteLastAuction = process.env.ALLOW_DELETE_LAST_AUCTION === "true";
 const logFilePath = process.env.LOG_FILE || path.join(__dirname, "maintenance-tests.log");

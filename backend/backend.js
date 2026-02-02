@@ -30,9 +30,6 @@ const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
 const {
     CONFIG_IMG_DIR,
     UPLOAD_DIR,
-    DB_PATH,
-    BACKUP_DIR,
-    MAX_UPLOADS,
     allowedExtensions,
     SECRET_KEY,
     PORT,
@@ -1490,7 +1487,6 @@ app.post("/auctions/update-status", authenticateRole(["admin", "maintenance"]), 
             if (err) return res.status(500).json({ error: err.message });
 
             logFromRequest(req, logLevels.INFO, `Updated status for auction ${auction_id} ${auction.short_name} to: ${normalizedStatus}`);
-// TODO fix auction state change audit entry
             audit(role, 'state change', 'auction', auction_id, { auction: auction_id, name: auction.short_name, new_state: normalizedStatus });
             // clear the auction state cache
        //     checkAuctionState.auctionStateCache.del(auction_id);

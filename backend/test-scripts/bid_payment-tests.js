@@ -10,9 +10,9 @@ const configPath = path.join(__dirname, "..", "config.json");
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 
 const baseUrl = (process.env.BASE_URL || `http://localhost:${config.PORT}`).replace(/\/$/, "");
-const adminPassword = process.env.ADMIN_PASSWORD || "a1234";
-const maintenancePassword = process.env.MAINTENANCE_PASSWORD || "m1234";
-const cashierPassword = process.env.CASHIER_PASSWORD || "c1234";
+const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
+const maintenancePassword = process.env.MAINTENANCE_PASSWORD || "maint123";
+const cashierPassword = process.env.CASHIER_PASSWORD || "cashier123";
 const logFilePath = process.env.LOG_FILE || path.join(__dirname, "bid_payment-tests.log");
 
 const framework = initFramework({
@@ -1172,7 +1172,7 @@ addTest("P-070","maintenance/set default cashier password", async () => {
     const { res: res2 } = await fetchJson(`${baseUrl}/maintenance/change-password`, {
     method: "POST",
     headers: authHeaders(tokens.maintenance, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ role: "cashier", newPassword: "c1234" })
+    body: JSON.stringify({ role: "cashier", newPassword: "admin123" })
   });
   sleep(1000); // wait for password change to propagate
   await expectStatus(res2, 200);

@@ -1,19 +1,33 @@
 **Deployment Guide**
 
-This guide explains how to deploy the Auction App backend and frontend using Node.js, Apache, PM2, and Let's Encrypt for free HTTPS certificates.
-If your installation requires different paths, remember to update the configuration accordingly and set the correct permissions.
+This guide explains how to deploy the Auction App backend and frontend using Node.js, Apache, PM2, and Let's Encrypt for free HTTPS certificates. It assumes an Ubuntu comamnd style (developed on Mint & Ubuntu).
+
+The default locations are:
+
+Backend:     /srv/auction/
+database:        /var/lib/auction
+Data:        /var/lib/auction
+    Uploaded images:        /resources
+    Auction item pictures:  /uploads
+    DB backups:             /backup
+    Generated outputs:      /output
+Secure env:  /etc/auction
+Logs:        /var/log/auction
+Frontend:    /var/www/auction-frontend
+
+If your installation requires different paths, remember to update config.json accordingly and adapt the instructions.
 
 ---
 
 ## **System Requirements**
 
-* Linux server (developed on Mint) 
-* Root/sudo access  
+* Linux server
+* Root/sudo access 
 * A registered domain name (e.g. `yourdomain.com`) pointing to your server's IP address
 
 ---
 
-##  **Install Node.js**
+## **Install Node.js**
 
 Install the latest supported LTS version (18.x recommended):
 
@@ -27,52 +41,173 @@ Verify:
 
 ---
 
+
+## Create a dedicated service user
+
+```
+sudo useradd --system --home /srv/auction --shell /usr/sbin/nologin auction
+```
+
+## Create directories
+
+```
+sudo mkdir -p /srv/auction /var/lib/auction /var/log/auction /etc/auction /var/www/auction-frontend
+
+# Data subfolders
+sudo mkdir -p /var/lib/auction/resources /var/lib/auction/backup /var/lib/auction/uploads /var/lib/auction/output
+
+```
+
+
+
+## Ownership & permissions:
+
+```
+sudo chown -R auction:auction /srv/auction /var/lib/auction /var/log/auction
+sudo chmod 750 /srv/auction /var/lib/auction /var/log/auction
+sudo chmod 750 /etc/auction
+```
+
 ## **Setup Your Project Directory and install dependancies**
 
-Clone or copy your project to the server:
+Clone or copy the repository to a convenient folder on the server
 
     git clone https://github.com/coastie-uk/convention-auction 
-    cd convention-auction/backend
+
+Copy the backend to the required folder
+
+    sudo rsync -a [path to the repo]/convention-auction/backend/ /srv/auction/
+
+Navigate to the folder:
+
+    cd /srv/auction/
 
 Install Node dependencies:
 
     npm install
 
----
+Set ownership of the backend files
 
-Open config.json and update the SECRET_KEY with a value of your choice
+    sudo chown -R auction:auction /srv/auction
 
-## **Setup PM2 to Run the Backend**
-PM2 is not required, but it provides a convenient method to manage the backend and also allows the maintenance GUI to restart the server.
 
-Install PM2 globally:
-
-    sudo npm install -g pm2
-
-Start and name your app:
-
-    pm2 start backend.js --name auction
-
-Save the PM2 process list:
-
-    pm2 save
-
-Enable startup on boot:
-
-    pm2 startup  
-\# Follow the printed instructions to enable startup
-
-To view console output:
-
-    pm2 logs auction  
-
-To remove a site:
-
-    pm2 stop auction  
-    pm2 delete auction  
-    pm2 save
 
 ---
+
+## Create the env file
+
+Copy auction.env.example to /etc/auction/auction.env and update the contents
+At minimum, you must set the SECRET_KEY and enable the required payment methods
+When done, set restrictive permissions (0640, root:auction)
+
+```
+# Quick way to generate a suitable SECRET_KEY value (or use your own)
+openssl rand -base64 48
+
+# Create auction.env and edit as required
+sudo cp auction.env.example /etc/auction/auction.env
+sudo nano /etc/auction/auction.env
+
+# Set permissions - IMPORTANT!
+sudo chown root:auction /etc/auction/auction.env
+sudo chmod 640 /etc/auction/auction.env
+```
+
+## **Configure backend config.json**
+
+`backend/config.json` contains the non-secret runtime settings for the backend. Secrets (like `SECRET_KEY`) must live in `/etc/auction/auction.env`, not in `config.json`. The backend validates the config on startup and will exit if required values are missing or out of range.
+
+The defaults should suffice for most use cases, but you may want to adjust based on your server configuration / capabilities.
+
+Below is a description of each setting:
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `PORT` | number | `3000` | Port for the HTTP server. Range: **1–65535**. |
+| `CONFIG_IMG_DIR` | text | `"/var/lib/auction/resources"` | Directory for config images/resources. Must be a non-empty string. |
+| `BACKUP_DIR` | text | `"/var/lib/auction/backup"` | Directory for DB backups. Must be a non-empty string. |
+| `UPLOAD_DIR` | text | `"/var/lib/auction/uploads"` | Directory for uploaded item images. Must be a non-empty string. |
+| `PPTX_CONFIG_DIR` | text | `"/var/lib/auction"` | Directory for PPTX config files. Must be a non-empty string. |
+| `OUTPUT_DIR` | text | `"/var/lib/auction/output"` | Directory for generated outputs. Must be a non-empty string. |
+| `DB_PATH` | text | `"/var/lib/auction"` | Directory where the database file lives. Must be a non-empty string. |
+| `DB_NAME` | text | `"auction.db"` | Database filename. Length **1–100** characters. |
+| `LOG_DIR` | text | `"/var/log/auction"` | Directory for log files. Must be a non-empty string. |
+| `LOG_NAME` | text | `"server.log"` | Log filename. Must be a non-empty string. |
+| `SAMPLE_DIR` | text | `"sample-assets"` | Directory for sample assets. Must be a non-empty string. |
+| `MAX_UPLOADS` | number | `100` | Max config images allowed. Range: **1–1000**. |
+| `allowedExtensions` | list | `[".jpg", ".jpeg", ".png"]` | Allowed upload file extensions. Each entry should be a non-empty string. |
+| `LOG_LEVEL` | text | `"INFO"` | Logging level (e.g., `DEBUG`, `INFO`, `WARN`, `ERROR`). Length **3–10** characters. |
+| `MAX_AUCTIONS` | number | `100` | Max auctions allowed in the system. Range: **1–100**. |
+| `MAX_ITEMS` | number | `2000` | Max items across auctions. Range: **1–10000**. |
+| `CURRENCY_SYMBOL` | text | `"£"` | Currency symbol for display. Length **1–3** characters. |
+| `PASSWORD_MIN_LENGTH` | number | `8` | Minimum password length. Range: **5–100**. |
+| `RATE_LIMIT_WINDOW` | number | `60` | Public item submisison rate limit window in seconds. Range: **1–86400**. |
+| `RATE_LIMIT_MAX` | number | `10` | Public item submisison max requests per rate limit window. Range: **1–1000**. |
+| `LOGIN_LOCKOUT_AFTER` | number | `8` | Failed login attempts before lockout. Range: **1–1000**. |
+| `LOGIN_LOCKOUT` | number | `600` | Lockout duration in seconds. Range: **1–86400**. |
+| `SERVICE_NAME` | text | `"auction-backend"` | Service name used in logs/process metadata. Length **1–100** characters. |
+| `ENABLE_CORS` | boolean | `false` | Enable CORS handling. |
+| `ALLOWED_ORIGINS` | list | `["localhost:3000", "example.com:3000"]` | Allowed origins when CORS is enabled. Each entry is trimmed; empty strings are ignored. |
+
+After editing `config.json`, restart the service to pick up changes:
+
+```bash
+sudo systemctl restart auction-backend
+```
+
+## **Start the server**
+
+From within /srv/auction/ confirm that the backend starts
+
+    node backend.js
+
+You should see a number of log entries similar to those shown below. Any errors should be investigated before proceeding. Most likely culprits are paths and permissions
+
+```
+[WARN] [unknown] [General] Database file not found; creating new database
+[WARN] [unknown] [General] Schema version missing or mismatched (db=missing, expected=2.3); Running DB setup
+[INFO] [unknown] [General] Database opened
+[INFO] [unknown] [General] ~~ Starting up Auction backend ~~
+[unknown] [Logger] Logging framework initialized. 
+[INFO] [unknown] [General] Backend version: 2.0.0, DB schema version: 2.3
+[INFO] [unknown] [General] Payment processor: SumUp
+[INFO] [unknown] [Logger] Log level set to INFO
+[INFO] [unknown] [General] CORS is disabled.
+[INFO] [unknown] [General] Server startup complete and listening on port 3000
+```
+
+On first run the backend will:
+    Create the database
+    Create a logfile
+    Generate default pptx config files
+    Copy default image resource files into the required folder
+
+Ctrl-C to terminate the backend process, and continue setting up.
+
+## Create the systemd service
+
+Copy the provided auction-backend.service file to `/etc/systemd/system/auction-backend.service`:
+
+```bash
+sudo cp auction-backend.service /etc/systemd/system/auction-backend.service
+```
+
+### 5) Enable and start
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now auction-backend
+sudo systemctl status auction-backend
+```
+
+### 6) Verify
+
+```bash
+sudo journalctl -u auction-backend -f
+```
+---
+
+
 
 ## **Install and Configure Apache**
 
@@ -151,21 +286,64 @@ Test automatic renewal:
 Restart Apache if changes don’t take effect:  
     sudo systemctl restart apache2
 
-To test your installation, go to /maint and enter the default password "m1234". For futher instructions, see quickstart.md
+To test your installation, go to [Your URL]/maint and enter the default password "maint123". For futher instructions, see quickstart.md
+
+For instructions for setting up SumUp, see sumup_setup.md
 
 Additional changes
 
 If required, update front-end browser icon (/images/favicon.png)
-If required, Update default auction logo (/resources/default_logo.png)
+If required, update default auction logo (/resources/default_logo.png)
 
 ---
 
 The default setup assumes that frontend and backend are running on the same server- /api/ is proxied to the backend on localhost, port 3000\. If this is not the case, the following changes will be needed:
 
 * If a port other than 3000 is needed, edit the port setting in config.json.
-* Update the $API constant in each frontend script file to point to the correct backend server and port 
-* Update the Apache site .conf file as required  
-* The backend will require CORS to prevent browsers blocking the cross-domain traffic. The code required for this is present in [backend.js] but will need to be uncommented and configured for your use.
+* Update the Apache site .conf file as required to relay the traffic to the target server
+* Enable CORS to prevent browsers blocking the cross-domain traffic. Set ENABLE_CORS = true and populate ALLOWED_ORIGINS with the required addresses.
+
+## **Setup PM2 to Run the Backend**
+
+Note: For security reasons it is recommended to run the backend as a service. These PM2 instructions have been retained for test/legacy purposes.
+
+PM2 provides a convenient method to manage the backend and also allows the maintenance GUI to restart the server.
+
+Install PM2 globally:
+
+    sudo npm install -g pm2
+
+Start and name your app:
+
+    pm2 start backend.js --name auction
+
+Save the PM2 process list:
+
+    pm2 save
+
+Enable startup on boot:
+
+    pm2 startup  
+\# Follow the printed instructions to enable startup
+
+To view console output:
+
+    pm2 logs auction  
+
+To remove a site:
+
+    pm2 stop auction  
+    pm2 delete auction  
+    pm2 save
+
+---
 
 
+## Server Management (CLI-only)
 
+`node server-management.js` is a self-contained node CLI tool which exposes maintenance tasks that are intentionally not available in the web UI. Run it from the server to perform:
+
+- Reset the maintenance password
+- Clear the audit log
+- Reset the database (clears bidders, auctions, items, payments, and payment intents). Item counters are not reset to maintain alignment with the audit log
+- Reset the database **and** counters (effectively results in a new database, but with the existing passwords)

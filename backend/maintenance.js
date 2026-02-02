@@ -19,27 +19,17 @@ const { sanitiseText } = require('./middleware/sanitiseText');
 const upload = multer({ dest: UPLOAD_DIR });
 const sharp = require("sharp");
 const db = require('./db');
-// const CONFIG_PATH = path.join(__dirname, "./pptx-config/pptxConfig.json");
-// const CARD_PATH = path.join(__dirname, "./pptx-config/cardConfig.json");
 const archiver = require("archiver");
-// const logFilePath = path.join(__dirname, 'server.log');
 const logFilePath = path.join(LOG_DIR, LOG_NAME);
 const logLines = 500;
-// const CONFIG_PATHS = {
-//   pptx: './pptx-config/pptxConfig.json',
-//   card: './pptx-config/cardConfig.json'
-// };
-
 const CONFIG_PATHS = {
   pptx: path.join(PPTX_CONFIG_DIR, 'pptxConfig.json'),
   card: path.join(PPTX_CONFIG_DIR, 'cardConfig.json')
 };
-
 const { audit } = require('./middleware/audit');
 const bcrypt = require('bcryptjs');
 const maintenanceRoutes = require('./maintenance');
 const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
-
 const { checkAuctionState } = require('./middleware/checkAuctionState');
 
 // (

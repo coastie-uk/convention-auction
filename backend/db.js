@@ -185,9 +185,9 @@ if(existingSchemaVersion !== schemaVersion || isNewDatabase)
 
   // one-time default passwords (stored as bcrypt hashes)
   const defaultPasswords = [
-    { role: "admin",       password: "a1234" },
-    { role: "maintenance", password: "m1234" },
-    { role: "cashier",     password: "c1234" }
+    { role: "admin",       password: "admin123" },
+    { role: "maintenance", password: "maint123" },
+    { role: "cashier",     password: "cashier123" }
   ];
 
   const insertPwd = db.prepare(

@@ -17,9 +17,11 @@ At a high level, SumUp payments follow this flow:
 ```
 Payment initated on cashier page
    ↓
-Payment intent
+Payment intent created on server and sent to SumUp
    ↓
-SumUp checkout link opens SumUp app or website
+SumUp provides a checkout link to the backend
+   ↓
+Web page opens SumUp checkout link - opens SumUp app or website
    ↓
 Customer completes payment in SumUp
    ↓
@@ -35,7 +37,7 @@ More detail:
    - This represents “we intend to take £X from bidder Y”.
    - At this point, **no money has moved**.
 
-2. **Checkout link is generated**
+2. **Backend asks SumUp to generate a Checkout link**
    - For **web payments**, the backend generates a **hosted checkout URL**.
    - For **card-present / app payments**, the backend generates a **deeplink** that opens the SumUp app.
    - The (random) intent ID is embedded as a reference so the payment can be matched later.
@@ -98,27 +100,26 @@ The backend reads SumUp configuration from environment variables.
 
 ### 3.1 Required variables
 
-Populate these in your `.env` file:
+Populate these in your `auction.env` file (see auction.env.example for a template)
 
 ```env
 # SumUp: API for online payments
-SUMUP_API_KEY=sup_sk_xxxxxxx    # SumUp API Key for Online Payments (Bearer)
-SUMUP_MERCHANT_CODE=Mxxxxxxx                          # Your merchant_code from SumUp dashboard
-SUMUP_RETURN_URL=https://yoursite.com/payments/sumup/webhook # Return URL for hosted payments
+SUMUP_API_KEY=sup_sk_xxxxxxx
+SUMUP_MERCHANT_CODE=Mxxxxxxx
+SUMUP_RETURN_URL=https://yoursite.com/payments/sumup/webhook
 
 
 # SumUp: for deep link (card-present)
-SUMUP_AFFILIATE_KEY=sup_afk_xxxxxxxxxx   # SumUp Affiliate Key for deep link payments
-SUMUP_APP_ID=YourAppID                     # Your SumUp App ID for deep link payments
-SUMUP_CALLBACK_SUCCESS=https://yoursite.com/payments/sumup/callback/success # Success callback URL
-SUMUP_CALLBACK_FAIL=https://yoursite.com/payments/sumup/callback/fail # Failure callback URL
+SUMUP_AFFILIATE_KEY=sup_afk_xxxxxxxxxx
+SUMUP_APP_ID=YourAppID
+SUMUP_CALLBACK_SUCCESS=https://yoursite.com/payments/sumup/callback/success
+SUMUP_CALLBACK_FAIL=https://yoursite.com/payments/sumup/callback/fail
 
 # SumUp: Other config items
 PAYMENT_INTENT_TTL_MINUTES=20
-CURRENCY=GBP                     # Currency code for payments (e.g., GBP, EUR). Must be supported by SumUp.
-
-SUMUP_WEB_ENABLED=true                  # Enable SumUp online payments
-SUMUP_CARD_PRESENT_ENABLED=true         # Enable SumUp deep link (card-present) payments
+CURRENCY=GBP
+SUMUP_WEB_ENABLED=true
+SUMUP_CARD_PRESENT_ENABLED=true
 ```
 
 Notes:

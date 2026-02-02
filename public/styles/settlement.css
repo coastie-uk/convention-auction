@@ -4,6 +4,20 @@ body        { font-family: Arial, sans-serif; margin:0; }
 #leftPane   { width:280px; border-right:1px solid #ccc; overflow-y:auto; }
 #rightPane  { flex:1; padding:1rem 2rem; overflow-y:auto; }
 
+/***** mobile layout: avoid right pane collapsing *****/
+@media (max-width: 760px) {
+  #wrap {
+    height: auto;
+    min-height: 100vh;
+  }
+  #leftPane {
+    width: 100%;
+    max-height: 45vh;
+    overflow-y: auto;
+  }
+  #rightPane { flex: 0 0 auto; }
+}
+
 /***** generic table styling *****/
 table             { width:100%; border-collapse:collapse; font-size:0.95rem; }
 th, td            { padding:6px 8px; border-bottom:1px solid #e0e0e0; }

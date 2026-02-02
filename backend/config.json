@@ -12,7 +12,7 @@
   "SAMPLE_DIR":         "sample-assets",
   "MAX_UPLOADS":        100,
   "allowedExtensions": [".jpg", ".jpeg", ".png"],
-  "LOG_LEVEL":          "DEBUG",
+  "LOG_LEVEL":          "INFO",
   "MAX_AUCTIONS":       100,
   "MAX_ITEMS":          2000,
   "CURRENCY_SYMBOL":    "£",
