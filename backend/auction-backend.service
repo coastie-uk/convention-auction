@@ -29,7 +29,7 @@ MemoryDenyWriteExecute=no
 RestrictSUIDSGID=yes
 RestrictRealtime=yes
 SystemCallArchitectures=native
-SystemCallFilter=@system-service
+#SystemCallFilter=@system-service
 CapabilityBoundingSet=
 AmbientCapabilities=
 

@@ -179,12 +179,12 @@ This example assumes the following routing. Note that the backend endpoints are 
     ProxyPassReverse /api/ http://127.0.0.1:3000/
 
     # SumUp webhook for web payments - Note the placement of trailing '/'
-    ProxyPass /payments/sumup/webhook http://127.0.0.1:3000:/payments/sumup/webhook/
-    ProxyPassReverse /payments/sumup/webhook http://127.0.0.1:3000/payments/sumup/webhook/
+    ProxyPass /payments/sumup/webhook http://localhost:3000/payments/sumup/webhook/
+    ProxyPassReverse /payments/sumup/webhook http://localhost:3000/payments/sumup/webhook/
 
     # SumUp webhook for app payments - Note the placement of trailing '/'
-    ProxyPass /payments/sumup/callback/ http://127.0.0.1:3000:/payments/sumup/callback/
-    ProxyPassReverse /payments/sumup/callback/ http://127.0.0.1:3000/payments/sumup/callback/
+    ProxyPass /payments/sumup/callback/ http://localhost:3000/payments/sumup/callback/
+    ProxyPassReverse /payments/sumup/callback/ http://localhost:3000/payments/sumup/callback/
 
     # Optional: proxy other app routes as needed
 </VirtualHost>

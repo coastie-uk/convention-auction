@@ -4,16 +4,16 @@ This guide explains how to deploy the Auction App backend and frontend using Nod
 
 The default locations are:
 
-Backend:     /srv/auction/
-database:        /var/lib/auction
-Data:        /var/lib/auction
-    Uploaded images:        /resources
-    Auction item pictures:  /uploads
-    DB backups:             /backup
-    Generated outputs:      /output
-Secure env:  /etc/auction
-Logs:        /var/log/auction
-Frontend:    /var/www/auction-frontend
+    Backend:     /srv/auction/
+    database:        /var/lib/auction
+    Data:        /var/lib/auction
+        Uploaded images:        /resources
+        Auction item pictures:  /uploads
+        DB backups:             /backup
+        Generated outputs:      /output
+    Secure env:  /etc/auction
+    Logs:        /var/log/auction
+    Frontend:    /var/www/auction-frontend
 
 If your installation requires different paths, remember to update config.json accordingly and adapt the instructions.
 
@@ -74,9 +74,11 @@ Clone or copy the repository to a convenient folder on the server
 
     git clone https://github.com/coastie-uk/convention-auction 
 
-Copy the backend to the required folder
+Copy the backend and frontend to the required folder
 
     sudo rsync -a [path to the repo]/convention-auction/backend/ /srv/auction/
+    sudo rsync -a [path to the repo]/convention-auction/public/ /var/www/auction-frontend
+
 
 Navigate to the folder:
 
@@ -86,11 +88,10 @@ Install Node dependencies:
 
     npm install
 
-Set ownership of the backend files
+Set ownership of the backend and frontend files
 
     sudo chown -R auction:auction /srv/auction
-
-
+    sudo chown -R www-data:www-data /var/www/auction-frontend
 
 ---
 
@@ -149,7 +150,7 @@ Below is a description of each setting:
 | `ENABLE_CORS` | boolean | `false` | Enable CORS handling. |
 | `ALLOWED_ORIGINS` | list | `["localhost:3000", "example.com:3000"]` | Allowed origins when CORS is enabled. Each entry is trimmed; empty strings are ignored. |
 
-After editing `config.json`, restart the service to pick up changes:
+If you make changes once the server is running, remember to restart the service to pick up changes:
 
 ```bash
 sudo systemctl restart auction-backend
@@ -191,6 +192,15 @@ Copy the provided auction-backend.service file to `/etc/systemd/system/auction-b
 ```bash
 sudo cp auction-backend.service /etc/systemd/system/auction-backend.service
 ```
+
+If you've adjusted any of the default paths, remember to update the following lines to match:
+
+    WorkingDirectory=/srv/auction
+    EnvironmentFile=/etc/auction/auction.env
+    ExecStart=/usr/bin/node /srv/auction/backend.js
+    ReadWritePaths=/var/lib/auction /var/log/auction
+    ReadOnlyPaths=/srv/auction
+ 
 
 ### 5) Enable and start
 
@@ -235,6 +245,7 @@ Paste and edit the config to include your domain name. If you already have SSL k
 <VirtualHost *:443>
     ServerName yourdomain.com
 
+#   If you have your own certificatesm insert them here. Otherwise leave as-is and let CertBot update the file
 #   SSLEngine on
 #   SSLCertificateFile /etc/letsencrypt/live/yourdomain.com/fullchain.pem
 #   SSLCertificateKeyFile /etc/letsencrypt/live/yourdomain.com/privkey.pem
@@ -251,19 +262,23 @@ Paste and edit the config to include your domain name. If you already have SSL k
     ProxyPass /api/ http://localhost:3000/
     ProxyPassReverse /api/ http://localhost:3000/
 
+    # SumUp webhook for web payments - Note the placement of trailing '/'
+    ProxyPass /payments/sumup/webhook http://localhost:3000/payments/sumup/webhook/
+    ProxyPassReverse /payments/sumup/webhook http://localhost:3000/payments/sumup/webhook/
+
+    # SumUp webhook for app payments - Note the placement of trailing '/'
+    ProxyPass /payments/sumup/callback/ http://localhost:3000/payments/sumup/callback/
+    ProxyPassReverse /payments/sumup/callback/ http://localhost:3000/payments/sumup/callback/
+
     ErrorLog ${APACHE_LOG_DIR}/auction-error.log
     CustomLog ${APACHE_LOG_DIR}/auction-access.log combined
 </VirtualHost>
 ```
 
-Deploy static frontend files to `/var/www/auction-frontend`
-
-    sudo chown -R www-data:www-data /var/www/auction-frontend
-
 Enable the site:
 
     sudo a2ensite auction.conf  
-    sudo systemctl reload apache2
+    sudo systemctl restart apache2
 
 ---
 
@@ -297,11 +312,21 @@ If required, update default auction logo (/resources/default_logo.png)
 
 ---
 
-The default setup assumes that frontend and backend are running on the same server- /api/ is proxied to the backend on localhost, port 3000\. If this is not the case, the following changes will be needed:
+The default setup assumes that frontend and backend are running on the same server- /api/ is proxied to the backend on localhost, port 3000\. If this is not the case, changes may be needed depending on your configuration and how the connections are proxied.
 
 * If a port other than 3000 is needed, edit the port setting in config.json.
 * Update the Apache site .conf file as required to relay the traffic to the target server
-* Enable CORS to prevent browsers blocking the cross-domain traffic. Set ENABLE_CORS = true and populate ALLOWED_ORIGINS with the required addresses.
+* CORS may be needed to prevent browsers blocking the cross-domain traffic. The backend has been built with CORS middleware - Set ENABLE_CORS = true and populate ALLOWED_ORIGINS with the required addresses.
+
+## Server Management (CLI-only)
+
+`node server-management.js` is a self-contained node CLI tool which exposes maintenance tasks that are intentionally not available in the web UI. Run it from the server to perform:
+
+- Reset the maintenance password
+- Clear the audit log
+- Reset the database (clears bidders, auctions, items, payments, and payment intents). Item counters are not reset to maintain alignment with the audit log
+- Reset the database **and** counters (effectively results in a new database, but with the existing passwords)
+
 
 ## **Setup PM2 to Run the Backend**
 
@@ -338,12 +363,3 @@ To remove a site:
 
 ---
 
-
-## Server Management (CLI-only)
-
-`node server-management.js` is a self-contained node CLI tool which exposes maintenance tasks that are intentionally not available in the web UI. Run it from the server to perform:
-
-- Reset the maintenance password
-- Clear the audit log
-- Reset the database (clears bidders, auctions, items, payments, and payment intents). Item counters are not reset to maintain alignment with the audit log
-- Reset the database **and** counters (effectively results in a new database, but with the existing passwords)
