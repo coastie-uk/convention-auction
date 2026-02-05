@@ -49,7 +49,7 @@ Default passwords:
 | maintenance | maint123 |
 | cashier     | cashier123 |
 
-\[Maintenance\] Configure the auction template generator and item card generator (if needed). This uses the pptxgenjs library. Custom graphics can be added via the “manage resources” function.
+\[Maintenance\] Configure the auction template generator and item card generator (if needed). This uses the pptxgenjs library. Custom graphics can be added via the “manage resources” function. See pptx_template_editing.md for the JSON fields that control slide layout.
 
 Items can now be added via four routes:
 
@@ -99,13 +99,13 @@ As the slideshow is expected to run unattended, running it will log out other fu
 
 \[maintenance\] Set the auction state to “settlement” to allow payments to be taken. The auction will also switch to this state automatically once all items have received bids.
 
-\[Cashier\] Selecting a bidder displays the won items and total due. Payment by cash, PayPal and credit card are catered for. Note that integration with payment processors is not included in this version. Part payment / split payment method are supported.
+\[Cashier\] Selecting a bidder displays the won items and total due. Payment by cash, PayPal and credit card are catered for. Part payment / split payment method are supported, as are refunds.
 
 Note: Payment is recorded against the bidder, not the items. Part payment for a subset of items will need to be tracked manually.
 
 A summary of payments made by type is available, and a CSV report of all payments can be exported.
 
-\[admin\] A bid can still be retracted at this stage, as long as the original bidder has not made any payments.
+\[admin\] A bid can still be retracted at this stage, as long as the original bidder has not made payments which would result in a negative balance once the bid has been retracted.
 
 \[maintenance\] Once all operations have been completed, set the auction state to “archived”. All editing is now blocked.
 
@@ -118,27 +118,3 @@ Locked: Public submission is blocked, but admin can continue to edit or add item
 Live: Bids are being recorded. No editing is possible  
 Settlement: Payments are being taken. Bids can be edited, but only if the winning bidder has not paid  
 Archive: The auction is preserved in a read-only state
-
-| Function                | User | Setup                     | Locked                     | Live  | Settlement                | Archive          |
-|-------------------------|------|---------------------------|----------------------------|-------|---------------------------|------------------|
-| Submit item (public)    |      | Yes                       | No                         | No    | No                        | No               |
-| Add new item            | A    | Yes                       | Yes                        | No    | No                        | No               |
-| Edit item               | A    | Yes                       | Yes                        | No    | No                        | No               |
-| Move (within auction)   | A    | Yes                       | Yes                        | No    | No                        | No               |
-| Move (to auction)       | A    | target “setup” or “locked”| target “setup” or “locked” | No    | No                        | No               |
-| Rotate photo            | A    | Yes                       | Yes                        | No    | No                        | No               |
-| Crop photo              | A    | Yes                       | Yes                        | No    | No                        | No               |
-| Delete item             | A    | Yes                       | Yes                        | No    | No                        | No               |
-| Record bid              | A    | No                        | No                         | Yes   | Yes                       | No               |
-| Undo bid                | A    | No                        | No                         | Yes   | If bidder not paid        | No               |
-| View payments           | C    | Yes                       | Yes                        | Yes   | Yes                       | Yes              |
-| Take payments           | C    | No                        | No                         | No    | Yes                       | No               |
-| Undo payments           | C    | No                        | No                         | No    | Yes                       | No               |
-| Run slideshow           | A    | Yes                       | Yes                        | Yes   | Yes                       | Yes              |
-| Show live bidding view  | A,C  | Yes                       | Yes                        | Yes   | Yes                       | Yes              |
-| Add test items          | M    | Yes                       | Yes                        | No    | No                        | No               |
-| Add test bids           | M    | No                        | No                         | Yes   | No                        | No               |
-| Reset auction           | M    | Yes                       | No                         | No    | No                        | Yes              |
-| Delete auction          | M    | When no items             | No                         | No    | No                        | When no items    |
-
-
