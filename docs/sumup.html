@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Installation Instructions | Convention Auction</title>
+  <link rel="stylesheet" href="assets/styles.css">
+
+  <!-- Markdown renderer and sanitizer (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@2.4.0/dist/purify.min.js"></script>
+</head>
+<body>
+  <header>
+    <nav class="nav">
+      <div class="brand">Convention Auction</div>
+      <div class="nav-links">
+        <a href="index.html">Home</a>
+        <a href="installation.html">Installation Guide</a>
+        <a href="sumup.html">SumUp Setup Guide</a>
+        <a href="quickstart.html">Quickstart Guide</a>
+        <a href="pptx_guide.html">PowerPoint Template Guide</a>
+        <a href="user-guide.html">User Manual</a>
+      </div>
+    </nav>
+    <div class="hero">
+      <div>
+        <div class="badge">Deployment Guide</div>
+        <h1>Installation Instructions</h1>
+        <p>Full deployment guide as written in sumup_setup.md.</p>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="reveal show">
+      <div class="section-title"></div>
+
+      <!-- Markdown content will be injected here -->
+      <div id="doc-content" class="doc-content">
+        <p>Loading documentation…</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p><a href="index.html">Back to main site</a></p>
+  </footer>
+
+  <script>
+    (function () {
+      const container = document.getElementById('doc-content');
+      const mdFilename = 'sumup_setup.md';
+      const candidates = [
+        '/source/' + mdFilename,
+        './source/' + mdFilename,
+        'source/' + mdFilename,
+        '../source/' + mdFilename
+      ];
+
+      async function fetchFirst(urls) {
+        for (const u of urls) {
+          try {
+            const res = await fetch(u, { cache: 'no-cache' });
+            if (res.ok) return await res.text();
+          } catch (e) {
+            // try next
+          }
+        }
+        throw new Error('Could not fetch markdown file from /source/');
+      }
+
+      function renderMarkdown(md) {
+        try {
+          const html = marked.parse(md);
+          const safe = DOMPurify.sanitize(html);
+          container.innerHTML = safe;
+        } catch (e) {
+          container.innerHTML = '<p>Error rendering documentation.</p>';
+          console.error(e);
+        }
+      }
+
+      fetchFirst(candidates)
+        .then(renderMarkdown)
+        .catch(err => {
+          container.innerHTML = '<p>Documentation not available. Make sure <code>/source/sumup_setup.md</code> is deployed alongside the site.</p>';
+          console.error(err);
+        });
+    })();
+  </script>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>
