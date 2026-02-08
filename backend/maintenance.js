@@ -460,8 +460,8 @@ router.get("/photo-report", (req, res) => {
 router.get("/check-integrity", (req, res) => {
   logFromRequest(req, logLevels.DEBUG, `Running integrity checks`);
 
-  db.all("SELECT * FROM items", [], (err, items) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const items = db.all("SELECT * FROM items");
 
     const missingPhotoItemIds = new Set();
     for (const item of items) {
@@ -470,180 +470,174 @@ router.get("/check-integrity", (req, res) => {
       }
     }
 
-    // Find items with missing or invalid auction_id
-    db.all("SELECT id FROM auctions", [], (err, auctions) => {
-      if (err) return res.status(500).json({ error: err.message });
+    const auctions = db.all("SELECT id FROM auctions");
+    const validAuctionIds = new Set(auctions.map(a => a.id));
+    const orphanedItems = items.filter(item => !validAuctionIds.has(item.auction_id));
 
-      const validAuctionIds = new Set(auctions.map(a => a.id));
-      const orphanedItems = items.filter(item => !validAuctionIds.has(item.auction_id));
+    // Optional: Check for missing required fields
+    const invalidFields = items.filter(item =>
+      !item.description?.trim() || !item.contributor?.trim() || !item.item_number
+    );
 
-      // Optional: Check for missing required fields
-      const invalidFields = items.filter(item =>
-        !item.description?.trim() || !item.contributor?.trim() || !item.item_number
-      );
+    const bidders = db.all("SELECT * FROM bidders");
+    const bidderById = new Map(bidders.map(b => [b.id, b]));
 
-      db.all("SELECT * FROM bidders", [], (err, bidders) => {
-        if (err) return res.status(500).json({ error: err.message });
+    const payments = db.all("SELECT * FROM payments");
+    const paymentById = new Map(payments.map(p => [p.id, p]));
 
-        const bidderById = new Map(bidders.map(b => [b.id, b]));
+    const invalidItemDetails = items.map(item => {
+      const issues = [];
 
-        db.all("SELECT * FROM payments", [], (err, payments) => {
-          if (err) return res.status(500).json({ error: err.message });
+      if (missingPhotoItemIds.has(item.id)) {
+        issues.push("Missing photo");
+      }
+      if (!validAuctionIds.has(item.auction_id)) {
+        issues.push("Invalid auction ID");
+      }
+      if (!item.description?.trim()) {
+        issues.push("Missing description");
+      }
+      if (!item.contributor?.trim()) {
+        issues.push("Missing contributor");
+      }
+      if (!item.item_number) {
+        issues.push("Missing item number");
+      }
+      if (item.winning_bidder_id) {
+        const winningBidder = bidderById.get(item.winning_bidder_id);
+        if (!winningBidder) {
+          issues.push("Invalid winning bidder");
+        } else if (winningBidder.auction_id && winningBidder.auction_id !== item.auction_id) {
+          issues.push("Winning bidder auction mismatch");
+        }
+      }
+      if (item.hammer_price != null) {
+        if (Number.isNaN(Number(item.hammer_price)) || Number(item.hammer_price) <= 0) {
+          issues.push("Invalid hammer price");
+        }
+        if (!item.winning_bidder_id) {
+          issues.push("Hammer price without winning bidder");
+        }
+      } else if (item.winning_bidder_id) {
+        issues.push("Winning bidder without hammer price");
+      }
 
-          const paymentById = new Map(payments.map(p => [p.id, p]));
+      if (issues.length === 0) return null;
 
-          const invalidItemDetails = items.map(item => {
-            const issues = [];
+      return {
+        id: item.id,
+        auction_id: item.auction_id,
+        description: item.description,
+        contributor: item.contributor,
+        photo: item.photo,
+        item_number: item.item_number,
+        winning_bidder_id: item.winning_bidder_id,
+        hammer_price: item.hammer_price,
+        issues
+      };
+    }).filter(Boolean);
 
-            if (missingPhotoItemIds.has(item.id)) {
-              issues.push("Missing photo");
-            }
-            if (!validAuctionIds.has(item.auction_id)) {
-              issues.push("Invalid auction ID");
-            }
-            if (!item.description?.trim()) {
-              issues.push("Missing description");
-            }
-            if (!item.contributor?.trim()) {
-              issues.push("Missing contributor");
-            }
-            if (!item.item_number) {
-              issues.push("Missing item number");
-            }
-            if (item.winning_bidder_id) {
-              const winningBidder = bidderById.get(item.winning_bidder_id);
-              if (!winningBidder) {
-                issues.push("Invalid winning bidder");
-              } else if (winningBidder.auction_id && winningBidder.auction_id !== item.auction_id) {
-                issues.push("Winning bidder auction mismatch");
-              }
-            }
-            if (item.hammer_price != null) {
-              if (Number.isNaN(Number(item.hammer_price)) || Number(item.hammer_price) <= 0) {
-                issues.push("Invalid hammer price");
-              }
-              if (!item.winning_bidder_id) {
-                issues.push("Hammer price without winning bidder");
-              }
-            } else if (item.winning_bidder_id) {
-              issues.push("Winning bidder without hammer price");
-            }
+    const invalidBidderDetails = bidders.map(bidder => {
+      const issues = [];
 
-            if (issues.length === 0) return null;
+      if (!validAuctionIds.has(bidder.auction_id)) {
+        issues.push("Invalid auction ID");
+      }
+      // Bidder name not used
+      // if (!bidder.name?.trim()) {
+      //   issues.push("Missing name");
+      // }
+      if (!Number.isFinite(bidder.paddle_number) || bidder.paddle_number <= 0) {
+        issues.push("Invalid paddle number");
+      }
 
-            return {
-              id: item.id,
-              auction_id: item.auction_id,
-              description: item.description,
-              contributor: item.contributor,
-              photo: item.photo,
-              item_number: item.item_number,
-              winning_bidder_id: item.winning_bidder_id,
-              hammer_price: item.hammer_price,
-              issues
-            };
-          }).filter(Boolean);
+      if (issues.length === 0) return null;
 
-          const invalidBidderDetails = bidders.map(bidder => {
-            const issues = [];
+      return {
+        id: bidder.id,
+        auction_id: bidder.auction_id,
+        paddle_number: bidder.paddle_number,
+        name: bidder.name,
+        issues
+      };
+    }).filter(Boolean);
 
-            if (!validAuctionIds.has(bidder.auction_id)) {
-              issues.push("Invalid auction ID");
-            }
-            // Bidder name not used
-            // if (!bidder.name?.trim()) {
-            //   issues.push("Missing name");
-            // }
-            if (!Number.isFinite(bidder.paddle_number) || bidder.paddle_number <= 0) {
-              issues.push("Invalid paddle number");
-            }
+    const invalidPaymentDetails = payments.map(payment => {
+      const issues = [];
 
-            if (issues.length === 0) return null;
+      if (!Number.isFinite(payment.amount)) {
+        issues.push("Invalid amount");
+      }
+      if (payment.reverses_payment_id) {
+        if (!paymentById.has(payment.reverses_payment_id)) {
+          issues.push("Invalid reversal target");
+        } else if (payment.reverses_payment_id === payment.id) {
+          issues.push("Self-referencing reversal");
+        }
+        if (Number.isFinite(payment.amount) && payment.amount > 0) {
+          issues.push("Reversal with positive amount");
+        }
+      }
 
-            return {
-              id: bidder.id,
-              auction_id: bidder.auction_id,
-              paddle_number: bidder.paddle_number,
-              name: bidder.name,
-              issues
-            };
-          }).filter(Boolean);
+      if (issues.length === 0) return null;
 
-          const invalidPaymentDetails = payments.map(payment => {
-            const issues = [];
+      return {
+        id: payment.id,
+        bidder_id: payment.bidder_id,
+        amount: payment.amount,
+        method: payment.method,
+        reverses_payment_id: payment.reverses_payment_id,
+        provider: payment.provider,
+        provider_txn_id: payment.provider_txn_id,
+        intent_id: payment.intent_id,
+        currency: payment.currency,
+        issues
+      };
+    }).filter(Boolean);
 
-            if (!Number.isFinite(payment.amount)) {
-              issues.push("Invalid amount");
-            }
-            if (payment.reverses_payment_id) {
-              if (!paymentById.has(payment.reverses_payment_id)) {
-                issues.push("Invalid reversal target");
-              } else if (payment.reverses_payment_id === payment.id) {
-                issues.push("Self-referencing reversal");
-              }
-              if (Number.isFinite(payment.amount) && payment.amount > 0) {
-                issues.push("Reversal with positive amount");
-              }
-            }
-
-            if (issues.length === 0) return null;
-
-            return {
-              id: payment.id,
-              bidder_id: payment.bidder_id,
-              amount: payment.amount,
-              method: payment.method,
-              reverses_payment_id: payment.reverses_payment_id,
-              provider: payment.provider,
-              provider_txn_id: payment.provider_txn_id,
-              intent_id: payment.intent_id,
-              currency: payment.currency,
-              issues
-            };
-          }).filter(Boolean);
-
-          res.json({
-            total: items.length,
-            invalidItems: invalidItemDetails,
-            bidderTotal: bidders.length,
-            invalidBidders: invalidBidderDetails,
-            paymentTotal: payments.length,
-            invalidPayments: invalidPaymentDetails
-          });
-
-          const logChunks = [];
-          if (invalidItemDetails.length > 0) {
-            const itemLines = invalidItemDetails.map(item =>
-              `Item ID ${item.id} (Auction ${item.auction_id}) Issues: ${item.issues.join(", ")}`
-            ).join(" | ");
-            logChunks.push(`Items: ${itemLines}`);
-          }
-          if (invalidBidderDetails.length > 0) {
-            const bidderLines = invalidBidderDetails.map(bidder =>
-              `Bidder ID ${bidder.id} (Auction ${bidder.auction_id}) Issues: ${bidder.issues.join(", ")}`
-            ).join(" | ");
-            logChunks.push(`Bidders: ${bidderLines}`);
-          }
-          if (invalidPaymentDetails.length > 0) {
-            const paymentLines = invalidPaymentDetails.map(payment =>
-              `Payment ID ${payment.id} (Bidder ${payment.bidder_id}) Issues: ${payment.issues.join(", ")}`
-            ).join(" | ");
-            logChunks.push(`Payments: ${paymentLines}`);
-          }
-
-          if (logChunks.length > 0) {
-            logFromRequest(
-              req,
-              logLevels.WARN,
-              `Integrity check flagged issues: ${logChunks.join(" || ")}`
-            );
-          } else {
-            logFromRequest(req, logLevels.INFO, `Integrity check complete, no errors found`);
-          }
-        });
-      });
+    res.json({
+      total: items.length,
+      invalidItems: invalidItemDetails,
+      bidderTotal: bidders.length,
+      invalidBidders: invalidBidderDetails,
+      paymentTotal: payments.length,
+      invalidPayments: invalidPaymentDetails
     });
-  });
+
+    const logChunks = [];
+    if (invalidItemDetails.length > 0) {
+      const itemLines = invalidItemDetails.map(item =>
+        `Item ID ${item.id} (Auction ${item.auction_id}) Issues: ${item.issues.join(", ")}`
+      ).join(" | ");
+      logChunks.push(`Items: ${itemLines}`);
+    }
+    if (invalidBidderDetails.length > 0) {
+      const bidderLines = invalidBidderDetails.map(bidder =>
+        `Bidder ID ${bidder.id} (Auction ${bidder.auction_id}) Issues: ${bidder.issues.join(", ")}`
+      ).join(" | ");
+      logChunks.push(`Bidders: ${bidderLines}`);
+    }
+    if (invalidPaymentDetails.length > 0) {
+      const paymentLines = invalidPaymentDetails.map(payment =>
+        `Payment ID ${payment.id} (Bidder ${payment.bidder_id}) Issues: ${payment.issues.join(", ")}`
+      ).join(" | ");
+      logChunks.push(`Payments: ${paymentLines}`);
+    }
+
+    if (logChunks.length > 0) {
+      logFromRequest(
+        req,
+        logLevels.WARN,
+        `Integrity check flagged issues: ${logChunks.join(" || ")}`
+      );
+    } else {
+      logFromRequest(req, logLevels.INFO, `Integrity check complete, no errors found`);
+    }
+    void orphanedItems;
+    void invalidFields;
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 //--------------------------------------------------------------------------
 // Remove invalid items API (disabled as this only had limited usecase)
@@ -685,18 +679,19 @@ router.post("/change-password", (req, res) => {
   // Hash the password before storing
   const hashed = bcrypt.hashSync(newPassword, 12);
 
-  db.run(
-    `UPDATE passwords SET password = ? WHERE role = ?`,
-    [hashed, role],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) return res.status(400).json({ error: "Role not found." });
+  try {
+    const result = db.run(
+      `UPDATE passwords SET password = ? WHERE role = ?`,
+      [hashed, role]
+    );
+    if (result.changes === 0) return res.status(400).json({ error: "Role not found." });
 
-      logFromRequest(req, logLevels.INFO, `Password changed for role: ${role}`);
-      audit(req.user.role, 'change password', 'server', null, { changed_role: role });
-      res.json({ message: `Password for ${role} updated.` });
-    }
-  );
+    logFromRequest(req, logLevels.INFO, `Password changed for role: ${role}`);
+    audit(req.user.role, 'change password', 'server', null, { changed_role: role });
+    res.json({ message: `Password for ${role} updated.` });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 //--------------------------------------------------------------------------
@@ -809,18 +804,14 @@ router.get("/download-full", (req, res) => {
   archive.file(path.join(DB_PATH, DB_NAME));
 
   // Add referenced photos
-  db.all("SELECT photo FROM items WHERE photo IS NOT NULL", [], (err, rows) => {
-    if (err) {
-      archive.append(`Error reading DB: ${err.message}`, { name: "error.txt" });
-      archive.finalize();
-      return;
-    }
+  try {
+    const rows = db.all("SELECT photo FROM items WHERE photo IS NOT NULL");
 
     const usedPhotos = new Set(rows.map(r => r.photo));
     for (const filename of usedPhotos) {
       const filePath = path.join(UPLOAD_DIR, filename);
       if (fs.existsSync(filePath)) {
-//        archive.file(filePath, { name: `uploads/${filename}` });
+        //        archive.file(filePath, { name: `uploads/${filename}` });
         archive.file(filePath, { name: path.join(UPLOAD_DIR, filename) });
 
       }
@@ -842,8 +833,11 @@ router.get("/download-full", (req, res) => {
 
     archive.finalize();
     logFromRequest(req, logLevels.INFO, `Full download generated`);
-
-  });
+  } catch (err) {
+    archive.append(`Error reading DB: ${err.message}`, { name: "error.txt" });
+    archive.finalize();
+    return;
+  }
 });
 
 //--------------------------------------------------------------------------
@@ -853,9 +847,8 @@ router.get("/download-full", (req, res) => {
 
 
 router.get("/orphan-photos", (req, res) => {
-  db.all(`SELECT photo FROM items WHERE photo IS NOT NULL`, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-
+  try {
+    const rows = db.all(`SELECT photo FROM items WHERE photo IS NOT NULL`);
     const usedPhotos = new Set();
     rows.forEach(row => {
       if (row.photo) {
@@ -869,14 +862,15 @@ router.get("/orphan-photos", (req, res) => {
 
     logFromRequest(req, logLevels.INFO, `${orphaned.length} orphan photos found`);
     res.json({ count: orphaned.length, orphaned });
-  });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 
 router.post("/cleanup-orphan-photos", (req, res) => {
-  db.all(`SELECT photo FROM items WHERE photo IS NOT NULL`, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-
+  try {
+    const rows = db.all(`SELECT photo FROM items WHERE photo IS NOT NULL`);
     // Track both original and preview filenames
     const usedFiles = new Set();
     rows.forEach(row => {
@@ -903,7 +897,9 @@ router.post("/cleanup-orphan-photos", (req, res) => {
 
     res.json({ message: `Deleted ${deleted} orphaned file(s). Recovered ${orphanSizeMb} Mb.`, orphaned });
     logFromRequest(req, logLevels.INFO, `${deleted} orphan photos deleted. Recovered ${orphanSizeMb} Mb.`);
-  });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // Simple shuffle function
@@ -913,21 +909,9 @@ router.post("/cleanup-orphan-photos", (req, res) => {
 //     .map(({ value }) => value);
 // }
 
-function getNextItemNumber(auction_id, callback) {
-  db.get(`SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ?`, [auction_id], (err, row) => {
-    if (err) return callback(err);
-    const itemNumber = row?.next || 1;
-    callback(null, itemNumber);
-  });
-}
-
-function getNextItemNumberAsync(auction_id) {
-  return new Promise((resolve, reject) => {
-    getNextItemNumber(auction_id, (err, itemNumber) => {
-      if (err) reject(err);
-      else resolve(itemNumber);
-    });
-  });
+function getNextItemNumber(auction_id) {
+  const row = db.get(`SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ?`, [auction_id]);
+  return row?.next || 1;
 }
 
 //--------------------------------------------------------------------------
@@ -1016,7 +1000,7 @@ router.post("/generate-test-data", checkAuctionState(['setup']), async (req, res
 
     let itemNumber;
     try {
-      itemNumber = await getNextItemNumberAsync(auction_id);
+      itemNumber = getNextItemNumber(auction_id);
     } catch (err) {
       return res.status(500).json({ error: "Database error getting item number" });
     }
@@ -1202,9 +1186,9 @@ router.post("/auctions/delete", (req, res) => {
     return res.status(400).json({ error: "Missing auction_id" });
   }
 
-  // Step 1: Check if auction has items
-  db.get("SELECT COUNT(*) AS count FROM items WHERE auction_id = ?", [auction_id], (err, result) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    // Step 1: Check if auction has items
+    const result = db.get("SELECT COUNT(*) AS count FROM items WHERE auction_id = ?", [auction_id]);
 
     if (result.count > 0) {
       logFromRequest(req, logLevels.WARN, `Can't delete - Auction ${auction_id} contains items`);
@@ -1212,64 +1196,59 @@ router.post("/auctions/delete", (req, res) => {
     }
 
     // Step 2: Delete the auction
-    db.run("DELETE FROM auctions WHERE id = ?", [auction_id], function (err) {
-      if (err) {
-        logFromRequest(req, logLevels.ERROR, `Delete auction error` + err.message);
-        
-        return res.status(500).json({ error: err.message });
+    db.run("DELETE FROM auctions WHERE id = ?", [auction_id]);
+
+    audit(req.user.role, 'delete auction', 'auction', auction_id, {});
+    // Step 3: Check how many auctions remain
+    const remaining = db.get("SELECT COUNT(*) AS count FROM auctions");
+
+    // clearup on last auction delete
+    if (remaining.count === 0) {
+
+      try {
+        logFromRequest(req, logLevels.INFO, `Deleting last auction. Resetiing database`);
+
+        const deleteBatch = db.transaction(() => {
+          db.pragma("foreign_keys = OFF");
+          db.prepare("DELETE FROM auctions").run();
+          logFromRequest(req, logLevels.DEBUG, `Auctions table cleared`);
+
+
+          db.prepare("DELETE FROM bidders").run();
+          logFromRequest(req, logLevels.DEBUG, `Bidders table cleared`);
+
+          db.prepare("DELETE FROM items").run();
+          logFromRequest(req, logLevels.DEBUG, `items table cleared`);
+
+          db.prepare("DELETE FROM payments").run();
+          logFromRequest(req, logLevels.DEBUG, `Payments table cleared`);
+
+          db.prepare("DELETE FROM payment_intents").run();
+          logFromRequest(req, logLevels.DEBUG, `Payment Intents table cleared`);
+          db.pragma("foreign_keys = ON");
+
+        });
+
+        deleteBatch(); // execute the transaction
+
+        res.json({ message: "Database reset actions completed successfully." });
+        audit(req.user.role, 'reset database', 'database', null, { reason: 'last auction deleted' });
+
+      } catch (err) {
+        logFromRequest(req, logLevels.ERROR, `Reset failed: ${err.message}`);
+        res.status(500).json({ error: "Reset failed", details: err.message });
       }
-      
+
+    } else {
+      // The normal case.....
+      logFromRequest(req, logLevels.INFO, `Auction ${auction_id} deleted`);
       audit(req.user.role, 'delete auction', 'auction', auction_id, {});
-      // Step 3: Check how many auctions remain
-      db.get("SELECT COUNT(*) AS count FROM auctions", [], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-
-        // clearup on last auction delete
-        if (result.count === 0) {
-
-          try {
-            logFromRequest(req, logLevels.INFO, `Deleting last auction. Resetiing database`);
-
-            const deleteBatch = db.transaction(() => {
-              db.pragma("foreign_keys = OFF");
-              db.prepare("DELETE FROM auctions").run();
-              logFromRequest(req, logLevels.DEBUG, `Auctions table cleared`);
-              
-
-              db.prepare("DELETE FROM bidders").run();
-              logFromRequest(req, logLevels.DEBUG, `Bidders table cleared`);
-
-              db.prepare("DELETE FROM items").run();
-              logFromRequest(req, logLevels.DEBUG, `items table cleared`);
-
-              db.prepare("DELETE FROM payments").run();
-              logFromRequest(req, logLevels.DEBUG, `Payments table cleared`);
-
-              db.prepare("DELETE FROM payment_intents").run();
-              logFromRequest(req, logLevels.DEBUG, `Payment Intents table cleared`);
-              db.pragma("foreign_keys = ON");
-
-            });
-
-            deleteBatch(); // execute the transaction
-
-            res.json({ message: "Database reset actions completed successfully." });
-            audit(req.user.role, 'reset database', 'database', null, { reason: 'last auction deleted' });
-
-          } catch (err) {
-            logFromRequest(req, logLevels.ERROR, `Reset failed: ${err.message}`);
-            res.status(500).json({ error: "Reset failed", details: err.message });
-          }
-
-        } else {
-          // The normal case.....
-          logFromRequest(req, logLevels.INFO, `Auction ${auction_id} deleted`);
-          audit(req.user.role, 'delete auction', 'auction', auction_id, {});
-          return res.json({ message: "Auction deleted." });
-        }
-      });
-    });
-  });
+      return res.json({ message: "Auction deleted." });
+    }
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Delete auction error` + err.message);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 //--------------------------------------------------------------------------
@@ -1347,15 +1326,13 @@ router.post("/auctions/list", async (req, res) => {
     ORDER BY a.id
   `;
 
-  db.all(sql, [], (err, rows) => {
-    if (err) {
-
-      logFromRequest(req, logLevels.ERROR, `Failed to retrieve auction: ${err}`);
-
-      return res.status(500).json({ error: "Failed to retrieve auctions" });
-    }
+  try {
+    const rows = db.all(sql);
     res.json(rows);
-  });
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Failed to retrieve auction: ${err}`);
+    return res.status(500).json({ error: "Failed to retrieve auctions" });
+  }
 });
 
 //--------------------------------------------------------------------------
@@ -1501,41 +1478,44 @@ router.post("/resources/delete", (req, res) => {
   }
 
   // Check if any auctions are using this logo
-  db.get("SELECT COUNT(*) AS count FROM auctions WHERE logo = ?", [filename], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
+  let row;
+  try {
+    row = db.get("SELECT COUNT(*) AS count FROM auctions WHERE logo = ?", [filename]);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 
-    if (row.count > 0) {
+  if (row.count > 0) {
+    logFromRequest(req, logLevels.WARN, `Blocked deleting file in use ${filename}`);
+
+    return res.status(400).json({ error: `Cannot delete. ${row.count} auction(s) are using this logo.` });
+  }
+
+  // Check if PPTX configs reference the file
+  try {
+    // const pptxConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+    // const cardConfig = JSON.parse(fs.readFileSync(CARD_PATH, "utf-8"));
+
+    const pptxConfig = JSON.parse(fs.readFileSync(CONFIG_PATHS.pptx, "utf-8"));
+    const cardConfig = JSON.parse(fs.readFileSync(CONFIG_PATHS.card, "utf-8"));
+
+    const pptxRefs = JSON.stringify(pptxConfig).includes(filename);
+    const cardRefs = JSON.stringify(cardConfig).includes(filename);
+
+    if (pptxRefs || cardRefs) {
       logFromRequest(req, logLevels.WARN, `Blocked deleting file in use ${filename}`);
-
-      return res.status(400).json({ error: `Cannot delete. ${row.count} auction(s) are using this logo.` });
+      return res.status(400).json({ error: "Cannot delete. File is referenced in PPTX config files." });
     }
+  } catch (configError) {
+    console.error("Error reading config files:", configError.message);
+    logFromRequest(req, logLevels.ERROR, `Error reading config files:` + configError.message);
+    return res.status(500).json({ error: "Server error checking config files." });
+  }
 
-    // Check if PPTX configs reference the file
-    try {
-      // const pptxConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
-      // const cardConfig = JSON.parse(fs.readFileSync(CARD_PATH, "utf-8"));
-
-      const pptxConfig = JSON.parse(fs.readFileSync(CONFIG_PATHS.pptx, "utf-8"));
-      const cardConfig = JSON.parse(fs.readFileSync(CONFIG_PATHS.card, "utf-8"));
-
-      const pptxRefs = JSON.stringify(pptxConfig).includes(filename);
-      const cardRefs = JSON.stringify(cardConfig).includes(filename);
-
-      if (pptxRefs || cardRefs) {
-        logFromRequest(req, logLevels.WARN, `Blocked deleting file in use ${filename}`);
-        return res.status(400).json({ error: "Cannot delete. File is referenced in PPTX config files." });
-      }
-    } catch (configError) {
-      console.error("Error reading config files:", configError.message);
-      logFromRequest(req, logLevels.ERROR, `Error reading config files:` + configError.message);
-      return res.status(500).json({ error: "Server error checking config files." });
-    }
-
-    // If passed all checks, delete the file
-    fs.unlinkSync(filePath);
-    logFromRequest(req, logLevels.INFO, `Deleted resource file: ${filename}`);
-    res.json({ message: `Deleted ${filename}` });
-  });
+  // If passed all checks, delete the file
+  fs.unlinkSync(filePath);
+  logFromRequest(req, logLevels.INFO, `Deleted resource file: ${filename}`);
+  res.json({ message: `Deleted ${filename}` });
 });
 
 
@@ -1597,11 +1577,10 @@ router.post("/generate-bids", checkAuctionState(['live', 'settlement']), (req, r
       logFromRequest(req, logLevels.DEBUG, `Generate bid request received`);
 
   // Step 1: get items without bids
-  db.all("SELECT id, description FROM items WHERE auction_id = ? AND winning_bidder_id IS NULL", [auction_id], (err, items) => {
-    if (err) return res.status(500).json({ error: err.message });
-
+  try {
+    const items = db.all("SELECT id, description FROM items WHERE auction_id = ? AND winning_bidder_id IS NULL", [auction_id]);
     const availableItems = items.map(i => i.id);
-    
+
     if (availableItems.length === 0) return res.status(400).json({ error: "No items / No items without bids." });
 
     if (num_bids < 1 || num_bids > availableItems.length) {
@@ -1639,13 +1618,14 @@ router.post("/generate-bids", checkAuctionState(['live', 'settlement']), (req, r
         .run(selected.id, price, testBid, itemId);
 
       logLines.push(`Item ${itemId} → Paddle ${selected.paddle} → £${price}`);
-      audit(req.user.role, 'finalize (test)', 'item', itemId, {  bidder: selected.paddle, price, description: items.find(i => i.id === itemId)?.description || ''  });
+      audit(req.user.role, 'finalize (test)', 'item', itemId, { bidder: selected.paddle, price, description: items.find(i => i.id === itemId)?.description || '' });
 
     }
     logFromRequest(req, logLevels.INFO, `Generated ${num_bids} test bid(s) for auction ${auction_id}:\n` + logLines.join("\n"));
     res.json({ message: `${num_bids} bids added to auction ${auction_id}` });
-
-  });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 //--------------------------------------------------------------------------
