@@ -129,195 +129,7 @@ document.addEventListener("DOMContentLoaded", () => {
         <ul class="toc-links" id="toc-links"></ul>
       </div>
       <div class="doc-content">
-        <h1>Function / state quick reference</h1>
-
-<table class="table function-matrix">
-  <thead>
-    <tr style="text-align: right;">
-      <th>Function</th>
-      <th>User</th>
-      <th>Setup</th>
-      <th>Locked</th>
-      <th>Live</th>
-      <th>Settlement</th>
-      <th>Archived</th>
-    </tr>
-  </thead>
-  <tbody>
-
-    <tr>
-      <td>Submit item (public)</td>
-      <td></td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-    </tr>
-    <tr>
-      <td>Add new item</td>
-      <td>A</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-    </tr>
-    <tr>
-      <td>Edit item</td>
-      <td>A</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-    </tr>
-    <tr>
-      <td>Move (within auction)</td>
-      <td>A</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-    </tr>
-    <tr>
-      <td>Move (to auction)</td>
-      <td>A</td>
-      <td class="tick-conditional">🟡 target “setup” or “locked”</td>
-      <td class="tick-conditional">🟡 target “setup” or “locked”</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-    </tr>
-    <tr>
-      <td>Rotate photo</td>
-      <td>A</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-    </tr>
-    <tr>
-      <td>Crop photo</td>
-      <td>A</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-    </tr>
-    <tr>
-      <td>Delete item</td>
-      <td>A</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-    </tr>
-    <tr>
-      <td>Record bid</td>
-      <td>A</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-no">❌</td>
-    </tr>
-    <tr>
-      <td>Undo bid</td>
-      <td>A</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-conditional">🟡 See text</td>
-      <td class="tick-no">❌</td>
-    </tr>
-    <tr>
-      <td>View payments</td>
-      <td>C</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-    </tr>
-    <tr>
-      <td>Take payments</td>
-      <td>C</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-no">❌</td>
-    </tr>
-    <tr>
-      <td>Undo payments</td>
-      <td>C</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-no">❌</td>
-    </tr>
-    <tr>
-      <td>Run slideshow</td>
-      <td>A</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-    </tr>
-    <tr>
-      <td>Show live bidding view</td>
-      <td>A,C</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-    </tr>
-    <tr>
-      <td>Add test items</td>
-      <td>M</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-    </tr>
-    <tr>
-      <td>Add test bids</td>
-      <td>M</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-    </tr>
-    <tr>
-      <td>Reset auction</td>
-      <td>M</td>
-      <td class="tick-yes">✅</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-yes">✅</td>
-    </tr>
-    <tr>
-      <td>Delete auction</td>
-      <td>M</td>
-      <td class="tick-conditional">🟡 When no items</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-no">❌</td>
-      <td class="tick-conditional">🟡 When no items</td>
-    </tr>
-  </tbody>
-</table>
+ 
 
 
 
@@ -629,6 +441,197 @@ document.addEventListener("DOMContentLoaded", () => {
       <img class="placeholder screenshot-small" src="images/public-select.png" alt="Public page">
 
   </div>
+
+         <h1>Function / state quick reference</h1>
+
+<table class="table function-matrix">
+  <thead>
+    <tr style="text-align: right;">
+      <th>Function</th>
+      <th>User</th>
+      <th>Setup</th>
+      <th>Locked</th>
+      <th>Live</th>
+      <th>Settlement</th>
+      <th>Archived</th>
+    </tr>
+  </thead>
+  <tbody>
+
+    <tr>
+      <td>Submit item (public)</td>
+      <td></td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+    </tr>
+    <tr>
+      <td>Add new item</td>
+      <td>A</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+    </tr>
+    <tr>
+      <td>Edit item</td>
+      <td>A</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+    </tr>
+    <tr>
+      <td>Move (within auction)</td>
+      <td>A</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+    </tr>
+    <tr>
+      <td>Move (to auction)</td>
+      <td>A</td>
+      <td class="tick-conditional">🟡 target “setup” or “locked”</td>
+      <td class="tick-conditional">🟡 target “setup” or “locked”</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+    </tr>
+    <tr>
+      <td>Rotate photo</td>
+      <td>A</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+    </tr>
+    <tr>
+      <td>Crop photo</td>
+      <td>A</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+    </tr>
+    <tr>
+      <td>Delete item</td>
+      <td>A</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+    </tr>
+    <tr>
+      <td>Record bid</td>
+      <td>A</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-no">❌</td>
+    </tr>
+    <tr>
+      <td>Undo bid</td>
+      <td>A</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-conditional">🟡 See text</td>
+      <td class="tick-no">❌</td>
+    </tr>
+    <tr>
+      <td>View payments</td>
+      <td>C</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+    </tr>
+    <tr>
+      <td>Take payments</td>
+      <td>C</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-no">❌</td>
+    </tr>
+    <tr>
+      <td>Undo payments</td>
+      <td>C</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-no">❌</td>
+    </tr>
+    <tr>
+      <td>Run slideshow</td>
+      <td>A</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+    </tr>
+    <tr>
+      <td>Show live bidding view</td>
+      <td>A,C</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+    </tr>
+    <tr>
+      <td>Add test items</td>
+      <td>M</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+    </tr>
+    <tr>
+      <td>Add test bids</td>
+      <td>M</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+    </tr>
+    <tr>
+      <td>Reset auction</td>
+      <td>M</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-yes">✅</td>
+    </tr>
+    <tr>
+      <td>Delete auction</td>
+      <td>M</td>
+      <td class="tick-conditional">🟡 When no items</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-no">❌</td>
+      <td class="tick-conditional">🟡 When no items</td>
+    </tr>
+  </tbody>
+</table>
+
       </div>
     </section>
   </main>
