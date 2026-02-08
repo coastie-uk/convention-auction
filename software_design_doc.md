@@ -59,6 +59,104 @@ Disclosure: This document was written entirely by ChatGPT 5.2 (and subsequently 
 
 ---
 
+## Backend architecture (Express pipeline + mounted routes)
+
+This section describes how an HTTP request is processed by the backend, and how the backend is assembled from route modules.
+
+### Request lifecycle (high level)
+
+1. **Express app boot**: `backend/backend.js` loads configuration (`backend/config.js`), initialises logging, opens SQLite (`backend/db.js`), and sets up Express middleware and routes.
+2. **Generic middleware**:
+   - JSON parsing: `express.json()` plus a JSON parse error handler that returns `400` for invalid JSON.
+   - URL-encoded parsing: `express.urlencoded()` and `body-parser` URL encoding (legacy compatibility).
+   - Optional CORS: enabled/disabled by config; rejected origins return `403`.
+3. **Maintenance lock gate**:
+   - A global middleware returns `503` (`{ error: 'Database maintenance in progress' }`) while `db.isMaintenanceLocked()` is true.
+   - Requests under `/maintenance/*` bypass this gate so maintenance endpoints can perform DB operations (backup/restore/etc).
+4. **Route matching**:
+   - Express matches the request path to a specific handler or mounted router.
+   - Authentication and state gating are applied per-route (see below).
+5. **Handler logic**:
+   - DB reads/writes via the `db` wrapper (better-sqlite3 underneath).
+   - Filesystem reads/writes for uploads (`UPLOAD_DIR`), resources (`CONFIG_IMG_DIR`), and generated outputs (`OUTPUT_DIR`).
+   - Most meaningful actions also call `audit(...)` to append to `audit_log`.
+6. **Errors**:
+   - Per-route errors are typically returned as JSON `{ error: ... }` with an appropriate HTTP status.
+   - A final Express error handler returns `500 { error: "Server error" }` for unhandled exceptions.
+
+### Cross-cutting middleware and helpers
+
+- **Role authentication**: `backend/middleware/authenticateRole.js`
+  - Expects a JWT string in the `Authorization` header.
+  - On success sets `req.user = { role: ... }`.
+  - Enforced roles: `admin`, `maintenance`, `cashier`, `slideshow`.
+- **Auction state guard**: `backend/middleware/checkAuctionState.js`
+  - Resolves auction id from request (including `publicId`), loads `auctions.status`, and blocks if it’s not in the allowed set.
+  - On success sets `req.auction = { id, status }`.
+- **Input sanitisation**: `backend/middleware/sanitiseText.js` (used throughout to limit/clean text fields).
+- **Audit logging**: `backend/middleware/audit.js`
+  - `audit(user, action, object_type, object_id, details)` inserts into `audit_log`.
+  - `recomputeBalanceAndAudit(...)` is used after payments to tag lots as “paid in full” / “part paid”.
+
+### What routes are mounted (as seen by the frontend)
+
+In production, the frontend calls these under `/api/*` (the backend itself generally registers them at `/*`).
+
+Auth/session:
+- `POST /validate` — validate JWT and return version info
+- `POST /login` — role-based login (admin/cashier/maintenance)
+- `GET /slideshow-auth` — admin-only helper to mint a `slideshow` JWT
+
+Core auction + item management (mostly admin-facing):
+- `POST /validate-auction` — resolve short name and enforce public submission eligibility
+- `POST /list-auctions` — list auctions (admin/cashier/maintenance)
+- `POST /auction-status` — fetch a single auction’s status (admin)
+- `POST /auctions/update-status` — update auction state (admin/maintenance)
+- `POST /auctions/:publicId/newitem` — create item (public or admin)
+- `GET /auctions/:auctionId/items` — list items in an auction (admin)
+- `POST /auctions/:auctionId/items/:id/update` — update item (admin; setup/locked only)
+- `POST /auctions/:auctionId/items/:id/move-auction/:targetAuctionId` — move item to another auction (admin; setup/locked only)
+- `POST /auctions/:auctionId/items/:id/move-after/:after_id` — reorder items (admin; setup/locked only)
+- `DELETE /items/:id` — delete item (admin; setup/locked only)
+- `POST /rotate-photo` — rotate both full + preview image (admin)
+- `POST /generate-pptx` / `POST /generate-cards` / `POST /export-csv` — admin exports
+- `GET /auctions/:publicId/slideshow-items` — slideshow list (slideshow role)
+- `GET /audit-log` — audit query endpoint (admin/maintenance)
+
+“Phase 1 patch” (mounted via `require('./phase1-patch')(app)`):
+- Mounted routers:
+  - `/cashier/*` — live feed API (read-only)
+  - `/settlement/*` — bidder summary + manual payment APIs
+  - `/lots/*` — bid recording (“finalize”/“undo”) APIs
+
+Payments (mounted via `app.use(paymentsApi)` from `backend/payments.js`):
+- `/payments/*` — SumUp intent creation and callback/webhook handling
+
+Maintenance (mounted via `app.use('/maintenance', authenticateRole('maintenance'), ...)`):
+- `/maintenance/*` — backups, restore, import/export, auctions admin, resources, logs, generators, etc.
+
+Static asset serving (backend-side):
+- `GET /uploads/*` — serves uploaded images from `UPLOAD_DIR`
+- `GET /resources/*` — serves resource files from `CONFIG_IMG_DIR` (logos, templates, etc.)
+
+### Typical processing flows (examples)
+
+- **Admin “update item”**:
+  - `authenticateRole('admin')` validates JWT
+  - `checkAuctionState(['setup','locked'])` enforces auction phase
+  - `multer` handles optional file upload
+  - handler updates `items` (+ filesystem if photo) and writes `audit_log`
+- **Cashier “record payment”**:
+  - `authenticateRole('cashier')` validates JWT
+  - `checkAuctionState(['settlement'])` enforces settlement-only payments
+  - handler inserts into `payments` and calls `recomputeBalanceAndAudit(...)`
+- **Slideshow “load items”**:
+  - `authenticateRole('slideshow')` validates JWT
+  - `checkAuctionState([...])` resolves `publicId → auctionId` and ensures auction exists in an allowed state
+  - handler reads `items` with photos and returns a minimal DTO for the slideshow
+
+---
+
 ## Data model (SQLite)
 
 Primary tables (see `backend/db.js`):
