@@ -1,46 +1,74 @@
 {
-  "imageWidth": 8,
-  "imageX": 0.2,
-  "imageY": 0.2,
-  "sizing": {
-    "type": "contain",
-    "w": 5,
-    "h": "70%"
-  },
-  "idStyle": {
-    "x": "75%",
-    "y": "5%",
-    "fontSize": 18
-  },
-  "descriptionStyle": {
-    "x": "55%",
-    "y": "15%",
-    "fontSize": 22,
-    "wrap": true,
-    "w": "40%",
-    "h": "20%",
-    "isTextBox": true,
-    "fit": "shrink"
-  },
-  "contributorStyle": {
-    "x": "55%",
-    "y": "35%",
-    "fontSize": 18,
-    "wrap": true,
-    "w": "40%",
-    "h": "20%",
-    "isTextBox": true,
-    "fit": "shrink"
-  },
-  "artistStyle": {
-    "x": "55%",
-    "y": "50%",
-    "fontSize": 18,
-    "wrap": true,
-    "w": "40%",
-    "h": "20%",
-    "isTextBox": true,
-    "fit": "shrink"
+  "slide": {
+    "masterName": "AUCTION_MASTER",
+    "elements": [
+      {
+        "type": "text",
+        "text": "Item # {{item.item_number}} of {{itemsCount}}",
+        "style": {
+          "x": "75%",
+          "y": "5%",
+          "fontSize": 18
+        }
+      },
+      {
+        "type": "text",
+        "text": "{{item.description}}",
+        "style": {
+          "x": "55%",
+          "y": "15%",
+          "fontSize": 22,
+          "wrap": true,
+          "w": "40%",
+          "h": "20%",
+          "isTextBox": true,
+          "fit": "shrink"
+        }
+      },
+      {
+        "type": "text",
+        "text": "Donated by: {{item.contributor}}",
+        "style": {
+          "x": "55%",
+          "y": "35%",
+          "fontSize": 18,
+          "wrap": true,
+          "w": "40%",
+          "h": "20%",
+          "isTextBox": true,
+          "fit": "shrink"
+        }
+      },
+      {
+        "type": "text",
+        "text": "Creator: {{item.artist}}",
+        "style": {
+          "x": "55%",
+          "y": "50%",
+          "fontSize": 18,
+          "wrap": true,
+          "w": "40%",
+          "h": "20%",
+          "isTextBox": true,
+          "fit": "shrink"
+        }
+      },
+      {
+        "type": "image",
+        "src": "{{imgPath}}",
+        "style": {
+          "x": 0.2,
+          "y": 0.2,
+          "w": 8
+        },
+        "lockAspectRatio": true,
+        "sizing": {
+          "type": "contain",
+          "w": 5,
+          "h": "70%"
+        }
+      }
+    ]
   },
   "masterSlide": {
     "title": "AUCTION_MASTER",

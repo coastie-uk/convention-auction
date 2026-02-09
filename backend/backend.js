@@ -895,6 +895,44 @@ app.delete('/items/:id', authenticateRole("admin"), checkAuctionState(['setup', 
 // API to generate PowerPoint presentation for all items using a master slide template
 //--------------------------------------------------------------------------
 
+function getTemplateValue(context, token) {
+    const pathParts = token.split('.').map((part) => part.trim()).filter(Boolean);
+    let current = context;
+    for (const part of pathParts) {
+        if (current == null || typeof current !== 'object') return '';
+        current = current[part];
+    }
+    if (current === null || current === undefined) return '';
+    return String(current);
+}
+
+function renderTemplateString(template, context) {
+    if (typeof template !== 'string') return template;
+    return template.replace(/{{\s*([^}]+)\s*}}/g, (_, token) => getTemplateValue(context, token));
+}
+
+function renderTemplateValue(value, context) {
+    if (typeof value === 'string') {
+        return renderTemplateString(value, context);
+    }
+    if (Array.isArray(value)) {
+        return value.map((entry) => {
+            if (typeof entry === 'string') {
+                return renderTemplateString(entry, context);
+            }
+            if (entry && typeof entry === 'object' && typeof entry.text === 'string') {
+                return { ...entry, text: renderTemplateString(entry.text, context) };
+            }
+            return entry;
+        });
+    }
+    return value;
+}
+
+function isFiniteNumber(value) {
+    return typeof value === 'number' && Number.isFinite(value);
+}
+
 app.post('/generate-pptx', authenticateRole("admin"), async (req, res) => {
     const { auction_id } = req.body;
     logFromRequest(req, logLevels.DEBUG, 'Slide generation started for auction ' + auction_id);
@@ -916,39 +954,107 @@ app.post('/generate-pptx', authenticateRole("admin"), async (req, res) => {
         let pptx = new pptxgen();
 
         //define the slide master
-        pptx.defineSlideMaster(config.masterSlide);
+        if (config.masterSlide) {
+            pptx.defineSlideMaster(config.masterSlide);
+        }
+
+        const slideConfig = config.slide || config.slideTemplate || config.slides || null;
+        const slideElements = Array.isArray(slideConfig?.elements)
+            ? slideConfig.elements
+            : (Array.isArray(config.elements) ? config.elements : null);
+        const masterName = slideConfig?.masterName || config.masterSlide?.title || "AUCTION_MASTER";
+        const totalItems = rows.length;
 
         logFromRequest(req, logLevels.DEBUG, `Slides: starting generation`);
 
         for (const item of rows) {
-            let slide = pptx.addSlide({ masterName: "AUCTION_MASTER" });
-            slide.addText(`Item # ${item.item_number} of ${rows.length}`, config.idStyle);
-            slide.addText(item.description, config.descriptionStyle);
-            slide.addText(`Donated by: ${item.contributor}`, config.contributorStyle);
-            slide.addText(`Creator: ${item.artist}`, config.artistStyle);
+            const imgPath = item.photo ? path.join(UPLOAD_DIR, item.photo) : '';
+            const context = {
+                item,
+                itemsCount: totalItems,
+                imgPath
+            };
 
-            if (item.photo) {
-          //      const imgPath = `./uploads/${item.photo}`;
-                const imgPath = path.join(UPLOAD_DIR, item.photo);
-                if (fs.existsSync(imgPath)) {
-                    const metadata = await sharp(imgPath).metadata();
-                    const aspectRatio = metadata.width / metadata.height;
+            let slide = pptx.addSlide({ masterName });
 
-                    const imgWidth = config.imageWidth;
-                    const imgHeight = imgWidth / aspectRatio;
+            if (slideElements) {
+                for (const element of slideElements) {
+                    if (!element || typeof element !== 'object') continue;
+                    if (element.enabled === false) continue;
 
-                    slide.addImage({
-                        path: imgPath,
-                        x: config.imageX ?? 0.2,
-                        y: config.imageY ?? 0.2,
-                        w: imgWidth,
-                        h: imgHeight,
-                        sizing: {
-                            type: config.sizing?.type || 'contain',
-                            w: config.sizing?.w || imgWidth,
-                            h: config.sizing?.h || imgHeight
+                    const elementType = element.type || (element.text ? 'text' : element.src ? 'image' : null);
+
+                    if (elementType === 'text') {
+                        const renderedText = renderTemplateValue(element.text ?? '', context);
+                        if (element.skipIfEmpty && typeof renderedText === 'string' && renderedText.trim().length === 0) {
+                            continue;
                         }
-                    });
+                        slide.addText(renderedText, element.style || {});
+                    } else if (elementType === 'image') {
+                        const src = renderTemplateString(element.src ?? '', context);
+                        if (!src) continue;
+                        if (!fs.existsSync(src)) continue;
+
+                        const imageOptions = { ...(element.style || {}) };
+                        const lockAspectRatio = element.lockAspectRatio !== false;
+                        const sizing = element.sizing;
+
+                        if (lockAspectRatio) {
+                            const needsHeight = isFiniteNumber(imageOptions.w) && !isFiniteNumber(imageOptions.h);
+                            const needsWidth = isFiniteNumber(imageOptions.h) && !isFiniteNumber(imageOptions.w);
+                            if (needsHeight || needsWidth) {
+                                try {
+                                    const metadata = await sharp(src).metadata();
+                                    const aspectRatio = metadata.width / metadata.height;
+                                    if (needsHeight) {
+                                        imageOptions.h = imageOptions.w / aspectRatio;
+                                    } else if (needsWidth) {
+                                        imageOptions.w = imageOptions.h * aspectRatio;
+                                    }
+                                } catch (err) {
+                                    logFromRequest(req, logLevels.WARN, `Unable to read image metadata for ${src}: ${err.message}`);
+                                }
+                            }
+                        }
+
+                        if (sizing) {
+                            imageOptions.sizing = sizing;
+                        }
+
+                        slide.addImage({
+                            path: src,
+                            ...imageOptions
+                        });
+                    }
+                }
+            } else {
+                slide.addText(`Item # ${item.item_number} of ${rows.length}`, config.idStyle);
+                slide.addText(item.description, config.descriptionStyle);
+                slide.addText(`Donated by: ${item.contributor}`, config.contributorStyle);
+                slide.addText(`Creator: ${item.artist}`, config.artistStyle);
+
+                if (item.photo) {
+                    const legacyImgPath = path.join(UPLOAD_DIR, item.photo);
+                    if (fs.existsSync(legacyImgPath)) {
+                        const metadata = await sharp(legacyImgPath).metadata();
+                        const aspectRatio = metadata.width / metadata.height;
+
+                        const imgWidth = config.imageWidth;
+                        const imgHeight = imgWidth / aspectRatio;
+
+                        slide.addImage({
+                            path: legacyImgPath,
+                            x: config.imageX ?? 0.2,
+                            y: config.imageY ?? 0.2,
+                            w: imgWidth,
+                            h: imgHeight,
+                            sizing: {
+                                type: config.sizing?.type || 'contain',
+                                w: config.sizing?.w || imgWidth,
+                                h: config.sizing?.h || imgHeight
+                            }
+                        });
+                    }
                 }
             }
         }
