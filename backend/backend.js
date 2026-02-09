@@ -283,63 +283,67 @@ app.post('/login', (req, res) => {
         return res.status(429).json({ error: "Too many failed attempts. Please try again later." });
     }
 
-    db.get(`SELECT password FROM passwords WHERE role = ?`, [role], (err, row) => {
+    let row;
+    try {
+        row = db.get(`SELECT password FROM passwords WHERE role = ?`, [role]);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
 
-        if (err) return res.status(500).json({ error: err.message });
-        if (!row || !row.password) {
+    if (!row || !row.password) {
+        logFromRequest(req, logLevels.WARN, `Invalid password for role ${role} entered`);
+        recordLoginFailure(req, role);
+        return res.status(403).json({ error: "Invalid password" });
+    }
+
+    const stored = row.password;
+
+    // If the stored password looks like a bcrypt hash, compare with bcrypt
+    const isHash = typeof stored === 'string' && stored.startsWith('$2');
+
+    const handleSuccess = () => {
+        const token = jwt.sign({ role }, SECRET_KEY, { expiresIn: sessionTime });
+        res.json({
+            token,
+            currency: CURRENCY_SYMBOL,
+            versions:
+                { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer }
+        });
+
+        logFromRequest(req, logLevels.INFO, `User with role "${role}" logged in`);
+        logFromRequest(req, logLevels.DEBUG, `full Token: ${token}....`);
+    };
+
+    if (isHash) {
+        bcrypt.compare(password, stored, (bErr, match) => {
+            if (bErr) return res.status(500).json({ error: bErr.message });
+            if (!match) {
+                logFromRequest(req, logLevels.WARN, `Invalid password for role ${role} entered`);
+                recordLoginFailure(req, role);
+                return res.status(403).json({ error: "Invalid password" });
+            }
+            clearLoginFailures(req, role);
+            return handleSuccess();
+        });
+    } else {
+        // legacy plaintext entry - validate then upgrade to hashed password
+        if (stored !== password) {
             logFromRequest(req, logLevels.WARN, `Invalid password for role ${role} entered`);
             recordLoginFailure(req, role);
             return res.status(403).json({ error: "Invalid password" });
         }
 
-        const stored = row.password;
-
-        // If the stored password looks like a bcrypt hash, compare with bcrypt
-        const isHash = typeof stored === 'string' && stored.startsWith('$2');
-
-        const handleSuccess = () => {
-          const token = jwt.sign({ role }, SECRET_KEY, { expiresIn: sessionTime });
-          res.json({ token, currency: CURRENCY_SYMBOL, versions: 
-              { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer } 
-          });
-
-          logFromRequest(req, logLevels.INFO, `User with role "${role}" logged in`);
-          logFromRequest(req, logLevels.DEBUG, `full Token: ${token}....`);
-        };
-
-        if (isHash) {
-            bcrypt.compare(password, stored, (bErr, match) => {
-                if (bErr) return res.status(500).json({ error: bErr.message });
-                if (!match) {
-                    logFromRequest(req, logLevels.WARN, `Invalid password for role ${role} entered`);
-                    recordLoginFailure(req, role);
-                    return res.status(403).json({ error: "Invalid password" });
-                }
-                clearLoginFailures(req, role);
-                return handleSuccess();
-            });
-        } else {
-            // legacy plaintext entry - validate then upgrade to hashed password
-            if (stored !== password) {
-                logFromRequest(req, logLevels.WARN, `Invalid password for role ${role} entered`);
-                recordLoginFailure(req, role);
-                return res.status(403).json({ error: "Invalid password" });
-            }
-
-            // upgrade - hash and store
-            const hashed = bcrypt.hashSync(password, 12);
-            db.run(`UPDATE passwords SET password = ? WHERE role = ?`, [hashed, role], function (uErr) {
-                if (uErr) {
-                    logFromRequest(req, logLevels.ERROR, `Failed to upgrade plaintext password for ${role}: ${uErr.message}`);
-                } else {
-                    logFromRequest(req, logLevels.INFO, `Upgraded plaintext password to bcrypt for role ${role}`);
-                }
-                clearLoginFailures(req, role);
-                return handleSuccess();
-            });
+        // upgrade - hash and store
+        const hashed = bcrypt.hashSync(password, 12);
+        try {
+            db.run(`UPDATE passwords SET password = ? WHERE role = ?`, [hashed, role]);
+            logFromRequest(req, logLevels.INFO, `Upgraded plaintext password to bcrypt for role ${role}`);
+        } catch (uErr) {
+            logFromRequest(req, logLevels.ERROR, `Failed to upgrade plaintext password for ${role}: ${uErr.message}`);
         }
-
-    });
+        clearLoginFailures(req, role);
+        return handleSuccess();
+    }
 });
 
 //--------------------------------------------------------------------------
@@ -354,12 +358,9 @@ app.get('/slideshow-auth', authenticateRole("admin"), (req, res) => {
 });
 
 // Get the next item number for a given auction ID
-function getNextItemNumber(auction_id, callback) {
-    db.get(`SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ?`, [auction_id], (err, row) => {
-        if (err) return callback(err);
-        const itemNumber = row?.next || 1;
-        callback(null, itemNumber);
-    });
+function getNextItemNumber(auction_id) {
+    const row = db.get(`SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ?`, [auction_id]);
+    return row?.next || 1;
 }
 
 //--------------------------------------------------------------------------
@@ -397,125 +398,95 @@ app.post('/auctions/:publicId/newitem', checkAuctionState(['setup', 'locked']), 
         await awaitMiddleware(upload.single('photo'))(req, res);
 
 
-        // Check item count first
-        db.get("SELECT COUNT(*) AS count FROM items", [], (err, row) => {
-            if (err) return res.status(500).json({ error: "Database error." });
+        const row = db.get("SELECT COUNT(*) AS count FROM items");
+        if (row.count >= MAX_ITEMS) {
+            logFromRequest(req, logLevels.WARN, `Item limit reached. Maximum allowed is ${MAX_ITEMS}.`);
+            return res.status(400).json({ error: `Server item limit reached` });
+        }
 
-            if (row.count >= MAX_ITEMS) {
-                logFromRequest(req, logLevels.WARN, `Item limit reached. Maximum allowed is ${MAX_ITEMS}.`);
-                return res.status(400).json({ error: `Server item limit reached` });
+        let photoPath = req.file ? req.file.filename : null;
+        const { description, contributor, artist, notes } = req.body;
+        // auction_id is set in req by checkAuctionState
+        const auction_id = req.auction.id;
+
+        logFromRequest(req, logLevels.DEBUG, `New item being added to auction id ${auction_id}`);
+
+        logFromRequest(req, logLevels.DEBUG, `Auction identified as ${req.auction.id} from checkAuctionState`);
+
+        const sanitisedDescription = sanitiseText(description, 1024);
+        const sanitisedContributor = sanitiseText(contributor, 512);
+        const sanitisedArtist = sanitiseText(artist, 512);
+        const sanitisedNotes = sanitiseText(notes, 1024);
+
+        if (!auction_id) {
+            logFromRequest(req, logLevels.ERROR, `Missing auction ID`);
+            return res.status(400).json({ error: "Missing auction ID" });
+
+        } else if (!sanitisedDescription || !sanitisedContributor) {
+            logFromRequest(req, logLevels.ERROR, `Missing item description or contributor`);
+            return res.status(400).json({ error: "Missing item description or contributor" });
+        }
+
+        // Check that the auction is active
+        const auctionRow = db.get("SELECT status FROM auctions WHERE id = ?", [auction_id]);
+        if (!auctionRow) {
+            return res.status(400).json({ error: "Auction not found" });
+        }
+
+        // checkAuctionState() has already checked for scenarios which shouldn't happen, so the test here is simpler
+        if (auctionRow.status === "locked" && is_admin === false) {
+            logFromRequest(req, logLevels.WARN, `Public submission rejected. Auction ${auction_id} is locked`);
+            return res.status(403).json({ error: "This auction is not currently accepting submissions." });
+        }
+
+        if (photoPath) {
+            // const resizedPath = `./uploads/resized_${photoPath}`;
+            // const previewPath = `./uploads/preview_resized_${photoPath}`;
+
+            const resizedPath = path.join(UPLOAD_DIR, `resized_${photoPath}`);
+            const previewPath = path.join(UPLOAD_DIR, `preview_resized_${photoPath}`);
+
+            const fileExtension = path.extname(req.file?.originalname || photoPath).toLowerCase();
+            if (!allowedExtensionsSet.has(fileExtension)) {
+                logFromRequest(req, logLevels.ERROR, `Invalid image extension: ${fileExtension}`);
+                return res.status(400).json({ error: "Invalid image upload" });
             }
 
-            let photoPath = req.file ? req.file.filename : null;
-            const { description, contributor, artist, notes } = req.body;
-            // auction_id is set in req by checkAuctionState
-            const auction_id = req.auction.id;
-        
+            try {
+                await sharp(req.file.path).metadata(); // Will throw if not an image
 
-            logFromRequest(req, logLevels.DEBUG, `New item being added to auction id ${auction_id}`);
+                await sharp(req.file.path)
+                    .resize(2000, 2000, {
+                        fit: 'inside',
+                    })
+                    .jpeg({ quality: 90 })
+                    .toFile(resizedPath);
 
-            logFromRequest(req, logLevels.DEBUG, `Auction identified as ${req.auction.id} from checkAuctionState`);
+                await sharp(req.file.path)
+                    .resize(400, 400, {
+                        fit: 'inside'
+                    })
+                    .jpeg({ quality: 70 })
+                    .toFile(previewPath);
 
-            const sanitisedDescription = sanitiseText(description, 1024);
-            const sanitisedContributor = sanitiseText(contributor, 512);
-            const sanitisedArtist = sanitiseText(artist, 512);
-            const sanitisedNotes = sanitiseText(notes, 1024);
-
-            if (!auction_id) {
-                logFromRequest(req, logLevels.ERROR, `Missing auction ID`);
-                return res.status(400).json({ error: "Missing auction ID" });
-
-            } else if (!sanitisedDescription || !sanitisedContributor) {
-                logFromRequest(req, logLevels.ERROR, `Missing item description or contributor`);
-                return res.status(400).json({ error: "Missing item description or contributor" });
+                fs.unlinkSync(req.file.path);
+                photoPath = `resized_${photoPath}`;
+                logFromRequest(req, logLevels.INFO, `Photo captured and saved`);
+            } catch (err) {
+                logFromRequest(req, logLevels.ERROR, `Photo processing failed: ${err.message}`);
+                return res.status(400).json({ error: "Invalid image upload" });
             }
+        }
 
-
-            // Check that the auction is active
-            db.get("SELECT status FROM auctions WHERE id = ?", [auction_id], async (err, row) => {
-                if (err) {
-                    logFromRequest(req, logLevels.ERROR, `Error checking auction status ${err.message}`);
-                    return res.status(500).json({ error: "Database error" });
-                }
-
-                if (!row) {
-                    return res.status(400).json({ error: "Auction not found" });
-                }
-
-                // checkAuctionState() has already checked for scenarios which shouldn't happen, so the test here is simpler
-                if (row.status === "locked" && is_admin === false) {
-
-                    logFromRequest(req, logLevels.WARN, `Public submission rejected. Auction ${auction_id} is locked`);
-                    return res.status(403).json({ error: "This auction is not currently accepting submissions." });
-                }
-
-
-
-                if (photoPath) {
-                    // const resizedPath = `./uploads/resized_${photoPath}`;
-                    // const previewPath = `./uploads/preview_resized_${photoPath}`;
-
-                    const resizedPath = path.join(UPLOAD_DIR, `resized_${photoPath}`);
-                    const previewPath = path.join(UPLOAD_DIR, `preview_resized_${photoPath}`);
-
-                    const fileExtension = path.extname(req.file?.originalname || photoPath).toLowerCase();
-                    if (!allowedExtensionsSet.has(fileExtension)) {
-                        logFromRequest(req, logLevels.ERROR, `Invalid image extension: ${fileExtension}`);
-                        return res.status(400).json({ error: "Invalid image upload" });
-                    }
-
-                    try {
-                        await sharp(req.file.path).metadata(); // Will throw if not an image
-
-                        await sharp(req.file.path)
-                            .resize(2000, 2000, {
-                                fit: 'inside',
-                            })
-                            .jpeg({ quality: 90 })
-                            .toFile(resizedPath);
-
-                        await sharp(req.file.path)
-                            .resize(400, 400, {
-                                fit: 'inside'
-                            })
-                            .jpeg({ quality: 70 })
-                            .toFile(previewPath);
-
-                        fs.unlinkSync(req.file.path);
-                        photoPath = `resized_${photoPath}`;
-                        logFromRequest(req, logLevels.INFO, `Photo captured and saved`);
-                    } catch (err) {
-                        logFromRequest(req, logLevels.ERROR, `Photo processing failed: ${err.message}`);
-                        return res.status(400).json({ error: "Invalid image upload" });
-                    }
-
-                }
-
-
-                // get the next item number
-                getNextItemNumber(auction_id, (err, itemNumber) => {
-                    if (err) {
-                        return res.status(500).json({ error: "Database error" });
-                    }
-
-                    db.run(`INSERT INTO items (item_number, description, contributor, artist, notes, photo, auction_id, date) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%d-%m-%Y %H:%M', 'now'))`,
-                        [itemNumber, sanitisedDescription, sanitisedContributor, sanitisedArtist, sanitisedNotes, photoPath, auction_id],
-                        function (err) {
-                            if (err) {
-                                logFromRequest(req, logLevels.ERROR, `Database error ${err.message}`);
-                                return res.status(500).json({ error: err.message });
-
-                            }
-                            res.json({ id: this.lastID, sanitisedDescription, sanitisedContributor, sanitisedArtist, photo: photoPath });
-                            logFromRequest(req, logLevels.INFO, `Item ${this.lastID} stored for auction ${auction_id} as item #${itemNumber}`);
-                            const user = is_admin ? "admin" : "public";
-                            audit(user, 'new item', 'item', this.lastID, { description: sanitisedDescription, initial_number: itemNumber });
-
-                        }
-                    );
-                })
-            });
-        })
+        // get the next item number
+        const itemNumber = getNextItemNumber(auction_id);
+        const result = db.run(`INSERT INTO items (item_number, description, contributor, artist, notes, photo, auction_id, date) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%d-%m-%Y %H:%M', 'now'))`,
+            [itemNumber, sanitisedDescription, sanitisedContributor, sanitisedArtist, sanitisedNotes, photoPath, auction_id]
+        );
+        res.json({ id: result.lastInsertRowid, sanitisedDescription, sanitisedContributor, sanitisedArtist, photo: photoPath });
+        logFromRequest(req, logLevels.INFO, `Item ${result.lastInsertRowid} stored for auction ${auction_id} as item #${itemNumber}`);
+        const user = is_admin ? "admin" : "public";
+        audit(user, 'new item', 'item', result.lastInsertRowid, { description: sanitisedDescription, initial_number: itemNumber });
 
     } catch (error) {
         return res.status(500).json({ error: error.message });
@@ -601,30 +572,25 @@ app.post('/auctions/:auctionId/items/:id/update', authenticateRole("admin"), che
 
     logFromRequest(req, logLevels.DEBUG, `Request received to update item ${id}`);
 
-try {
-    
-  await awaitMiddleware(upload.single('photo'))(req, res);
+	try {
+	  await awaitMiddleware(upload.single('photo'))(req, res);
 
-    db.get('SELECT photo, auction_id, description, contributor, artist, notes, winning_bidder_id, hammer_price FROM items WHERE id = ?', [id], async (err, row) => {
-        if (err) {
-            logFromRequest(req, logLevels.ERROR, `Update: Error ${err.message}`);
-            return res.status(500).json({ error: err.message });
-        }
-        else if (!row) {
-            logFromRequest(req, logLevels.ERROR, `Update: Item not found`);
-            return res.status(400).json({ error: 'Item not found' });
-        }
-        else if (row.auction_id !== req.auction.id) {
-            logFromRequest(req, logLevels.ERROR, `Update: Item ${id} auction ID mismatch. Item is in auction ${row.auction_id}, request is for auction ${req.auction.id}`);
-            return res.status(400).json({ error: "Item auction ID mismatch" });
-        }
-        else if (row.winning_bidder_id != null || row.hammer_price != null) {
-                 logFromRequest(req, logLevels.WARN, `Edit blocked: item ${id} has bids`);
-                return res.status(400).json({ error: "Item has a bid and cannot be edited" });
-            }
+	    const row = db.get('SELECT photo, auction_id, description, contributor, artist, notes, winning_bidder_id, hammer_price FROM items WHERE id = ?', [id]);
+	    if (!row) {
+	        logFromRequest(req, logLevels.ERROR, `Update: Item not found`);
+	        return res.status(400).json({ error: 'Item not found' });
+	    }
+	    if (row.auction_id !== req.auction.id) {
+	        logFromRequest(req, logLevels.ERROR, `Update: Item ${id} auction ID mismatch. Item is in auction ${row.auction_id}, request is for auction ${req.auction.id}`);
+	        return res.status(400).json({ error: "Item auction ID mismatch" });
+	    }
+	    if (row.winning_bidder_id != null || row.hammer_price != null) {
+	        logFromRequest(req, logLevels.WARN, `Edit blocked: item ${id} has bids`);
+	        return res.status(400).json({ error: "Item has a bid and cannot be edited" });
+	    }
 
 
-        let photoPath = row.photo;
+	    let photoPath = row.photo;
 
         // Process new photo
         if (req.file) {
@@ -696,34 +662,26 @@ try {
 
         // For each field, check if it's provided and different from current value. If so, add to updates (minimize DB writes)
         // update mod_date if there are any updates
-        if (updates.length > 0) {
-            const updateSummary = JSON.stringify(updates) + " / " + JSON.stringify(params);
-            logFromRequest(req, logLevels.DEBUG, `updates and values: ${updateSummary}, photo: ${req.file ? photoPath : 'no file'}`);
-            updates.push("mod_date = strftime('%d-%m-%Y %H:%M', 'now')");
-            const sql = `UPDATE items SET ${updates.join(", ")} WHERE id = ?`;
-            params.push(id);
+	    if (updates.length > 0) {
+	        const updateSummary = JSON.stringify(updates) + " / " + JSON.stringify(params);
+	        logFromRequest(req, logLevels.DEBUG, `updates and values: ${updateSummary}, photo: ${req.file ? photoPath : 'no file'}`);
+	        updates.push("mod_date = strftime('%d-%m-%Y %H:%M', 'now')");
+	        const sql = `UPDATE items SET ${updates.join(", ")} WHERE id = ?`;
+	        params.push(id);
 
-            db.run(sql, params, function (err5) {
-                if (err5) {
-                    logFromRequest(req, logLevels.ERROR, `Update failed: ${err5.message}`);
-                    return res.status(500).json({ error: err5.message });
-                }
-                res.json({ message: 'Item updated', photo: photoPath });
-                logFromRequest(req, logLevels.INFO, `Update item completed for ${id}`);
-                audit(req.user.role, 'updated', 'item', id, { changes: updateSummary, photo_updated: !!req.file });
-
-            });
-        } else {
-            res.json({ message: 'No changes found', photo: photoPath });
-            logFromRequest(req, logLevels.INFO, `No changes detected for item ${id}`);
-        }
-    }
-    );
-    }
-    catch {
-        logFromRequest(req, logLevels.ERROR, "Error editing: " + err.message);
-        res.status(500).json({ error: err.message });
-    }
+	        db.run(sql, params);
+	        res.json({ message: 'Item updated', photo: photoPath });
+	        logFromRequest(req, logLevels.INFO, `Update item completed for ${id}`);
+	        audit(req.user.role, 'updated', 'item', id, { changes: updateSummary, photo_updated: !!req.file });
+	    } else {
+	        res.json({ message: 'No changes found', photo: photoPath });
+	        logFromRequest(req, logLevels.INFO, `No changes detected for item ${id}`);
+	    }
+	    }
+	    catch (err) {
+	        logFromRequest(req, logLevels.ERROR, "Error editing: " + err.message);
+	        res.status(500).json({ error: err.message });
+	    }
 
 });
 
@@ -783,34 +741,24 @@ app.post('/auctions/:auctionId/items/:id/move-auction/:targetAuctionId', authent
             }
 
             logFromRequest(req, logLevels.DEBUG, `Moving ${id} from auction ${oldAuctionId} to auction ${newAuctionId}`);
-            db.get("SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ?", [newAuctionId], (err2, result) => {
-                if (err2) {
-                    logFromRequest(req, logLevels.ERROR, `Update: Error getting next item number → ${err2.message}`);
-                    return res.status(500).json({ error: err2.message });
+            const result = db.get("SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ?", [newAuctionId]);
+            const newNumber = result?.next || 1;
+            db.run("UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M', 'now'), auction_id = ?, item_number = ? WHERE id = ?",
+                [newAuctionId, newNumber, id]
+            );
+
+            logFromRequest(req, logLevels.INFO, `Moved item ${id} from auction ${oldAuctionId} to ${newAuctionId}`);
+
+            renumberAuctionItems(oldAuctionId, (err4, count) => {
+                if (err4) {
+                    logFromRequest(req, logLevels.ERROR, `Renumber failed for old auction ${oldAuctionId}: ${err4.message}`);
+                    return res.status(500).json({ error: err4.message });
                 }
-                const newNumber = result?.next || 1;
-                db.run("UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M', 'now'), auction_id = ?, item_number = ? WHERE id = ?",
-                    [newAuctionId, newNumber, id],
-                    function (err3) {
-                        if (err3) {
-                            logFromRequest(req, logLevels.ERROR, `Database error: ` + err3.message);
-                            return res.status(500).json({ error: err3.message });
-                        }
-
-                        logFromRequest(req, logLevels.INFO, `Moved item ${id} from auction ${oldAuctionId} to ${newAuctionId}`);
-
-                        renumberAuctionItems(oldAuctionId, (err4, count) => {
-                            if (err4) {
-                                logFromRequest(req, logLevels.ERROR, `Renumber failed for old auction ${oldAuctionId}: ${err4.message}`);
-                                return res.status(500).json({ error: err4.message });
-                            }
-                            logFromRequest(req, logLevels.DEBUG, `Renumbered ${count} items in old auction ${oldAuctionId}`);
-                        });
-                        audit(req.user.role, 'moved auction', 'item', id, { old_auction: oldAuctionId, new_auction: newAuctionId, new_no: newNumber });
-
-                        res.json({ message: `Item moved to auction ${newAuctionId}`, item_number: newNumber });
-                    });
+                logFromRequest(req, logLevels.DEBUG, `Renumbered ${count} items in old auction ${oldAuctionId}`);
             });
+            audit(req.user.role, 'moved auction', 'item', id, { old_auction: oldAuctionId, new_auction: newAuctionId, new_no: newNumber });
+
+            res.json({ message: `Item moved to auction ${newAuctionId}`, item_number: newNumber });
 
 
   
@@ -834,56 +782,46 @@ app.delete('/items/:id', authenticateRole("admin"), checkAuctionState(['setup', 
 
     try {
 
-    db.get('SELECT description, photo, auction_id, winning_bidder_id, hammer_price FROM items WHERE id = ?', [itemId], (err, row) => {
+    const row = db.get('SELECT description, photo, auction_id, winning_bidder_id, hammer_price FROM items WHERE id = ?', [itemId]);
+    if (!row) {
+        logFromRequest(req, logLevels.ERROR, `Delete: Item id ${itemId} not found`);
+        return res.status(400).json({ error: 'Item not found' });
+    }
+    if (row.winning_bidder_id != null || row.hammer_price != null) {
+        logFromRequest(req, logLevels.WARN, `Delete blocked: item ${itemId} has bids`);
+        return res.status(400).json({ error: "Item has bids and cannot be deleted" });
+    }
+    if (row.auction_id !== req.auction.id) {
+        logFromRequest(req, logLevels.ERROR, `Delete: Item ${itemId} auction ID mismatch. Item is in auction ${row.auction_id}, request is for auction ${req.auction.id}`);
+        return res.status(400).json({ error: "Item auction ID mismatch" });
+    }
+
+    if (row.photo) {
+        const photoPath = path.join(UPLOAD_DIR, row.photo);
+        if (fs.existsSync(photoPath)) {
+            fs.unlinkSync(photoPath);
+        }
+
+        const oldPreviewPath = path.join(UPLOAD_DIR, `preview_${row.photo}`);
+        if (fs.existsSync(oldPreviewPath)) {
+            fs.unlinkSync(oldPreviewPath);
+        }
+    }
+
+    db.run('DELETE FROM items WHERE id = ?', [itemId]);
+
+    logFromRequest(req, logLevels.INFO, `Deleted item ${itemId} from auction ${row.auction_id}. Description: ${row.description}`);
+
+    renumberAuctionItems(row.auction_id, (err, count) => {
         if (err) {
-            logFromRequest(req, logLevels.ERROR, `Delete: error ${err.message}`);
-            return res.status(500).json({ error: err.message });
+            logFromRequest(req, logLevels.ERROR, `Failed to renumber items after delete:` + err.message);
+
+        } else {
+            logFromRequest(req, logLevels.INFO, `Renumbered ${count} items in auction ${row.auction_id} after deletion`);
         }
-        else if (!row) {
-            logFromRequest(req, logLevels.ERROR, `Delete: Item id ${itemId} not found`);
-            return res.status(400).json({ error: 'Item not found' });
-        }
-       else if (row.winning_bidder_id != null || row.hammer_price != null) {
-            logFromRequest(req, logLevels.WARN, `Delete blocked: item ${itemId} has bids`);
-            return res.status(400).json({ error: "Item has bids and cannot be deleted" });
-        }
-        else if (row.auction_id !== req.auction.id) {
-            logFromRequest(req, logLevels.ERROR, `Delete: Item ${itemId} auction ID mismatch. Item is in auction ${row.auction_id}, request is for auction ${req.auction.id}`);
-            return res.status(400).json({ error: "Item auction ID mismatch" });
-        }
-
-        if (row.photo) {
-            const photoPath = path.join(UPLOAD_DIR, row.photo);
-            if (fs.existsSync(photoPath)) {
-                fs.unlinkSync(photoPath);
-            }
-
-            const oldPreviewPath = path.join(UPLOAD_DIR, `preview_${row.photo}`);
-            if (fs.existsSync(oldPreviewPath)) {
-                fs.unlinkSync(oldPreviewPath);
-            }
-        }
-
-        db.run('DELETE FROM items WHERE id = ?', [itemId], function (err) {
-            if (err) {
-                logFromRequest(req, logLevels.ERROR, `Delete: error ${err.message}`);
-                return res.status(500).json({ error: err.message });
-            }
-
-            logFromRequest(req, logLevels.INFO, `Deleted item ${itemId} from auction ${row.auction_id}. Description: ${row.description}`);
-
-            renumberAuctionItems(row.auction_id, (err, count) => {
-                if (err) {
-                    logFromRequest(req, logLevels.ERROR, `Failed to renumber items after delete:` + err.message);
-
-                } else {
-                    logFromRequest(req, logLevels.INFO, `Renumbered ${count} items in auction ${row.auction_id} after deletion`);
-                }
-            });
-            audit(req.user.role, 'delete', 'item', itemId, { auction_id: row.auction_id, description: row.description });
-            res.json({ message: 'Item deleted' });
-        });
     });
+    audit(req.user.role, 'delete', 'item', itemId, { auction_id: row.auction_id, description: row.description });
+    res.json({ message: 'Item deleted' });
 } catch (err) {
         logFromRequest(req, logLevels.ERROR, `Delete: error ${err.message}`);
         res.status(500).json({ error: err.message });
@@ -906,12 +844,7 @@ app.post('/generate-pptx', authenticateRole("admin"), async (req, res) => {
                 const configData = await fsp.readFile(configPath, 'utf-8');
         const config = JSON.parse(configData);
 
-        const rows = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM items WHERE auction_id = ? ORDER BY item_number ASC', [auction_id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const rows = db.all('SELECT * FROM items WHERE auction_id = ? ORDER BY item_number ASC', [auction_id]);
 
         let pptx = new pptxgen();
 
@@ -985,12 +918,7 @@ app.post('/generate-cards', authenticateRole("admin"), async (req, res) => {
         const configData = await fsp.readFile(configPath, 'utf-8');
         const cardconfig = JSON.parse(configData);
 
-        const rows = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM items WHERE auction_id = ? ORDER BY item_number ASC', [auction_id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const rows = db.all('SELECT * FROM items WHERE auction_id = ? ORDER BY item_number ASC', [auction_id]);
 
         let pptx = new pptxgen();
 
@@ -1049,7 +977,7 @@ app.post('/export-csv', authenticateRole("admin"), (req, res) => {
         return res.status(400).json({ error: "Missing auction_id" });
     }
     logFromRequest(req, logLevels.INFO, 'CSV export requested for auction ' + auction_id);
-    db.all(`
+    const rows = db.all(`
         
         SELECT 
          i.*,
@@ -1058,24 +986,18 @@ app.post('/export-csv', authenticateRole("admin"), (req, res) => {
         LEFT JOIN bidders b ON b.id = i.winning_bidder_id
         WHERE i.auction_id = ?
         ORDER BY i.item_number ASC;`
-        , [auction_id], (err, rows) => {
-            if (err) {
-                return res.status(500).json({ error: err.message });
-            }
+        , [auction_id]);
 
-            const parser = new Parser({ fields: ['id', 'description', 'contributor', 'artist', 'photo', 'date', 'notes', 'mod_date', 'auction_id', 'item_number', 'paddle_number', 'hammer_price'] });
-            const csv = parser.parse(rows);
-        //    const filePath = './outputs/auction_data.csv';
-        const filePath = path.join(OUTPUT_DIR, 'auction_data.csv');
-            fs.writeFileSync(filePath, csv);
-            logFromRequest(req, logLevels.INFO, 'CSV file generated for auction ' + auction_id);
+    const parser = new Parser({ fields: ['id', 'description', 'contributor', 'artist', 'photo', 'date', 'notes', 'mod_date', 'auction_id', 'item_number', 'paddle_number', 'hammer_price'] });
+    const csv = parser.parse(rows);
+    //    const filePath = './outputs/auction_data.csv';
+    const filePath = path.join(OUTPUT_DIR, 'auction_data.csv');
+    fs.writeFileSync(filePath, csv);
+    logFromRequest(req, logLevels.INFO, 'CSV file generated for auction ' + auction_id);
 
-            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-            res.setHeader("Content-Disposition", `attachment; filename=auction_${auction_id}_items.csv`);
-            res.end('\uFEFF' + csv);
-
-
-        });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader("Content-Disposition", `attachment; filename=auction_${auction_id}_items.csv`);
+    res.end('\uFEFF' + csv);
 });
 
 //--------------------------------------------------------------------------
@@ -1088,46 +1010,44 @@ app.post('/rotate-photo', authenticateRole("admin"), async (req, res) => {
     const { id, direction } = req.body;
     logFromRequest(req, logLevels.DEBUG, `Rotate Request for item ${id} (${direction})`);
 
-    db.get('SELECT photo FROM items WHERE id = ?', [id], async (err, row) => {
-        if (err || !row) {
-            return res.status(500).json({ error: 'Photo not found' });
-        }
+    let row;
+    try {
+        row = db.get('SELECT photo FROM items WHERE id = ?', [id]);
+    } catch (err) {
+        return res.status(500).json({ error: 'Photo not found' });
+    }
+    if (!row) {
+        return res.status(500).json({ error: 'Photo not found' });
+    }
 
-        const photoFilename = row.photo;
-        const photoPath = path.join(UPLOAD_DIR, photoFilename);
-        const previewPath = path.join(UPLOAD_DIR, `preview_${photoFilename}`);
-        const angle = direction === 'left' ? -90 : 90;
+    const photoFilename = row.photo;
+    const photoPath = path.join(UPLOAD_DIR, photoFilename);
+    const previewPath = path.join(UPLOAD_DIR, `preview_${photoFilename}`);
+    const angle = direction === 'left' ? -90 : 90;
 
-        try {
-            // Rotate main image
-            await sharp(photoPath)
-                .rotate(angle)
-                .toFile(photoPath + '.tmp');
-            fs.renameSync(photoPath + '.tmp', photoPath);
+    try {
+        // Rotate main image
+        await sharp(photoPath)
+            .rotate(angle)
+            .toFile(photoPath + '.tmp');
+        fs.renameSync(photoPath + '.tmp', photoPath);
 
-            // Rotate preview
-            await sharp(previewPath)
-                .rotate(angle)
-                .toFile(previewPath + '.tmp');
-            fs.renameSync(previewPath + '.tmp', previewPath);
+        // Rotate preview
+        await sharp(previewPath)
+            .rotate(angle)
+            .toFile(previewPath + '.tmp');
+        fs.renameSync(previewPath + '.tmp', previewPath);
 
-            // Update mod_date after rotation
-            db.run(`UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M', 'now') WHERE id = ?`, [id], function (err) {
-                if (err) {
-                    logFromRequest(req, logLevels.ERROR, `Rotate: Failed to update mod_date:` + err.message);
+        // Update mod_date after rotation
+        db.run(`UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M', 'now') WHERE id = ?`, [id]);
 
-                    return res.status(500).json({ error: "Rotation succeeded but failed to update modification time." });
-                }
+        res.json({ message: 'Image rotated' });
+        logFromRequest(req, logLevels.INFO, `Rotate: ${photoFilename} rotated ${angle} degrees`);
 
-                res.json({ message: 'Image rotated' });
-                logFromRequest(req, logLevels.INFO, `Rotate: ${photoFilename} rotated ${angle} degrees`);
-            });
-
-        } catch (error) {
-            logFromRequest(req, logLevels.ERROR, `Image rotation failed for item ${id}: ${error.message}`);
-            res.status(500).json({ error: 'Rotation failed' });
-        }
-    });
+    } catch (error) {
+        logFromRequest(req, logLevels.ERROR, `Image rotation failed for item ${id}: ${error.message}`);
+        res.status(500).json({ error: 'Rotation failed' });
+    }
 });
 
 //--------------------------------------------------------------------------
@@ -1194,30 +1114,23 @@ app.post("/validate-auction", async (req, res) => {
 
     try {
 
-        db.get('SELECT id, short_name, full_name, status, logo, public_id FROM auctions WHERE short_name = ?', [sanitised_short_name.toLowerCase()], async (err, row) => {
-            if (err) {
-                logFromRequest(req, logLevels.ERROR, `Error ${err}`);
-
-                return res.status(500).json({ error: `Validation error` });
-            }
-            else if (!row) {
-                logFromRequest(req, logLevels.WARN, `Auction name "${short_name}" not in database`);
-                //delay response to hinder brute-force attempts
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                return res.status(400).json({ valid: false, error: "Auction name not found" });
-            }
-                // admin override to support slideshow function
-            else if (row.status !== `setup` && !is_admin) {
-                logFromRequest(req, logLevels.WARN, `Auction "${short_name}" not active (status: ${row.status})`);
-                return res.status(400).json({ valid: false, error: "This auction is not currently accepting submissions" });
-            }
-
-            if (!is_admin) logFromRequest(req, logLevels.INFO, `Auction "${short_name}" exists and accepting submissions`);
-            if (is_admin) logFromRequest(req, logLevels.INFO, `Auction "${short_name}" exists - state check ignored as valid auth supplied`);
-
-            res.json({ valid: true, short_name: row.short_name, full_name: row.full_name, logo: row.logo, public_id: row.public_id });
+        const row = db.get('SELECT id, short_name, full_name, status, logo, public_id FROM auctions WHERE short_name = ?', [sanitised_short_name.toLowerCase()]);
+        if (!row) {
+            logFromRequest(req, logLevels.WARN, `Auction name "${short_name}" not in database`);
+            //delay response to hinder brute-force attempts
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            return res.status(400).json({ valid: false, error: "Auction name not found" });
         }
-        )
+        // admin override to support slideshow function
+        if (row.status !== `setup` && !is_admin) {
+            logFromRequest(req, logLevels.WARN, `Auction "${short_name}" not active (status: ${row.status})`);
+            return res.status(400).json({ valid: false, error: "This auction is not currently accepting submissions" });
+        }
+
+        if (!is_admin) logFromRequest(req, logLevels.INFO, `Auction "${short_name}" exists and accepting submissions`);
+        if (is_admin) logFromRequest(req, logLevels.INFO, `Auction "${short_name}" exists - state check ignored as valid auth supplied`);
+
+        res.json({ valid: true, short_name: row.short_name, full_name: row.full_name, logo: row.logo, public_id: row.public_id });
     } catch (err) {
         logFromRequest(req, logLevels.ERROR, `Auction validation error: ${err}`);
         res.status(500).json({ valid: false, error: "Validation error" });
@@ -1483,15 +1396,13 @@ app.post("/auctions/update-status", authenticateRole(["admin", "maintenance"]), 
             return res.status(400).json({ error: `Invalid status: "${status}"` });
         }
 
-        db.run("UPDATE auctions SET status = ? WHERE id = ?", [normalizedStatus, auction_id], function (err) {
-            if (err) return res.status(500).json({ error: err.message });
+        db.run("UPDATE auctions SET status = ? WHERE id = ?", [normalizedStatus, auction_id]);
 
-            logFromRequest(req, logLevels.INFO, `Updated status for auction ${auction_id} ${auction.short_name} to: ${normalizedStatus}`);
-            audit(role, 'state change', 'auction', auction_id, { auction: auction_id, name: auction.short_name, new_state: normalizedStatus });
-            // clear the auction state cache
-       //     checkAuctionState.auctionStateCache.del(auction_id);
-            res.json({ message: `Auction ${auction_id} ${auction.short_name} status updated to ${normalizedStatus}` });
-        });
+        logFromRequest(req, logLevels.INFO, `Updated status for auction ${auction_id} ${auction.short_name} to: ${normalizedStatus}`);
+        audit(role, 'state change', 'auction', auction_id, { auction: auction_id, name: auction.short_name, new_state: normalizedStatus });
+        // clear the auction state cache
+        //     checkAuctionState.auctionStateCache.del(auction_id);
+        res.json({ message: `Auction ${auction_id} ${auction.short_name} status updated to ${normalizedStatus}` });
 
     } catch (err) {
         logFromRequest(req, logLevels.ERROR, `Status update for auction ${auction_id} failed:` + err);
