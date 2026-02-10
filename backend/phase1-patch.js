@@ -18,8 +18,8 @@ const { logLevels, logFromRequest, log } = require('./logger');
 const { json } = require('body-parser');
 const { sanitiseText } = require('./middleware/sanitiseText');
 const { audit, recomputeBalanceAndAudit } = require('./middleware/audit');
-const bcrypt = require('bcryptjs');
 const { block } = require('sharp');
+const { getAuditActor } = require('./users');
 
 // Prepare payment methods object - this is static at runtime
 
@@ -157,21 +157,7 @@ module.exports = function phase1Patch (app) {
   settlement.get('/payment-methods', authenticateRole(['cashier', 'maintenance']), (req, res) => {
     logFromRequest(req, logLevels.DEBUG, `Payment methods requested`);
     try {
-      const rows = db.prepare(`SELECT password FROM passwords WHERE role = 'cashier'`).get();
-      const pw = `cashier123`; // default password
-
-      bcrypt.compare( pw, rows.password, (bErr, match) => {
-        if (bErr) { throw error; }
-        if (match)
-       {
-        logFromRequest(req, logLevels.WARN, `Cashier account has default or no password - disabling SumUp payment methods`);
-        const blockedFlag = 1;
-        res.json({paymentMethods, blockedFlag});
-      }
-            else {
-        res.json({paymentMethods});
-      }
-    }      ); 
+      return res.json({ paymentMethods });
 
     } catch (error) {
       logFromRequest(req, logLevels.ERROR, `Failed to fetch payment methods: ${error.message}`);
@@ -226,9 +212,9 @@ try {
 
     db.run(`INSERT INTO payments (bidder_id, amount, method, note, created_by, currency)
             VALUES (?,?,?,?,?,?)`,
-      [bidder_id, amount, method, sanitisedNote, req.user.role, CURRENCY]
+      [bidder_id, amount, method, sanitisedNote, getAuditActor(req), CURRENCY]
     );
-    audit(req.user.role, 'payment', 'bidder', bidder_id, { amount, method, paddle: bidderRow.paddle_number, note: sanitisedNote });
+    audit(getAuditActor(req), 'payment', 'bidder', bidder_id, { amount, method, paddle: bidderRow.paddle_number, note: sanitisedNote });
     logFromRequest(req, logLevels.INFO, `${method} payment by bidder ${bidder_id} for ${amount} recorded`);
 
   /* 2️⃣  recompute balance */
@@ -342,14 +328,14 @@ const info = insertReversal.run(
   -refundAmount,                                   // amount (negative)
   methodString,                                    // method
   reversalNote,                                    // note
-  req.user.role,                                   // created_by
+  getAuditActor(req),                              // created_by
   original.provider || 'unknown',                   // provider (schema NOT NULL)
   original.currency || 'GBP',                       // currency (schema NOT NULL)
   original.id,                                     // reverses_payment_id
   reason                                           // reversal_reason
 );
 
-audit(req.user.role, 'payment_reversal', 'bidder', original.bidder_id, {
+audit(getAuditActor(req), 'payment_reversal', 'bidder', original.bidder_id, {
   original_payment_id: original.id,
   reversal_payment_id: info.lastInsertRowid,
   amount: refundAmount,
@@ -462,7 +448,7 @@ if (info.changes === 0) {
 }
 
 //    db.run(`UPDATE items SET winning_bidder_id = ?, hammer_price = ? WHERE id = ?`, [bidder.id, price, itemId]);
-    audit(req.user.role, 'finalize', 'item', itemId, { paddle_no: paddle, price });
+    audit(getAuditActor(req), 'finalize', 'item', itemId, { paddle_no: paddle, price });
     logFromRequest(req, logLevels.INFO, `Bid recorded for auction ${auctionId}, bidder ${paddle}, item ${itemId}, price ${price}`);
 
 
@@ -484,7 +470,7 @@ if (info.changes === 0) {
 
 
     // audit entry for traceability
-    audit(req.user.role, 'auto_settlement', 'auction', auctionId, {
+    audit(getAuditActor(req), 'auto_settlement', 'auction', auctionId, {
       reason: 'all lots sold via finalize endpoint'
     });
     logFromRequest(req, logLevels.INFO, `All lots sold in auction ${auctionId}, setting state to settlement`);
@@ -542,12 +528,12 @@ if (info.changes === 0) {
       db.run(`UPDATE items SET winning_bidder_id = NULL, hammer_price = NULL WHERE id = ?`, [itemId]);
       if (paid) {
         logFromRequest(req, logLevels.INFO, `Bid retracted for item ${itemId} by bidder ${row.winning_bidder_id} but payment exists`);
-        audit(req.user.role, 'undo-bid', 'item', itemId, { item: itemId, bidder: row.winning_bidder_id, note: 'Payment exists for bidder' });
+        audit(getAuditActor(req), 'undo-bid', 'item', itemId, { item: itemId, bidder: row.winning_bidder_id, note: 'Payment exists for bidder' });
         return res.json({ ok: true, message: 'Bid retracted but payment exists - Verify cashier totals' });
       }
 
       logFromRequest(req, logLevels.INFO, `Bid retracted for item ${itemId} by bidder ${row.winning_bidder_id}`);
-      audit(req.user.role, 'undo-bid', 'item', itemId, { item: itemId, bidder: row.winning_bidder_id });
+      audit(getAuditActor(req), 'undo-bid', 'item', itemId, { item: itemId, bidder: row.winning_bidder_id });
       return res.json({ ok: true, message: 'Bid retracted' });
     } catch (error) {
       logFromRequest(req, logLevels.ERROR, `Failed to retract bid for item ${itemId}: ${error.message}`);

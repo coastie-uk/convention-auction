@@ -37,6 +37,7 @@
   <section id="login-section">
     <div class="login-container">
     <h2>Cashier Login</h2>
+    <input type="text" id="cashier-username" placeholder="Username" autocomplete="username">
     <input type="password" id="cashier-password" placeholder="Enter Password" autocomplete="current-password">
     <button id="login-button">Login</button>
     <p id="error-message" class="error"></p>
@@ -54,8 +55,14 @@
     <select id="settle-select"></select> -->
     <button id="open-settle" disabled>Manage payments</button>
     <a href="/help/user-guide.html?section=cashier-panel" target="_blank"><button>User guide</button></a>
-
-    <button id="logout">Logout</button>
+    <div class="dropdown user-menu-dropdown">
+      <button id="cashier-user-menu-button" class="user-menu-button">User</button>
+      <div class="dropdown-content user-menu-content">
+        <div class="user-menu-username-row">Signed in as <strong id="cashier-logged-in-user">unknown</strong></div>
+        <button id="change-own-password-cashier">Change Password</button>
+        <button id="logout">Logout</button>
+      </div>
+    </div>
   </header>
 
   <!-- 3️⃣ VIEWPORT WHERE SUB‑PAGES ARE LOADED -->

@@ -6,20 +6,48 @@ const fs = require("fs");
 const path = require("path");
 const { initFramework } = require("./api-test-framework");
 
-const configPath = path.join(__dirname, "..", "config.json");
+const configCandidates = [
+  path.join(__dirname, "..", "config.json"),
+  path.join(__dirname, "..", "backend", "config.json")
+];
+const configPath = configCandidates.find((candidate) => fs.existsSync(candidate));
+if (!configPath) {
+  throw new Error("Unable to locate config.json (checked project root and backend/).");
+}
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 
 const baseUrl = (process.env.BASE_URL || `http://localhost:${config.PORT}`).replace(/\/$/, "");
-const maintenancePassword = process.env.MAINTENANCE_PASSWORD || "maint123";
+const bootstrapUsername = (process.env.TEST_BOOTSTRAP_USERNAME || process.env.ROOT_USERNAME || "testuser").trim().toLowerCase();
+const bootstrapPassword =
+  process.env.TEST_BOOTSTRAP_PASSWORD ||
+  process.env.ROOT_PASSWORD ||
+  process.env.MAINTENANCE_PASSWORD ||
+  process.env.ADMIN_PASSWORD || "testpassword";
 const allowRestart = process.env.ALLOW_RESTART === "true";
 const allowDeleteLastAuction = process.env.ALLOW_DELETE_LAST_AUCTION === "true";
 const logFilePath = process.env.LOG_FILE || path.join(__dirname, "maintenance-tests.log");
+
+if (!bootstrapPassword) {
+  throw new Error(
+    "Missing bootstrap password. Set ROOT_PASSWORD or TEST_BOOTSTRAP_PASSWORD before running maintenance tests."
+  );
+}
+
+const userSeed = Date.now().toString(36);
+const managedUsers = {
+  lifecycle: {
+    username: `mt_user_${userSeed}`,
+    password: `MtUser_${userSeed}_U1!`,
+    roles: ["cashier"]
+  }
+};
 
 const framework = initFramework({
   baseUrl,
   logFilePath,
   loginRole: "maintenance",
-  loginPassword: maintenancePassword
+  loginUsername: bootstrapUsername,
+  loginPassword: bootstrapPassword
 });
 
 const {
@@ -39,6 +67,7 @@ context.auctionCount = null;
 context.pptxConfig = null;
 context.resourceFilename = null;
 context.dbBackupBuffer = null;
+context.managedUser = managedUsers.lifecycle;
 
 // async function updateAuctionStatus(auctionId, status) {
 //   const { res, json, text } = await fetchJson(`${baseUrl}/auctions/update-status`, {
@@ -263,30 +292,233 @@ addTest("M-020","maintenance/check-integrity failure unauthenticated", async () 
   await expectStatus(res, 403);
 });
 
-addTest("M-021","maintenance/change-password failure invalid role", async () => {
-  const { res } = await fetchJson(`${baseUrl}/maintenance/change-password`, {
+addTest("M-021","maintenance/users list success", async () => {
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/users`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  assert.ok(Array.isArray(json?.users), `Unexpected users response: ${text}`);
+  assert.ok(Array.isArray(json?.roles), "Roles metadata missing");
+});
+
+addTest("M-021a","maintenance/users list failure unauthenticated", async () => {
+  const res = await fetch(`${baseUrl}/maintenance/users`);
+  await expectStatus(res, 403);
+});
+
+addTest("M-021b","maintenance/users create failure invalid username", async () => {
+  const { res } = await fetchJson(`${baseUrl}/maintenance/users`, {
     method: "POST",
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ role: "invalid", newPassword: "abcdef" })
+    body: JSON.stringify({ username: "Bad User", password: "ValidPassword1!", roles: ["cashier"] })
   });
   await expectStatus(res, 400);
 });
 
-addTest("M-022","maintenance/change-password success (reverts)", async () => {
-  const tempPassword = `${maintenancePassword}_temp`;
-  const { res: res1 } = await fetchJson(`${baseUrl}/maintenance/change-password`, {
+addTest("M-021c","maintenance/users create failure short password", async () => {
+  const { res } = await fetchJson(`${baseUrl}/maintenance/users`, {
     method: "POST",
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ role: "maintenance", newPassword: tempPassword })
+    body: JSON.stringify({ username: context.managedUser.username, password: "1234", roles: ["cashier"] })
   });
-  await expectStatus(res1, 200);
+  await expectStatus(res, 400);
+});
 
-  const { res: res2 } = await fetchJson(`${baseUrl}/maintenance/change-password`, {
+addTest("M-021d","maintenance/users create failure missing roles", async () => {
+  const { res } = await fetchJson(`${baseUrl}/maintenance/users`, {
     method: "POST",
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ role: "maintenance", newPassword: maintenancePassword })
+    body: JSON.stringify({
+      username: context.managedUser.username,
+      password: context.managedUser.password,
+      roles: []
+    })
   });
-  await expectStatus(res2, 200);
+  await expectStatus(res, 400);
+});
+
+addTest("M-021e","maintenance/users create success", async () => {
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/users`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      username: context.managedUser.username,
+      password: context.managedUser.password,
+      roles: context.managedUser.roles
+    })
+  });
+  await expectStatus(res, 201);
+  assert.ok(json && json.message, `Unexpected create response: ${text}`);
+});
+
+addTest("M-021f","maintenance/users create failure duplicate username", async () => {
+  const { res } = await fetchJson(`${baseUrl}/maintenance/users`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      username: context.managedUser.username,
+      password: context.managedUser.password,
+      roles: context.managedUser.roles
+    })
+  });
+  await expectStatus(res, 409);
+});
+
+addTest("M-021g","maintenance/users/:username/roles failure invalid username", async () => {
+  const { res } = await fetchJson(`${baseUrl}/maintenance/users/Bad User/roles`, {
+    method: "PATCH",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ roles: ["admin"] })
+  });
+  await expectStatus(res, 400);
+});
+
+addTest("M-021h","maintenance/users/:username/roles failure missing roles", async () => {
+  const { res } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(context.managedUser.username)}/roles`, {
+    method: "PATCH",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ roles: [] })
+  });
+  await expectStatus(res, 400);
+});
+
+addTest("M-021i","maintenance/users/:username/roles failure missing user", async () => {
+  const { res } = await fetchJson(`${baseUrl}/maintenance/users/no_such_user_${userSeed}/roles`, {
+    method: "PATCH",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ roles: ["admin"] })
+  });
+  await expectStatus(res, 404);
+});
+
+addTest("M-021j","maintenance/users/:username/roles success", async () => {
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(context.managedUser.username)}/roles`, {
+    method: "PATCH",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ roles: ["cashier", "maintenance"] })
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && Array.isArray(json.user?.roles), `Unexpected role update response: ${text}`);
+  assert.ok(json.user.roles.includes("maintenance"), "Expected maintenance role after update");
+});
+
+addTest("M-021k","maintenance/users/:username/password failure short password", async () => {
+  const { res } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(context.managedUser.username)}/password`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ newPassword: "1234" })
+  });
+  await expectStatus(res, 400);
+});
+
+addTest("M-021l","maintenance/users/:username/password failure missing user", async () => {
+  const { res } = await fetchJson(`${baseUrl}/maintenance/users/no_such_user_${userSeed}/password`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ newPassword: "ValidPassword1!" })
+  });
+  await expectStatus(res, 404);
+});
+
+addTest("M-021m","maintenance/users/:username/password success", async () => {
+  const nextPassword = `${context.managedUser.password}_next`;
+  const { res: updateRes } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(context.managedUser.username)}/password`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ newPassword: nextPassword })
+  });
+  await expectStatus(updateRes, 200);
+
+  const loginAfter = await fetchJson(`${baseUrl}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: context.managedUser.username,
+      role: "maintenance",
+      password: nextPassword
+    })
+  });
+  await expectStatus(loginAfter.res, 200);
+  assert.ok(loginAfter.json?.token, "Expected user to authenticate with updated password");
+  context.managedUser.password = nextPassword;
+});
+
+addTest("M-021n","maintenance/users/:username delete failure self-delete", async () => {
+  const { res } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(bootstrapUsername)}`, {
+    method: "DELETE",
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 400);
+});
+
+addTest("M-021o","maintenance/users/:username delete failure root from non-root account", async () => {
+  const guardUsername = `mt_guard_${userSeed}`;
+  const guardPassword = `MtGuard_${userSeed}_G1!`;
+
+  const createGuard = await fetchJson(`${baseUrl}/maintenance/users`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ username: guardUsername, password: guardPassword, roles: ["maintenance"] })
+  });
+  if (createGuard.res.status !== 201 && createGuard.res.status !== 409) {
+    throw new Error(`Failed to prepare guard user: ${createGuard.text || createGuard.res.status}`);
+  }
+  if (createGuard.res.status === 409) {
+    const patchGuard = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(guardUsername)}/roles`, {
+      method: "PATCH",
+      headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ roles: ["maintenance"] })
+    });
+    await expectStatus(patchGuard.res, 200);
+
+    const pwGuard = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(guardUsername)}/password`, {
+      method: "POST",
+      headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ newPassword: guardPassword })
+    });
+    await expectStatus(pwGuard.res, 200);
+  }
+
+  const guardLogin = await fetchJson(`${baseUrl}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: guardUsername, role: "maintenance", password: guardPassword })
+  });
+  await expectStatus(guardLogin.res, 200);
+  assert.ok(guardLogin.json?.token, "Guard user login failed");
+
+  const { res, json } = await fetchJson(`${baseUrl}/maintenance/users/root`, {
+    method: "DELETE",
+    headers: authHeaders(guardLogin.json.token)
+  });
+  await expectStatus(res, 400);
+  assert.equal(json?.error, "The root user cannot be deleted.");
+});
+
+addTest("M-021p","maintenance/users/:username delete failure missing user", async () => {
+  const { res } = await fetchJson(`${baseUrl}/maintenance/users/no_such_user_${userSeed}`, {
+    method: "DELETE",
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 404);
+});
+
+addTest("M-022","maintenance/users/:username delete success", async () => {
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(context.managedUser.username)}`, {
+    method: "DELETE",
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && json.message, `Unexpected delete response: ${text}`);
+});
+
+addTest("M-022a","maintenance/change-password disabled route", async () => {
+  const { res } = await fetchJson(`${baseUrl}/maintenance/change-password`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ username: context.managedUser.username, newPassword: "abcdefghi" })
+  });
+  await expectStatus(res, 404);
 });
 
 addTest("M-023","maintenance/get-pptx-config success", async () => {
@@ -457,8 +689,6 @@ addTest("M-039","maintenance/update auction status to live", async () => {
   assert.ok(json && json.message, `Unexpected response: ${text}`);
 });
 
-sleep(2500); // Wait for status change to propagate
-
 addTest("M-040","maintenance/update auction status to invalid", async () => {
   const { res } = await fetchJson(`${baseUrl}/auctions/update-status`, {
     method: "POST",
@@ -513,7 +743,7 @@ addTest("M-044","maintenance/delete-test-bids success", async () => {
 addTest("M-044a","change state to setup", async () => {
 await updateAuctionStatus(context.testAuctionId, "setup");
 
-sleep(2500);
+await sleep(2500);
 });
 
 addTest("M-045","maintenance/reset failure wrong password", async () => {
@@ -538,7 +768,7 @@ addTest("M-046","maintenance/reset success", async () => {
   const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/reset`, {
     method: "POST",
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ auction_id: context.testAuctionId, password: maintenancePassword })
+    body: JSON.stringify({ auction_id: context.testAuctionId, password: bootstrapPassword })
   });
   await expectStatus(res, 200);
   assert.ok(json && json.ok, `Unexpected response: ${text}`);
@@ -594,7 +824,7 @@ addTest("M-051b","maintenance/audit-log success with filter", async () => {
 
 });
 
-addTest("M-051b","maintenance/audit-log success with full filter", async () => {
+addTest("M-051c","maintenance/audit-log success with full filter", async () => {
   const { res, json, text } = await fetchJson(`${baseUrl}/audit-log?object_type=auction&object_id=1`, {
     headers: authHeaders(context.token)
   });

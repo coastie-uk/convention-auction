@@ -4,14 +4,162 @@ const output = document.getElementById("output");
 const loginSection = document.getElementById("login-section");
 const maintenanceSection = document.getElementById("maintenance-section");
 const softwareVersion = document.getElementById("software-version");
+const maintenanceUserMenuButton = document.getElementById("maintenance-user-menu-button");
+const maintenanceLoggedInUser = document.getElementById("maintenance-logged-in-user");
 
 var isRendering = false;
+let currentUsername = null;
+const token = localStorage.getItem("maintenanceToken");
 
 checkToken();
 
+function setMaintenanceUserMenu(username) {
+  const safeName = username || "maintenance";
+  if (maintenanceLoggedInUser) maintenanceLoggedInUser.textContent = safeName;
+  if (maintenanceUserMenuButton) maintenanceUserMenuButton.textContent = safeName;
+}
+
+function promptPassword(message, message2 = "") {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = `
+      position:fixed; inset:0; background:rgba(0,0,0,.5);
+      display:flex; align-items:center; justify-content:center; z-index:9999;
+    `;
+
+    const box = document.createElement("div");
+    box.style.cssText = `
+      background:#fff; padding:16px; border-radius:8px; width:min(420px, 92vw);
+      box-shadow:0 8px 24px rgba(0,0,0,.2); font-family:system-ui, sans-serif;
+    `;
+
+    const p = document.createElement("div");
+    p.textContent = message;
+    p.style.marginBottom = "10px";
+
+    const p2 = document.createElement("div");
+    p2.textContent = message2;
+    p2.style.marginBottom = "10px";
+
+    const input = document.createElement("input");
+    input.type = "password";
+    input.autocomplete = "current-password";
+    input.style.cssText = "width:100%; padding:8px; box-sizing:border-box;";
+
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex; justify-content:flex-end; gap:8px; margin-top:12px;";
+
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "Cancel";
+
+    const ok = document.createElement("button");
+    ok.type = "button";
+    ok.textContent = "OK";
+
+    function close(val) {
+      overlay.remove();
+      resolve(val);
+    }
+
+    cancel.addEventListener("click", () => close(null));
+    ok.addEventListener("click", () => close(input.value));
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(null); });
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") close(input.value);
+      if (e.key === "Escape") close(null);
+    });
+
+    row.append(cancel, ok);
+    box.append(p2, p, input, row);
+    overlay.append(box);
+    document.body.append(overlay);
+    input.focus();
+  });
+}
+
+function promptPasswordChange() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = `
+      position:fixed; inset:0; background:rgba(0,0,0,.5);
+      display:flex; align-items:center; justify-content:center; z-index:9999;
+    `;
+
+    const box = document.createElement("div");
+    box.style.cssText = `
+      background:#fff; padding:16px; border-radius:8px; width:min(420px, 92vw);
+      box-shadow:0 8px 24px rgba(0,0,0,.2); font-family:system-ui, sans-serif;
+    `;
+
+    const heading = document.createElement("div");
+    heading.textContent = "Change password";
+    heading.style.cssText = "font-weight:600; margin-bottom:10px;";
+
+    const currentInput = document.createElement("input");
+    currentInput.type = "password";
+    currentInput.placeholder = "Current password";
+    currentInput.autocomplete = "current-password";
+    currentInput.style.cssText = "width:100%; padding:8px; margin-bottom:8px; box-sizing:border-box;";
+
+    const newInput = document.createElement("input");
+    newInput.type = "password";
+    newInput.placeholder = "New password";
+    newInput.autocomplete = "new-password";
+    newInput.style.cssText = "width:100%; padding:8px; margin-bottom:8px; box-sizing:border-box;";
+
+    const confirmInput = document.createElement("input");
+    confirmInput.type = "password";
+    confirmInput.placeholder = "Confirm new password";
+    confirmInput.autocomplete = "new-password";
+    confirmInput.style.cssText = "width:100%; padding:8px; box-sizing:border-box;";
+
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex; justify-content:flex-end; gap:8px; margin-top:12px;";
+
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "Cancel";
+
+    const submit = document.createElement("button");
+    submit.type = "button";
+    submit.textContent = "Update";
+
+    function close(result) {
+      overlay.remove();
+      resolve(result);
+    }
+
+    function submitForm() {
+      close({
+        currentPassword: currentInput.value,
+        newPassword: newInput.value,
+        confirmPassword: confirmInput.value
+      });
+    }
+
+    cancel.addEventListener("click", () => close(null));
+    submit.addEventListener("click", submitForm);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(null); });
+
+    [currentInput, newInput, confirmInput].forEach((input) => {
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") submitForm();
+        if (e.key === "Escape") close(null);
+      });
+    });
+
+    row.append(cancel, submit);
+    box.append(heading, currentInput, newInput, confirmInput, row);
+    overlay.append(box);
+    document.body.append(overlay);
+    currentInput.focus();
+  });
+}
+
 // Check if maint is already authenticated
 async function checkToken() {
-  const token = localStorage.getItem("maintenanceToken");
   if (token) {
     const response = await fetch(`${API}/validate`, {
       method: "POST",
@@ -20,11 +168,14 @@ async function checkToken() {
     });
     const data = await response.json();
     if (response.ok) {
+      currentUsername = data.user?.username || null;
+      setMaintenanceUserMenu(currentUsername);
       loginSection.style.display = "none";
       maintenanceSection.style.display = "block";
       refreshAuctions();
       checkIntegrity();
       loadPptxImageList();
+      loadUsers();
       startAutoRefresh();
       loadEnabledPaymentMethods();
       softwareVersion.textContent = `Backend: ${data.versions.backend || 'N/A'}, Schema: ${data.versions.schema || 'N/A'}, Payment processor: ${data.versions.payment_processor || 'N/A'}`;
@@ -38,15 +189,21 @@ async function checkToken() {
 
 
 document.getElementById("login-button").addEventListener("click", async () => {
+  const username = document.getElementById("maintenance-username").value.trim();
   const password = document.getElementById("maintenance-password").value;
+  if (!username || !password) {
+    document.getElementById("error-message").innerText = "Username and password are required.";
+    return;
+  }
   const res = await fetch(`${API}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password, role: "maintenance" })
+    body: JSON.stringify({ username, password, role: "maintenance" })
   });
   const data = await res.json();
   if (res.ok) {
     localStorage.setItem("maintenanceToken", data.token);
+    setMaintenanceUserMenu(data.user?.username || username);
     loginSection.style.display = "none";
     maintenanceSection.style.display = "block";
     refreshAuctions();
@@ -59,8 +216,6 @@ document.getElementById("login-button").addEventListener("click", async () => {
     document.getElementById("error-message").innerText = data.error;
   }
 });
-
-const token = localStorage.getItem("maintenanceToken");
 
 document.getElementById("backup-db").onclick = async () => {
   const res = await fetch(`${API}/maintenance/backup`, { method: "POST", headers: { Authorization: token } });
@@ -200,42 +355,206 @@ function formatLogs(rawText) {
     .replace(/\n/g, '<br>');  // Properly convert newlines to <br> tags
 }
 
+const USER_ROLE_ORDER = ["admin", "cashier", "maintenance", "slideshow"];
 
-document.getElementById("change-password").onclick = async () => {
-  const newPassword = document.getElementById("new-password").value.trim();
-  const confirmPassword = document.getElementById("confirm-password").value.trim();
-  const role = document.getElementById("password-role").value;
-
-
-  if (newPassword.length < 5) {
-    return showMessage("Password must be at least 5 characters.", "error");
+document.getElementById("change-own-password").onclick = async () => {
+  const passwordInput = await promptPasswordChange();
+  if (!passwordInput) return;
+  const { currentPassword, newPassword, confirmPassword } = passwordInput;
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    return showMessage("All password fields are required.", "error");
   }
 
   if (newPassword !== confirmPassword) {
     return showMessage("Passwords do not match.", "error");
   }
 
-  const confirmed = confirm(`Are you sure you want to change the password for role: ${role}?`);
-  if (!confirmed) return;
-
-  const res = await fetch(`${API}/maintenance/change-password`, {
+  const res = await fetch(`${API}/change-password`, {
     method: "POST",
     headers: {
       Authorization: token,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ role, newPassword })
+    body: JSON.stringify({ currentPassword, newPassword })
   });
 
   const data = await res.json();
   if (res.ok) {
-    showMessage(data.message, "success");
-    document.getElementById("new-password").value = "";
-    document.getElementById("confirm-password").value = "";
+    showMessage(data.message || "Password updated.", "success");
   } else {
     showMessage(data.error || "Failed to change password.", "error");
   }
 };
+
+document.getElementById("add-user-button").onclick = async () => {
+  const username = document.getElementById("new-user-username").value.trim();
+  const password = document.getElementById("new-user-password").value;
+  const confirmPassword = document.getElementById("new-user-confirm-password").value;
+  const roles = Array.from(document.querySelectorAll('input[name="new-user-role"]:checked')).map((el) => el.value);
+
+  if (!username || !password) {
+    return showMessage("Username and password are required.", "error");
+  }
+
+  if (password !== confirmPassword) {
+    return showMessage("Passwords do not match.", "error");
+  }
+
+  if (roles.length === 0) {
+    return showMessage("Select at least one role.", "error");
+  }
+
+  const res = await fetch(`${API}/maintenance/users`, {
+    method: "POST",
+    headers: {
+      Authorization: token,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ username, password, roles })
+  });
+
+  const data = await res.json();
+  if (res.ok) {
+    showMessage(data.message || "User created.", "success");
+    document.getElementById("new-user-username").value = "";
+    document.getElementById("new-user-password").value = "";
+    document.getElementById("new-user-confirm-password").value = "";
+    document.querySelectorAll('input[name="new-user-role"]').forEach((el) => { el.checked = false; });
+    loadUsers();
+  } else {
+    showMessage(data.error || "Failed to create user.", "error");
+  }
+};
+
+async function loadUsers() {
+  const tableBody = document.getElementById("user-table-body");
+  if (!tableBody || !token) return;
+
+  const res = await fetch(`${API}/maintenance/users`, {
+    headers: { Authorization: token }
+  });
+  const data = await res.json();
+
+  if (!res.ok) {
+    showMessage(data.error || "Failed to load users.", "error");
+    return;
+  }
+
+  currentUsername = data.current_user || currentUsername;
+  const users = Array.isArray(data.users) ? data.users : [];
+
+  tableBody.innerHTML = "";
+  if (users.length === 0) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 6;
+    td.textContent = "No users found.";
+    tr.appendChild(td);
+    tableBody.appendChild(tr);
+    return;
+  }
+
+  users.forEach((user) => {
+    const tr = document.createElement("tr");
+    const roleCheckboxes = {};
+
+    const usernameTd = document.createElement("td");
+    usernameTd.textContent = user.username === currentUsername ? `${user.username} (you)` : user.username;
+    tr.appendChild(usernameTd);
+
+    USER_ROLE_ORDER.forEach((role) => {
+      const td = document.createElement("td");
+      td.style.textAlign = "center";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = Array.isArray(user.roles) && user.roles.includes(role);
+      cb.disabled = Boolean(user.is_root);
+      roleCheckboxes[role] = cb;
+      td.appendChild(cb);
+      tr.appendChild(td);
+    });
+
+    const actionsTd = document.createElement("td");
+    const saveRolesBtn = document.createElement("button");
+    saveRolesBtn.textContent = "Save Roles";
+    saveRolesBtn.disabled = Boolean(user.is_root);
+    saveRolesBtn.onclick = async () => {
+      const roles = USER_ROLE_ORDER.filter((role) => roleCheckboxes[role].checked);
+      if (roles.length === 0) {
+        showMessage("A user must have at least one role.", "error");
+        return;
+      }
+      const updateRes = await fetch(`${API}/maintenance/users/${encodeURIComponent(user.username)}/roles`, {
+        method: "PATCH",
+        headers: {
+          Authorization: token,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ roles })
+      });
+      const updateData = await updateRes.json();
+      if (updateRes.ok) {
+        showMessage(updateData.message || "Permissions updated.", "success");
+        loadUsers();
+      } else {
+        showMessage(updateData.error || "Failed to update permissions.", "error");
+      }
+    };
+
+    const setPasswordBtn = document.createElement("button");
+    setPasswordBtn.textContent = "Set Password";
+    setPasswordBtn.onclick = async () => {
+      const newPassword = await promptPassword(`Enter new password for "${user.username}"`);
+      if (!newPassword) return;
+      const confirmPassword = await promptPassword(`Confirm new password for "${user.username}"`);
+      if (!confirmPassword) return;
+      if (newPassword !== confirmPassword) {
+        showMessage("Passwords do not match.", "error");
+        return;
+      }
+      const pwRes = await fetch(`${API}/maintenance/users/${encodeURIComponent(user.username)}/password`, {
+        method: "POST",
+        headers: {
+          Authorization: token,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ newPassword })
+      });
+      const pwData = await pwRes.json();
+      if (pwRes.ok) {
+        showMessage(pwData.message || "Password updated.", "success");
+      } else {
+        showMessage(pwData.error || "Failed to set password.", "error");
+      }
+    };
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.textContent = "Delete";
+    deleteBtn.disabled = Boolean(user.is_root) || user.username === currentUsername;
+    deleteBtn.onclick = async () => {
+      const confirmed = confirm(`Delete user "${user.username}"?`);
+      if (!confirmed) return;
+      const delRes = await fetch(`${API}/maintenance/users/${encodeURIComponent(user.username)}`, {
+        method: "DELETE",
+        headers: { Authorization: token }
+      });
+      const delData = await delRes.json();
+      if (delRes.ok) {
+        showMessage(delData.message || "User deleted.", "success");
+        loadUsers();
+      } else {
+        showMessage(delData.error || "Failed to delete user.", "error");
+      }
+    };
+
+    actionsTd.appendChild(saveRolesBtn);
+    actionsTd.appendChild(setPasswordBtn);
+    actionsTd.appendChild(deleteBtn);
+    tr.appendChild(actionsTd);
+
+    tableBody.appendChild(tr);
+  });
+}
 
 
 document.getElementById("restart-server").onclick = async () => {
@@ -412,11 +731,14 @@ document.getElementById("delete-test-bids").onclick = async () => {
 
 
 
-document.getElementById("logout").onclick = function logOut() {
+function logOut() {
   localStorage.removeItem("maintenanceToken");
+  currentUsername = null;
   showMessage("Logged out", "info");
   window.location.reload(); // Or redirect to login: window.location.href = "/maint.html"
-};
+}
+
+document.getElementById("logout").onclick = logOut;
 
 document.getElementById('save-config').addEventListener('click', async () => {
   const textarea = document.getElementById('config-json');
@@ -740,68 +1062,6 @@ document.addEventListener("click", async (e) => {
     }
   }
 
-    function promptPassword(message, message2) {
-  return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.style.cssText = `
-      position:fixed; inset:0; background:rgba(0,0,0,.5);
-      display:flex; align-items:center; justify-content:center; z-index:9999;
-    `;
-
-    const box = document.createElement("div");
-    box.style.cssText = `
-      background:#fff; padding:16px; border-radius:8px; width:min(420px, 92vw);
-      box-shadow:0 8px 24px rgba(0,0,0,.2); font-family:system-ui, sans-serif;
-    `;
-
-    const p = document.createElement("div");
-    p.textContent = message;
-    p.style.marginBottom = "10px";
-
-    
-      const p2 = document.createElement("div");
-      p2.textContent = message2;
-      p2.style.marginBottom = "10px";
-      
-    
-
-    const input = document.createElement("input");
-    input.type = "password";
-    input.autocomplete = "current-password";
-    input.style.cssText = "width:100%; padding:8px; box-sizing:border-box;";
-
-    const row = document.createElement("div");
-    row.style.cssText = "display:flex; justify-content:flex-end; gap:8px; margin-top:12px;";
-
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.textContent = "Cancel";
-
-    const ok = document.createElement("button");
-    ok.type = "button";
-    ok.textContent = "OK";
-
-    function close(val) {
-      overlay.remove();
-      resolve(val);
-    }
-
-    cancel.addEventListener("click", () => close(null));
-    ok.addEventListener("click", () => close(input.value));
-    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(null); });
-
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") close(input.value);
-      if (e.key === "Escape") close(null);
-    });
-
-    row.append(cancel, ok);
-    box.append(p2, p, input, row);
-    overlay.append(box);
-    document.body.append(overlay);
-    input.focus();
-  });
-}
 });
 
 let runCheck = document.getElementById("integrity-check");
@@ -1126,9 +1386,7 @@ async function loadEnabledPaymentMethods() {
   }
 
   const methods = await res.json();
-  const blocked = methods.blockedFlag;
-
-if (methods.blockedFlag) { document.getElementById('pay-error').textContent = "Default cashier password detected - The default must be changed to allow SumUp payments." };
+  document.getElementById('pay-error').textContent = "";
 
 
   Object.entries(methods.paymentMethods).forEach(([key, cfg]) => {
@@ -1205,6 +1463,7 @@ function startAutoRefresh() {
     if (document.visibilityState === "visible") {
       refreshAuctions();
       loadPptxImageList();
+      loadUsers();
 
     } else {
     }
@@ -1215,6 +1474,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     refreshAuctions();
     loadPptxImageList();
+    loadUsers();
 
   }
 });

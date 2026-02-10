@@ -6,12 +6,13 @@
 const jwt = require('jsonwebtoken');
 const { SECRET_KEY } = require('../config');
 const { logFromRequest, logLevels } = require('../logger');
+const { ROLE_LIST, ROLE_SET } = require('../auth-constants');
 
 /**
  * Central list of valid roles.
  * Keep this in one place so backends & tests stay in sync.
  */
-const VALID_ROLES = new Set(['admin', 'maintenance', 'cashier', 'slideshow']);
+const VALID_ROLES = new Set(ROLE_LIST);
 
   // Sleep function that returns a promise
   function sleep(ms) {
@@ -78,17 +79,46 @@ function authenticateRole(acceptedRoles) {
                 return res.status(403).json({ error: 'Session expired' });
             }
 
-            if (!roleSet.has(decoded.role)) {
+            const tokenRoles = new Set();
+            if (typeof decoded.role === 'string') {
+                tokenRoles.add(decoded.role);
+            }
+            if (Array.isArray(decoded.roles)) {
+                decoded.roles.forEach((r) => {
+                    if (typeof r === 'string') tokenRoles.add(r);
+                });
+            }
+            if (decoded.is_root === true || decoded.is_root === 1) {
+                ROLE_LIST.forEach((r) => tokenRoles.add(r));
+            }
+
+            const normalizedTokenRoles = [...tokenRoles]
+                .map((role) => String(role).trim().toLowerCase())
+                .filter((role) => ROLE_SET.has(role));
+
+            if (!normalizedTokenRoles.some((role) => roleSet.has(role))) {
                 logFromRequest(
                     req,
                     logLevels.WARN,
-                    `Role mismatch. Allowed: ${[...roleSet].join(', ')}, got ${decoded.role}`
+                    `Role mismatch. Allowed: ${[...roleSet].join(', ')}, token roles: ${normalizedTokenRoles.join(', ')}`
                 );
                 return res.status(403).json({ error: 'Unauthorized' });
             }
 
             // Success – attach user to request and continue
-            req.user = decoded;
+            req.user = {
+                ...decoded,
+                username: typeof decoded.username === 'string'
+                    ? decoded.username
+                    : (typeof decoded.role === 'string' ? decoded.role : 'unknown'),
+                roles: normalizedTokenRoles,
+                role: typeof decoded.role === 'string'
+                    ? decoded.role
+                    : (normalizedTokenRoles[0] || null),
+                auditUser: typeof decoded.username === 'string'
+                    ? decoded.username
+                    : (typeof decoded.role === 'string' ? decoded.role : 'unknown')
+            };
             next();
         });
     };

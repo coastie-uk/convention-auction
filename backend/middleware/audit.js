@@ -1,6 +1,7 @@
 const db = require('../db');
 
 const { logLevels, log } = require('../logger');
+const { getAuditActor } = require('../users');
 const auditTypes = ['item', 'bidder', 'payment', 'auction', 'database','server'];
 
 let stmtGetItemAuditInfo;
@@ -100,8 +101,8 @@ function audit(user, action, type, id, details = {}) {
   // helper to recompute balance and set audit status on items
 function recomputeBalanceAndAudit(bidder_id, req) {
 
-    if (typeof req === null || req === undefined) {
-      req = { user: { role: 'system' } };
+    if (req === null || req === undefined) {
+      req = { user: { username: 'system', role: 'system', auditUser: 'system' } };
     }
 
   const sums = db.get(
@@ -129,12 +130,12 @@ function recomputeBalanceAndAudit(bidder_id, req) {
     );
    if (balance <= 0) {
      items.forEach(it => {
-       audit(req.user.role, 'paid in full', 'item', it.id, { paddle: it.paddle_number, item_number: it.item_number, price: it.hammer_price, balance: balance, description: it.description });
+       audit(getAuditActor(req), 'paid in full', 'item', it.id, { paddle: it.paddle_number, item_number: it.item_number, price: it.hammer_price, balance: balance, description: it.description });
      })
    }
    else if (balance > 0) {
      items.forEach(it => {
-       audit(req.user.role, 'part paid', 'item', it.id, { paddle: it.paddle_number, item_number: it.item_number, price: it.hammer_price, balance: balance, description: it.description });
+       audit(getAuditActor(req), 'part paid', 'item', it.id, { paddle: it.paddle_number, item_number: it.item_number, price: it.hammer_price, balance: balance, description: it.description });
      })
    }
    return balance;

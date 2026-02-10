@@ -5,6 +5,9 @@ document.addEventListener("DOMContentLoaded", function () {
     const editSection = document.getElementById("edit-section");
     const loginButton = document.getElementById("login-button");
     const logoutButton = document.getElementById("logout");
+    const changePasswordButton = document.getElementById("change-own-password-admin");
+    const loggedInUserEl = document.getElementById("admin-logged-in-user");
+    const userMenuButton = document.getElementById("admin-user-menu-button");
     const itemsTableBody = document.getElementById("items-table-body");
     const editForm = document.getElementById("edit-form");
     const deleteButton = document.getElementById("delete-item");
@@ -46,6 +49,91 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const API = "/api"
 
+    function setAdminUserMenu(username) {
+        if (!username) return;
+        if (loggedInUserEl) loggedInUserEl.textContent = username;
+        if (userMenuButton) userMenuButton.textContent = username;
+    }
+
+    function promptPasswordChange() {
+        return new Promise((resolve) => {
+            const overlay = document.createElement("div");
+            overlay.style.cssText = `
+                position: fixed; inset: 0; background: rgba(0,0,0,.5);
+                display: flex; align-items: center; justify-content: center; z-index: 9999;
+            `;
+
+            const box = document.createElement("div");
+            box.style.cssText = `
+                background: #fff; padding: 16px; border-radius: 8px; width: min(420px, 92vw);
+                box-shadow: 0 8px 24px rgba(0,0,0,.2); font-family: system-ui, sans-serif;
+            `;
+
+            const heading = document.createElement("div");
+            heading.textContent = "Change password";
+            heading.style.cssText = "font-weight: 600; margin-bottom: 10px;";
+
+            const currentInput = document.createElement("input");
+            currentInput.type = "password";
+            currentInput.placeholder = "Current password";
+            currentInput.autocomplete = "current-password";
+            currentInput.style.cssText = "width:100%; padding:8px; margin-bottom:8px; box-sizing:border-box;";
+
+            const newInput = document.createElement("input");
+            newInput.type = "password";
+            newInput.placeholder = "New password";
+            newInput.autocomplete = "new-password";
+            newInput.style.cssText = "width:100%; padding:8px; margin-bottom:8px; box-sizing:border-box;";
+
+            const confirmInput = document.createElement("input");
+            confirmInput.type = "password";
+            confirmInput.placeholder = "Confirm new password";
+            confirmInput.autocomplete = "new-password";
+            confirmInput.style.cssText = "width:100%; padding:8px; box-sizing:border-box;";
+
+            const row = document.createElement("div");
+            row.style.cssText = "display:flex; justify-content:flex-end; gap:8px; margin-top:12px;";
+
+            const cancel = document.createElement("button");
+            cancel.type = "button";
+            cancel.textContent = "Cancel";
+
+            const submit = document.createElement("button");
+            submit.type = "button";
+            submit.textContent = "Update";
+
+            function close(result) {
+                overlay.remove();
+                resolve(result);
+            }
+
+            function submitForm() {
+                close({
+                    currentPassword: currentInput.value,
+                    newPassword: newInput.value,
+                    confirmPassword: confirmInput.value
+                });
+            }
+
+            cancel.addEventListener("click", () => close(null));
+            submit.addEventListener("click", submitForm);
+            overlay.addEventListener("click", (e) => { if (e.target === overlay) close(null); });
+
+            [currentInput, newInput, confirmInput].forEach((input) => {
+                input.addEventListener("keydown", (e) => {
+                    if (e.key === "Enter") submitForm();
+                    if (e.key === "Escape") close(null);
+                });
+            });
+
+            row.append(cancel, submit);
+            box.append(heading, currentInput, newInput, confirmInput, row);
+            overlay.append(box);
+            document.body.append(overlay);
+            currentInput.focus();
+        });
+    }
+
 
 
     // Check if admin is already authenticated
@@ -60,6 +148,7 @@ document.addEventListener("DOMContentLoaded", function () {
             });
             const data = await response.json();
             if (response.ok) {
+                setAdminUserMenu(data.user?.username || "admin");
                 loginSection.style.display = "none";
                 adminSection.style.display = "block";
                 await loadAuctions();
@@ -186,18 +275,25 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
     loginButton.addEventListener("click", async function login() {
+        const username = document.getElementById("admin-username").value.trim();
         const password = document.getElementById("admin-password").value;
+        if (!username || !password) {
+            showMessage("Username and password are required.", "error");
+            return;
+        }
         const response = await fetch(`${API}/login`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ password, role: "admin" })
+            body: JSON.stringify({ username, password, role: "admin" })
         });
+        document.getElementById("admin-username").value = "";
         document.getElementById("admin-password").value = "";
         const data = await response.json();
         if (response.ok) {
             localStorage.setItem("token", data.token);
             currencySymbol = data.currency || "£";
             localStorage.setItem("currencySymbol", currencySymbol);
+            setAdminUserMenu(data.user?.username || username);
             loginSection.style.display = "none";
             adminSection.style.display = "block";
 
@@ -214,6 +310,36 @@ document.addEventListener("DOMContentLoaded", function () {
         logout();
 
     })
+
+    changePasswordButton.addEventListener("click", async function () {
+        const passwordInput = await promptPasswordChange();
+        if (!passwordInput) return;
+        const { currentPassword, newPassword, confirmPassword } = passwordInput;
+        if (!currentPassword || !newPassword || !confirmPassword) {
+            showMessage("All password fields are required.", "error");
+            return;
+        }
+        if (newPassword !== confirmPassword) {
+            showMessage("Passwords do not match.", "error");
+            return;
+        }
+
+        const token = localStorage.getItem("token");
+        const response = await fetch(`${API}/change-password`, {
+            method: "POST",
+            headers: {
+                "Authorization": token,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ currentPassword, newPassword })
+        });
+        const data = await response.json();
+        if (response.ok) {
+            showMessage(data.message || "Password updated.", "success");
+        } else {
+            showMessage(data.error || "Failed to change password.", "error");
+        }
+    });
 
 
     addItemButton.addEventListener("click", function () {

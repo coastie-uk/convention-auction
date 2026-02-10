@@ -22,6 +22,16 @@ const app = express();
 const fsp = require('fs').promises;
 const { audit, auditTypes } = require('./middleware/audit');
 const { sanitiseText } = require('./middleware/sanitiseText');
+const {
+  ROLE_LIST,
+  ROLE_SET,
+  normaliseUsername,
+  isValidUsername,
+  getUserByUsername,
+  userHasRole,
+  setUserPassword,
+  getAuditActor
+} = require('./users');
 
 
 // const VALID_ROLES = new Set(['admin', 'maintenance', 'cashier', 'slideshow']);
@@ -42,6 +52,7 @@ const {
     RATE_LIMIT_MAX,
     LOGIN_LOCKOUT_AFTER,
     LOGIN_LOCKOUT,
+    PASSWORD_MIN_LENGTH,
     ALLOWED_ORIGINS,
     ENABLE_CORS
 } = require('./config');
@@ -88,13 +99,13 @@ function checkRateLimit(req) {
   return { limited: false };
 }
 
-function getLockoutKey(req, role) {
-  return `${getClientIp(req)}::${role || 'unknown'}`;
+function getLockoutKey(req, username, role) {
+  return `${getClientIp(req)}::${username || 'unknown'}::${role || 'unknown'}`;
 }
 
-function isLoginLockedOut(req, role) {
+function isLoginLockedOut(req, username, role) {
   const now = Date.now();
-  const key = getLockoutKey(req, role);
+  const key = getLockoutKey(req, username, role);
   const entry = loginLockoutState.get(key);
 
   if (!entry) return { locked: false };
@@ -109,9 +120,9 @@ function isLoginLockedOut(req, role) {
   return { locked: false };
 }
 
-function recordLoginFailure(req, role) {
+function recordLoginFailure(req, username, role) {
   const now = Date.now();
-  const key = getLockoutKey(req, role);
+  const key = getLockoutKey(req, username, role);
   let entry = loginLockoutState.get(key);
 
   if (!entry || (entry.lockedUntil && entry.lockedUntil <= now)) {
@@ -128,8 +139,8 @@ function recordLoginFailure(req, role) {
   loginLockoutState.set(key, entry);
 }
 
-function clearLoginFailures(req, role) {
-  loginLockoutState.delete(getLockoutKey(req, role));
+function clearLoginFailures(req, username, role) {
+  loginLockoutState.delete(getLockoutKey(req, username, role));
 }
 
 
@@ -255,7 +266,12 @@ app.post('/validate', async (req, res) => {
         }
         req.user = decoded;
         res.json({ token, versions: 
-            { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer } });
+            { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer },
+            user: {
+              username: decoded.username || decoded.role || null,
+              role: decoded.role || null,
+              roles: Array.isArray(decoded.roles) ? decoded.roles : (decoded.role ? [decoded.role] : [])
+            } });
         logFromRequest(req, logLevels.DEBUG, `Token validated successfully`);
 
 
@@ -268,78 +284,150 @@ app.post('/validate', async (req, res) => {
 // Also returns currency symbol + version data (as this route is the entry point to all users)
 //--------------------------------------------------------------------------
 app.post('/login', (req, res) => {
+    const { username, password, role } = req.body || {};
+    const normalizedRole = String(role || '').trim().toLowerCase();
+    const normalizedUsername = normaliseUsername(username);
 
-    const { password, role } = req.body;
-    if (!password || !role) {
-        logFromRequest(req, logLevels.ERROR, `No password provided`);
-        return res.status(400).json({ error: "Password required" });
+    if (!normalizedUsername || !password || !normalizedRole) {
+        logFromRequest(req, logLevels.ERROR, `Missing login fields`);
+        return res.status(400).json({ error: "Username, password and role are required" });
     }
 
-    const lockout = isLoginLockedOut(req, role);
+    if (!ROLE_SET.has(normalizedRole)) {
+        logFromRequest(req, logLevels.WARN, `Invalid login role requested: ${normalizedRole}`);
+        return res.status(400).json({ error: "Invalid role" });
+    }
+
+    if (!isValidUsername(normalizedUsername)) {
+        logFromRequest(req, logLevels.WARN, `Invalid username format: ${normalizedUsername}`);
+        return res.status(400).json({ error: "Invalid username format" });
+    }
+
+    const lockout = isLoginLockedOut(req, normalizedUsername, normalizedRole);
     if (lockout.locked) {
         const retryAfterSeconds = Math.ceil(lockout.retryAfterMs / 1000);
         res.set('Retry-After', retryAfterSeconds.toString());
-        logFromRequest(req, logLevels.WARN, `Login locked out for role ${role} from ${getClientIp(req)}`);
+        logFromRequest(req, logLevels.WARN, `Login locked out for ${normalizedUsername}/${normalizedRole} from ${getClientIp(req)}`);
         return res.status(429).json({ error: "Too many failed attempts. Please try again later." });
     }
 
-    db.get(`SELECT password FROM passwords WHERE role = ?`, [role], (err, row) => {
+    const user = getUserByUsername(normalizedUsername);
+    if (!user || !user.password) {
+      logFromRequest(req, logLevels.WARN, `Invalid credentials for ${normalizedUsername}/${normalizedRole}`);
+      recordLoginFailure(req, normalizedUsername, normalizedRole);
+      return res.status(403).json({ error: "Invalid username or password" });
+    }
 
-        if (err) return res.status(500).json({ error: err.message });
-        if (!row || !row.password) {
-            logFromRequest(req, logLevels.WARN, `Invalid password for role ${role} entered`);
-            recordLoginFailure(req, role);
-            return res.status(403).json({ error: "Invalid password" });
+    const stored = user.password;
+    const isHash = typeof stored === 'string' && stored.startsWith('$2');
+
+    const handleSuccess = () => {
+      const token = jwt.sign({
+        username: user.username,
+        role: normalizedRole,
+        roles: user.roles,
+        is_root: Number(user.is_root) === 1
+      }, SECRET_KEY, { expiresIn: sessionTime });
+
+      res.json({
+        token,
+        currency: CURRENCY_SYMBOL,
+        versions: { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer },
+        user: { username: user.username, role: normalizedRole, roles: user.roles }
+      });
+
+      logFromRequest(req, logLevels.INFO, `User "${user.username}" logged in with role "${normalizedRole}"`);
+      logFromRequest(req, logLevels.DEBUG, `full Token: ${token}....`);
+    };
+
+    if (isHash) {
+      bcrypt.compare(password, stored, (bErr, match) => {
+        if (bErr) return res.status(500).json({ error: bErr.message });
+        if (!match) {
+          logFromRequest(req, logLevels.WARN, `Invalid credentials for ${normalizedUsername}/${normalizedRole}`);
+          recordLoginFailure(req, normalizedUsername, normalizedRole);
+          return res.status(403).json({ error: "Invalid username or password" });
         }
-
-        const stored = row.password;
-
-        // If the stored password looks like a bcrypt hash, compare with bcrypt
-        const isHash = typeof stored === 'string' && stored.startsWith('$2');
-
-        const handleSuccess = () => {
-          const token = jwt.sign({ role }, SECRET_KEY, { expiresIn: sessionTime });
-          res.json({ token, currency: CURRENCY_SYMBOL, versions: 
-              { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer } 
-          });
-
-          logFromRequest(req, logLevels.INFO, `User with role "${role}" logged in`);
-          logFromRequest(req, logLevels.DEBUG, `full Token: ${token}....`);
-        };
-
-        if (isHash) {
-            bcrypt.compare(password, stored, (bErr, match) => {
-                if (bErr) return res.status(500).json({ error: bErr.message });
-                if (!match) {
-                    logFromRequest(req, logLevels.WARN, `Invalid password for role ${role} entered`);
-                    recordLoginFailure(req, role);
-                    return res.status(403).json({ error: "Invalid password" });
-                }
-                clearLoginFailures(req, role);
-                return handleSuccess();
-            });
-        } else {
-            // legacy plaintext entry - validate then upgrade to hashed password
-            if (stored !== password) {
-                logFromRequest(req, logLevels.WARN, `Invalid password for role ${role} entered`);
-                recordLoginFailure(req, role);
-                return res.status(403).json({ error: "Invalid password" });
-            }
-
-            // upgrade - hash and store
-            const hashed = bcrypt.hashSync(password, 12);
-            db.run(`UPDATE passwords SET password = ? WHERE role = ?`, [hashed, role], function (uErr) {
-                if (uErr) {
-                    logFromRequest(req, logLevels.ERROR, `Failed to upgrade plaintext password for ${role}: ${uErr.message}`);
-                } else {
-                    logFromRequest(req, logLevels.INFO, `Upgraded plaintext password to bcrypt for role ${role}`);
-                }
-                clearLoginFailures(req, role);
-                return handleSuccess();
-            });
+        if (!userHasRole(user, normalizedRole)) {
+          logFromRequest(req, logLevels.WARN, `User "${normalizedUsername}" attempted unassigned role "${normalizedRole}"`);
+          return res.status(403).json({ error: "Role not assigned to this user" });
         }
+        clearLoginFailures(req, normalizedUsername, normalizedRole);
+        return handleSuccess();
+      });
+      return;
+    }
 
-    });
+    // Legacy plaintext user entries are upgraded after successful login.
+    if (stored !== password) {
+      logFromRequest(req, logLevels.WARN, `Invalid credentials for ${normalizedUsername}/${normalizedRole}`);
+      recordLoginFailure(req, normalizedUsername, normalizedRole);
+      return res.status(403).json({ error: "Invalid username or password" });
+    }
+
+    const hashed = bcrypt.hashSync(password, 12);
+    try {
+      setUserPassword(user.username, hashed);
+      logFromRequest(req, logLevels.INFO, `Upgraded plaintext password to bcrypt for user ${user.username}`);
+    } catch (uErr) {
+      logFromRequest(req, logLevels.ERROR, `Failed to upgrade plaintext password for ${user.username}: ${uErr.message}`);
+    }
+
+    if (!userHasRole(user, normalizedRole)) {
+      logFromRequest(req, logLevels.WARN, `User "${normalizedUsername}" attempted unassigned role "${normalizedRole}"`);
+      return res.status(403).json({ error: "Role not assigned to this user" });
+    }
+
+    clearLoginFailures(req, normalizedUsername, normalizedRole);
+    return handleSuccess();
+});
+
+//--------------------------------------------------------------------------
+// POST /change-password
+// Authenticated users can change their own password.
+//--------------------------------------------------------------------------
+app.post('/change-password', authenticateRole(ROLE_LIST), async (req, res) => {
+  const username = req.user?.username;
+  const { currentPassword, newPassword } = req.body || {};
+
+  if (!username || !currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Missing password fields' });
+  }
+
+  if (String(newPassword).length < PASSWORD_MIN_LENGTH) {
+    return res.status(400).json({ error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters.` });
+  }
+
+  try {
+    const user = getUserByUsername(username);
+    if (!user || !user.password) {
+      return res.status(403).json({ error: 'Invalid password' });
+    }
+
+    const stored = user.password;
+    const isHash = typeof stored === 'string' && stored.startsWith('$2');
+    const matches = isHash
+      ? bcrypt.compareSync(currentPassword, stored)
+      : stored === currentPassword;
+
+    if (!matches) {
+      return res.status(403).json({ error: 'Current password is incorrect' });
+    }
+
+    const hashed = bcrypt.hashSync(newPassword, 12);
+    const result = setUserPassword(username, hashed);
+    if (!result || result.changes === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    audit(getAuditActor(req), 'change own password', 'server', null, { username });
+        logFromRequest(req, logLevels.INFO, `Self-service password change for ${username}`);
+
+    return res.json({ message: 'Password updated.' });
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Self-service password change failed for ${username}: ${err.message}`);
+    return res.status(500).json({ error: 'Failed to change password' });
+  }
 });
 
 //--------------------------------------------------------------------------
@@ -347,11 +435,15 @@ app.post('/login', (req, res) => {
 // Allows admin to retrieve slideshow credentials
 //--------------------------------------------------------------------------
 
-app.get('/slideshow-auth', authenticateRole("admin"), (req, res) => {
-    const role = 'slideshow';
-    const token = jwt.sign({ role }, SECRET_KEY, { expiresIn: sessionTime });
-    res.json({ token });
-});
+// app.get('/slideshow-auth', authenticateRole("admin"), (req, res) => {
+//     const role = 'slideshow';
+//     const token = jwt.sign({
+//       username: req.user?.username || 'unknown',
+//       role,
+//       roles: [role]
+//     }, SECRET_KEY, { expiresIn: sessionTime });
+//     res.json({ token });
+// });
 
 // Get the next item number for a given auction ID
 function getNextItemNumber(auction_id, callback) {
@@ -374,9 +466,12 @@ app.post('/auctions/:publicId/newitem', checkAuctionState(['setup', 'locked']), 
     try {
         const auth = req.header(`Authorization`);
         let is_admin = false;
+        let actor = 'public';
         if (auth) {
             try {
-                jwt.verify(auth, SECRET_KEY);
+                const decoded = jwt.verify(auth, SECRET_KEY);
+                req.user = decoded;
+                actor = decoded.username || decoded.role || 'admin';
                 is_admin = true;
                 logFromRequest(req, logLevels.DEBUG, `New item request (admin) passed check`);
             } catch (err) {
@@ -508,8 +603,7 @@ app.post('/auctions/:publicId/newitem', checkAuctionState(['setup', 'locked']), 
                             }
                             res.json({ id: this.lastID, sanitisedDescription, sanitisedContributor, sanitisedArtist, photo: photoPath });
                             logFromRequest(req, logLevels.INFO, `Item ${this.lastID} stored for auction ${auction_id} as item #${itemNumber}`);
-                            const user = is_admin ? "admin" : "public";
-                            audit(user, 'new item', 'item', this.lastID, { description: sanitisedDescription, initial_number: itemNumber });
+                            audit(is_admin ? getAuditActor(req) || actor : 'public', 'new item', 'item', this.lastID, { description: sanitisedDescription, initial_number: itemNumber });
 
                         }
                     );
@@ -710,7 +804,7 @@ try {
                 }
                 res.json({ message: 'Item updated', photo: photoPath });
                 logFromRequest(req, logLevels.INFO, `Update item completed for ${id}`);
-                audit(req.user.role, 'updated', 'item', id, { changes: updateSummary, photo_updated: !!req.file });
+                audit(getAuditActor(req), 'updated', 'item', id, { changes: updateSummary, photo_updated: !!req.file });
 
             });
         } else {
@@ -806,7 +900,7 @@ app.post('/auctions/:auctionId/items/:id/move-auction/:targetAuctionId', authent
                             }
                             logFromRequest(req, logLevels.DEBUG, `Renumbered ${count} items in old auction ${oldAuctionId}`);
                         });
-                        audit(req.user.role, 'moved auction', 'item', id, { old_auction: oldAuctionId, new_auction: newAuctionId, new_no: newNumber });
+                        audit(getAuditActor(req), 'moved auction', 'item', id, { old_auction: oldAuctionId, new_auction: newAuctionId, new_no: newNumber });
 
                         res.json({ message: `Item moved to auction ${newAuctionId}`, item_number: newNumber });
                     });
@@ -880,7 +974,7 @@ app.delete('/items/:id', authenticateRole("admin"), checkAuctionState(['setup', 
                     logFromRequest(req, logLevels.INFO, `Renumbered ${count} items in auction ${row.auction_id} after deletion`);
                 }
             });
-            audit(req.user.role, 'delete', 'item', itemId, { auction_id: row.auction_id, description: row.description });
+            audit(getAuditActor(req), 'delete', 'item', itemId, { auction_id: row.auction_id, description: row.description });
             res.json({ message: 'Item deleted' });
         });
     });
@@ -1181,12 +1275,27 @@ app.post("/validate-auction", async (req, res) => {
     const sanitised_short_name = sanitiseText(short_name, 64);
     logFromRequest(req, logLevels.DEBUG, `Auction name received: ${short_name}`);
 
-    let is_admin = false;
+    let canBypassStateCheck = false;
     if (auth) {
         try {
-            jwt.verify(auth, SECRET_KEY);
-            is_admin = true;
-            logFromRequest(req, logLevels.DEBUG, `Validate admin bypass accepted`);
+            const decoded = jwt.verify(auth, SECRET_KEY);
+            const tokenRoles = new Set();
+            if (typeof decoded?.role === 'string') tokenRoles.add(String(decoded.role).trim().toLowerCase());
+            if (Array.isArray(decoded?.roles)) {
+              decoded.roles.forEach((role) => {
+                if (typeof role === 'string') tokenRoles.add(String(role).trim().toLowerCase());
+              });
+            }
+            if (decoded?.is_root === true || decoded?.is_root === 1) {
+              ROLE_LIST.forEach((role) => tokenRoles.add(role));
+            }
+
+            canBypassStateCheck = tokenRoles.has('slideshow') || tokenRoles.has('admin') || tokenRoles.has('maintenance');
+            if (!canBypassStateCheck) {
+              logFromRequest(req, logLevels.WARN, `Validate-auction auth token lacks bypass role`);
+              return res.status(403).json({ error: "Not authorised" });
+            }
+            logFromRequest(req, logLevels.DEBUG, `Validate-auction bypass accepted for role set: ${Array.from(tokenRoles).join(',')}`);
         } catch (err) {
             return res.status(403).json({ error: "Not authorised" });
         }
@@ -1207,13 +1316,13 @@ app.post("/validate-auction", async (req, res) => {
                 return res.status(400).json({ valid: false, error: "Auction name not found" });
             }
                 // admin override to support slideshow function
-            else if (row.status !== `setup` && !is_admin) {
+            else if (row.status !== `setup` && !canBypassStateCheck) {
                 logFromRequest(req, logLevels.WARN, `Auction "${short_name}" not active (status: ${row.status})`);
                 return res.status(400).json({ valid: false, error: "This auction is not currently accepting submissions" });
             }
 
-            if (!is_admin) logFromRequest(req, logLevels.INFO, `Auction "${short_name}" exists and accepting submissions`);
-            if (is_admin) logFromRequest(req, logLevels.INFO, `Auction "${short_name}" exists - state check ignored as valid auth supplied`);
+            if (!canBypassStateCheck) logFromRequest(req, logLevels.INFO, `Auction "${short_name}" exists and accepting submissions`);
+            if (canBypassStateCheck) logFromRequest(req, logLevels.INFO, `Auction "${short_name}" exists - state check ignored as authorised token supplied`);
 
             res.json({ valid: true, short_name: row.short_name, full_name: row.full_name, logo: row.logo, public_id: row.public_id });
         }
@@ -1466,7 +1575,8 @@ app.post("/auctions/update-status", authenticateRole(["admin", "maintenance"]), 
 
         // If admin, check auction settings
         const role = req.user?.role;
-        if ((role === "admin" && auction.admin_can_change_state === 0)) {
+        const hasMaintenanceRole = Array.isArray(req.user?.roles) && req.user.roles.includes('maintenance');
+        if ((role === "admin" && !hasMaintenanceRole && auction.admin_can_change_state === 0)) {
             logFromRequest(req, logLevels.ERROR, `${role} is not allowed to change state of ${auction_id}`);
 
             return res.status(403).json({ error: 'State change not allowed. Check auction settings' });
@@ -1487,7 +1597,7 @@ app.post("/auctions/update-status", authenticateRole(["admin", "maintenance"]), 
             if (err) return res.status(500).json({ error: err.message });
 
             logFromRequest(req, logLevels.INFO, `Updated status for auction ${auction_id} ${auction.short_name} to: ${normalizedStatus}`);
-            audit(role, 'state change', 'auction', auction_id, { auction: auction_id, name: auction.short_name, new_state: normalizedStatus });
+            audit(getAuditActor(req), 'state change', 'auction', auction_id, { auction: auction_id, name: auction.short_name, new_state: normalizedStatus });
             // clear the auction state cache
        //     checkAuctionState.auctionStateCache.del(auction_id);
             res.json({ message: `Auction ${auction_id} ${auction.short_name} status updated to ${normalizedStatus}` });

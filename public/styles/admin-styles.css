@@ -87,6 +87,19 @@ h2 {
     background-color: #f0f0f0;
 }
 
+.user-menu-button {
+    min-width: 120px;
+    text-align: left;
+}
+
+.user-menu-username-row {
+    padding: 10px 15px;
+    border-bottom: 1px solid #eee;
+    color: #333;
+    font-size: 0.9rem;
+    white-space: nowrap;
+}
+
 .dropdown:hover .dropdown-content,
 .dropdown:focus-within .dropdown-content {
     display: flex;

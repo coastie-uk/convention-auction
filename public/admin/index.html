@@ -18,6 +18,7 @@
         <section id="login-section">
             <div class="login-container">
                 <h2>Admin Login</h2>
+                <input type="text" id="admin-username" placeholder="Username" autocomplete="username">
                 <input type="password" id="admin-password" placeholder="Enter Password">
                 <button id="login-button">Login</button>
                 <p id="error-message" style="color:red;"></p>
@@ -84,10 +85,9 @@
                         <div class="dropdown-content">
                             <button id="public">Public form</button>
                             <button id="livefeed">Live Feed</button>
-                            <a href="/maint/index.html" target="_blank"><button>Maintenance (login
-                                    required)</button></a>
-                            <a href="/cashier/index.html" target="_blank"><button>Cashier (login required)</button></a>
-                            <a href="/slideshow/index.html" target="_blank"><button>Slideshow (will logout)</button></a>
+                            <a href="/maint/index.html" target="_blank"><button>Maintenance</button></a>
+                            <a href="/cashier/index.html" target="_blank"><button>Cashier</button></a>
+                            <a href="/slideshow/index.html" target="_blank"><button>Slideshow</button></a>
 
 
                         </div>
@@ -95,7 +95,14 @@
 
 
                     <a href="/help/user-guide.html?section=admin-panel" target="_blank"><button>User Guide</button></a>
-                    <button id="logout">Logout</button>
+                    <div class="dropdown user-menu-dropdown">
+                        <button id="admin-user-menu-button" class="user-menu-button">User</button>
+                        <div class="dropdown-content user-menu-content">
+                            <div class="user-menu-username-row">Signed in as <strong id="admin-logged-in-user">unknown</strong></div>
+                            <button id="change-own-password-admin">Change Password</button>
+                            <button id="logout">Logout</button>
+                        </div>
+                    </div>
                 </div>
             </div>
 

@@ -422,14 +422,23 @@
                 auctionInput.style.border = "1px solid #ccc";
                 auctionInput.style.marginBottom = "10px";
 
-                const adminPassword = document.createElement("input");
-                adminPassword.type = "password";
-                adminPassword.placeholder = "Enter Admin Password";
-                adminPassword.style.padding = "10px";
-                adminPassword.style.fontSize = "1.2rem";
-                adminPassword.style.borderRadius = "6px";
-                adminPassword.style.border = "1px solid #ccc";
-                adminPassword.style.marginBottom = "10px";
+                const slideshowUsername = document.createElement("input");
+                slideshowUsername.type = "text";
+                slideshowUsername.placeholder = "Slideshow Username";
+                slideshowUsername.style.padding = "10px";
+                slideshowUsername.style.fontSize = "1.2rem";
+                slideshowUsername.style.borderRadius = "6px";
+                slideshowUsername.style.border = "1px solid #ccc";
+                slideshowUsername.style.marginBottom = "10px";
+
+                const slideshowPassword = document.createElement("input");
+                slideshowPassword.type = "password";
+                slideshowPassword.placeholder = "Enter Slideshow Password";
+                slideshowPassword.style.padding = "10px";
+                slideshowPassword.style.fontSize = "1.2rem";
+                slideshowPassword.style.borderRadius = "6px";
+                slideshowPassword.style.border = "1px solid #ccc";
+                slideshowPassword.style.marginBottom = "10px";
 
                 const button = document.createElement("button");
                 button.textContent = "Submit";
@@ -451,23 +460,16 @@
                         const loginRes = await fetch(`${API}/login`, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ password: adminPassword.value.trim(), role: "admin" })
+                            body: JSON.stringify({
+                                username: slideshowUsername.value.trim(),
+                                password: slideshowPassword.value.trim(),
+                                role: "slideshow"
+                            })
                         });
 
                         const loginData = await loginRes.json();
-                        if (!loginRes.ok) throw new Error(loginData.error || "Admin login failed");
-
-                        const tokenRes = await fetch(`${API}/slideshow-auth`, {
-
-                            headers: {
-                                "Content-Type": "application/json",
-                                Authorization: loginData.token
-                            }
-                        });
-
-                        const tokenData = await tokenRes.json();
-                        if (!tokenRes.ok) throw new Error(tokenData.error || "Failed to get slideshow token");
-                        slideshowToken = tokenData.token;
+                        if (!loginRes.ok) throw new Error(loginData.error || "Slideshow login failed");
+                        const slideshowToken = loginData.token;
 
                         // const shortName = auctionInput.value.trim();
 
@@ -501,7 +503,8 @@
                     container.appendChild(notice);
                 }
                 container.appendChild(auctionInput);
-                container.appendChild(adminPassword);
+                container.appendChild(slideshowUsername);
+                container.appendChild(slideshowPassword);
                 container.appendChild(button);
                 container.appendChild(message);
 

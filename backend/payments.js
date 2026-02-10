@@ -30,7 +30,6 @@ const {
   CURRENCY
 } = require('./config');
 
-const bcrypt = require('bcryptjs');
 const toPounds = (minor) => (minor / 100).toFixed(2);
 const {audit, recomputeBalanceAndAudit } = require('./middleware/audit');
 const { channel } = require('node:diagnostics_channel');
@@ -45,26 +44,6 @@ const posInt = (x) => Number.isInteger(x) && x > 0;
 // supports channels: 'hosted' (desktop/QR), 'app' (direct app)
 
 api.post('/payments/intents', authenticateRole("cashier"), checkAuctionState(['settlement']), async (req, res) => {
-
-// Check if the cashier account is still on its default password
-try {
-  const row = db.get(`SELECT password FROM passwords WHERE role = 'cashier'`);
-  if (row) {
-    const isDefault = bcrypt.compareSync('cashier123', row.password);
-    if (isDefault && (SUMUP_WEB_ENABLED || SUMUP_CARD_PRESENT_ENABLED)) {
-      log("Server", logLevels.WARN, `The cashier account is using the default password with SumUp enabled. SumUp payments blocked.`);
-      return res.status(403).json({ error: 'SumUp payments blocked due to default cashier password' });
-    }
-  } else {
-    log("Server", logLevels.ERROR, `No cashier account found in passwords table.`);
-  }
-}
-catch (error) {
-  log("Server", logLevels.ERROR, `Error checking cashier password: ${error.message}`);
-  return res.status(500).json({ error: 'internal_error' });
-}
-
-
   try {
    expireStaleIntents();
     const { bidder_id, amount_minor, currency, channel, note } = req.body || {};
@@ -151,8 +130,6 @@ api.get('/payments/intents/:id', authenticateRole("cashier"), (req, res) => {
 // Not used in production flow.
 api.get('/payments/sumup/webhook', async (req, res) => {
   logFromRequest(req, logLevels.INFO, `Sumup web test webhook received ${JSON.stringify(req.query)}`);
-    const time = new Date().toISOString();
-    const type = 'Web';
   res.type('html').send(generateTestPage('Web', req));
     return;
 });

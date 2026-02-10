@@ -1,6 +1,6 @@
 /**
  * @file        server-management.js
- * @description Small utility to 1) set the maintenance password in case a lockout occurs and 2) clear the audit log 
+ * @description Small utility for password reset, audit maintenance, database reset, and root-only user reset.
  * @author      Chris Staples
  * @license     GPL3
  */
@@ -11,6 +11,7 @@ const db = require('./db');
 const { audit } = require('./middleware/audit');
 const { log, logLevels } = require('./logger');
 const { PASSWORD_MIN_LENGTH } = require('./config');
+const { getUserByUsername, setUserPassword, normaliseUsername, ROOT_USERNAME } = require('./users');
 
 const linuxusername = process.env.USER || 'Unknown';
 
@@ -20,56 +21,54 @@ const rl = readline.createInterface({
   output: process.stdout
 });
 
-// Function to set maintenance password
+// Function to set a user password
 function setMaintenancePassword() {
-  rl.question("Enter new maintenance password: ", (newPassword) => {
-
-    if (!newPassword || newPassword.length < PASSWORD_MIN_LENGTH) {
-      console.log(`ERROR: Password must be at least ${PASSWORD_MIN_LENGTH} characters.`);
+  rl.question("Enter username to reset (default: root): ", (usernameInput) => {
+    const targetUsername = normaliseUsername(usernameInput) || 'root';
+    const user = getUserByUsername(targetUsername);
+    if (!user) {
+      console.log(`ERROR: User "${targetUsername}" not found.`);
       showMenu();
+      return;
     }
-    rl.question("Confirm new maintenance password: ", (confirmPassword) => {
-      if (newPassword !== confirmPassword) {
-        console.log("ERROR: Passwords do not match.");
+
+    rl.question(`Enter new password for "${targetUsername}": `, (newPassword) => {
+
+      if (!newPassword || newPassword.length < PASSWORD_MIN_LENGTH) {
+        console.log(`ERROR: Password must be at least ${PASSWORD_MIN_LENGTH} characters.`);
         showMenu();
+        return;
       }
-      else updateMaintenancePassword(newPassword);
+
+      rl.question("Confirm new password: ", (confirmPassword) => {
+        if (newPassword !== confirmPassword) {
+          console.log("ERROR: Passwords do not match.");
+          showMenu();
+        }
+        else updateMaintenancePassword(targetUsername, newPassword);
+      });
     });
   });
   showMenu();
 }
 
-function updateMaintenancePassword(newPassword) {
+function updateMaintenancePassword(username, newPassword) {
   // Update password in database
 
   // Hash password before storing
   const hashed = bcrypt.hashSync(newPassword, 12);
 
-  db.run(
-    `UPDATE passwords SET password = ? WHERE role = 'maintenance'`,
-    [hashed],
-    function (err) {
-      if (err) {
-        log("Server", logLevels.ERROR, `Error updating maintenance password: ${err.message}`);
-      } else if (this.changes === 0) {
-        log("Server", logLevels.INFO, "Maintenance role not found. Inserting new maintenance password.");
-        db.run(
-          `INSERT INTO passwords (role, password) VALUES ('maintenance', ?)`,
-          [hashed],
-          (err) => {
-            if (err) {
-              log("Server", logLevels.ERROR, `Error inserting maintenance password: ${err.message}`);
-            } else {
-              log("Server", logLevels.INFO, "Maintenance password inserted successfully.");
-            }
-          }
-        );
-      } else {
-        log("Server", logLevels.INFO, "Maintenance password updated successfully.");
-        audit('system', 'change password', 'server', null, { changed_role: 'maintenance', method: 'server-management.js', user: linuxusername });
-      }
+  try {
+    const result = setUserPassword(username, hashed);
+    if (!result || result.changes === 0) {
+      log("Server", logLevels.ERROR, `User ${username} not found.`);
+    } else {
+      log("Server", logLevels.INFO, `Password updated successfully for ${username}.`);
+      audit('system', 'change password', 'server', null, { changed_user: username, method: 'server-management.js', user: linuxusername });
     }
-  );
+  } catch (err) {
+    log("Server", logLevels.ERROR, `Error updating password for ${username}: ${err.message}`);
+  }
   showMenu();
 };
 
@@ -106,39 +105,59 @@ function clearAuditLog() {
 }
 
 function resetDatabase(counters = false) {
-
-    rl.question(`This will clear the database. ${counters ? ' and reset all counters' : ''}  This action cannot be undone. Type \`reset\` to proceed: `, (answer) => {
+  rl.question(`This will clear the database. ${counters ? ' and reset all counters' : ''}  This action cannot be undone. Type \`reset\` to proceed: `, (answer) => {
     const response = String(answer || "").trim().toLowerCase();
     if (response === "reset") {
-  // TODO delete all data from all tables except passwords and audit_log
-  try {
-  db.pragma('foreign_keys = OFF');
-  db.prepare("DELETE FROM bidders").run();
-  db.prepare("DELETE FROM auctions").run();
-  db.prepare("DELETE FROM items").run();
-  db.prepare("DELETE FROM payment_intents").run();
-  db.prepare("DELETE FROM payments").run();
-  if (counters) {
-    db.prepare("DELETE FROM sqlite_sequence").run();
-    log("Server", logLevels.INFO, "Database counters reset.");
-    audit('system', 'reset database counters', 'server', null, { method: 'server-management.js', user: linuxusername });
-  }
-  db.pragma('foreign_keys = ON');
-  }
-  catch (err) {
-    log("Server", logLevels.ERROR, `Error resetting database: ${err.message}`);
-    db.pragma('foreign_keys = ON');
+      // TODO delete all data from all tables except passwords and audit_log
+      try {
+        db.pragma('foreign_keys = OFF');
+        db.prepare("DELETE FROM bidders").run();
+        db.prepare("DELETE FROM auctions").run();
+        db.prepare("DELETE FROM items").run();
+        db.prepare("DELETE FROM payment_intents").run();
+        db.prepare("DELETE FROM payments").run();
+        if (counters) {
+          db.prepare("DELETE FROM sqlite_sequence").run();
+          log("Server", logLevels.INFO, "Database counters reset.");
+          audit('system', 'reset database counters', 'server', null, { method: 'server-management.js', user: linuxusername });
+        }
+        db.pragma('foreign_keys = ON');
+      } catch (err) {
+        log("Server", logLevels.ERROR, `Error resetting database: ${err.message}`);
+        db.pragma('foreign_keys = ON');
+        showMenu();
+        return;
+      }
+      log("Server", logLevels.INFO, "Database reset to initial state.");
+      audit('system', 'reset database', 'server', null, { method: 'server-management.js', user: linuxusername });
+      showMenu();
+      return;
+    }
+    console.log("Database reset operation cancelled.");
     showMenu();
-    return;
-  }
-  log("Server", logLevels.INFO, "Database reset to initial state.");
-  
-  audit('system', 'reset database', 'server', null, { method: 'server-management.js', user: linuxusername });
-  showMenu();
+  });
 }
-     else {
-      console.log("Database reset operation cancelled.");
-      showMenu();}
+
+function removeAllNonRootUsers() {
+  rl.question(`This will delete all users except "${ROOT_USERNAME}". Type \`delete\` to proceed: `, (answer) => {
+    const response = String(answer || "").trim().toLowerCase();
+    if (response === "delete") {
+      try {
+        const result = db.prepare("DELETE FROM users WHERE lower(username) <> lower(?)").run(ROOT_USERNAME);
+        log("Server", logLevels.INFO, `Deleted ${result.changes} non-root user(s).`);
+        audit('system', 'remove non-root users', 'server', null, {
+          method: 'server-management.js',
+          user: linuxusername,
+          removed_count: result.changes,
+          root_username: ROOT_USERNAME
+        });
+      } catch (err) {
+        log("Server", logLevels.ERROR, `Error removing non-root users: ${err.message}`);
+      }
+    } else {
+      console.log("User removal operation cancelled.");
+    }
+    showMenu();
   });
 }
 
@@ -148,12 +167,13 @@ function resetDatabase(counters = false) {
 function showMenu() {
   console.log("\n==============================");
   console.log("Server Maintenance Tasks:");
-  console.log("1) Set maintenance password");
+  console.log("1) Set user password");
   console.log("2) Clear database audit log");
   console.log("3) Reset database");
   console.log("4) Reset database including counters");
+  console.log(`5) Remove all users except "${ROOT_USERNAME}"`);
 
-  console.log("5) Exit");
+  console.log("6) Exit");
   console.log("==============================\n");
   rl.question("Select an option: ", (answer) => {
     const choice = String(answer || "").trim();
@@ -177,6 +197,11 @@ function showMenu() {
     }
 
     if (choice === "5") {
+      removeAllNonRootUsers();
+      showMenu();
+    }
+
+    if (choice === "6") {
       rl.close();
       db.close();
       process.exit(0);

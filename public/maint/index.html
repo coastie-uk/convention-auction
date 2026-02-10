@@ -14,6 +14,7 @@
     <section id="login-section">
       <div class="login-container">
       <h2>Maintenance Login</h2>
+      <input type="text" id="maintenance-username" placeholder="Username" autocomplete="username">
       <input type="password" id="maintenance-password" placeholder="Enter Maintenance Password">
       <button id="login-button">Login</button>
       <p id="error-message" style="color:red;"></p>
@@ -24,10 +25,30 @@
     <section id="maintenance-section" style="display:none;">
       <h1>Maintenance Panel</h1>
       <p id="software-version" style="margin-top:5px; color:#666;"></p>
-      <a href="/help/user-guide.html?section=maintenance-panel" target="_blank"><button>User guide</button></a>
+      <div class="top-actions">
+        <a href="/help/user-guide.html?section=maintenance-panel" target="_blank"><button>User guide</button></a>
 
-              <button onclick="window.location.href='/admin'">Back to Admin Panel</button>
-        <button id="logout">Log Out</button>
+        <div class="user-menu-dropdown">
+                        <button>Other pages</button>
+                        <div class="user-menu-content">
+
+                            <a href="/admin/index.html" target="_blank"><button>Admin</button></a>
+                            <a href="/cashier/index.html" target="_blank"><button>Cashier</button></a>
+                            <a href="/slideshow/index.html" target="_blank"><button>Slideshow</button></a>
+
+
+                        </div>
+                    </div>
+
+        <div class="user-menu-dropdown">
+          <button id="maintenance-user-menu-button" class="user-menu-button">User</button>
+          <div class="user-menu-content">
+            <div class="user-menu-username-row">Signed in as <strong id="maintenance-logged-in-user">unknown</strong></div>
+            <button id="change-own-password">Change Password</button>
+            <button id="logout">Log Out</button>
+          </div>
+        </div>
+      </div>
 
 
       <details class="group" open>
@@ -112,17 +133,33 @@
 
       <details class="group">
         <summary>Security</summary>
-        
-        <label for="password-role">Select role:</label>
-        <select id="password-role">
-          <option value="admin">Admin</option>
-          <option value="cashier">Cashier</option>
-          <option value="maintenance">Maintenance</option>
-        </select>
 
-        <input type="password" id="new-password" placeholder="New Password">
-        <input type="password" id="confirm-password" placeholder="Confirm New Password">
-        <button id="change-password">Change Password</button>
+        <h3>User Accounts</h3>
+        <table id="user-table" style="width:100%; border-collapse: collapse; margin-top: 10px;">
+          <thead>
+            <tr>
+              <th style="text-align:left; border-bottom:1px solid #ccc;">Username</th>
+              <th style="text-align:center; border-bottom:1px solid #ccc;">Admin</th>
+              <th style="text-align:center; border-bottom:1px solid #ccc;">Cashier</th>
+              <th style="text-align:center; border-bottom:1px solid #ccc;">Maintenance</th>
+              <th style="text-align:center; border-bottom:1px solid #ccc;">Slideshow</th>
+              <th style="text-align:left; border-bottom:1px solid #ccc;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="user-table-body"></tbody>
+        </table>
+
+        <h4>Add User</h4>
+        <input type="text" id="new-user-username" placeholder="Username (letters/numbers/._-)" autocomplete="username">
+        <input type="password" id="new-user-password" placeholder="Temporary Password" autocomplete="new-password">
+        <input type="password" id="new-user-confirm-password" placeholder="Confirm Temporary Password" autocomplete="new-password">
+        <div id="new-user-roles" style="display:flex; gap: 12px; flex-wrap: wrap; margin-top: 8px;">
+          <label><input type="checkbox" name="new-user-role" value="admin"> Admin</label>
+          <label><input type="checkbox" name="new-user-role" value="cashier"> Cashier</label>
+          <label><input type="checkbox" name="new-user-role" value="maintenance"> Maintenance</label>
+          <label><input type="checkbox" name="new-user-role" value="slideshow"> Slideshow</label>
+        </div>
+        <button id="add-user-button">Add User</button>
       </details>
 
       <details class="group">
@@ -222,6 +259,7 @@
       <option value="payment">Payment</option>
       <option value="auction">Auction</option>
       <option value="database">Database</option>
+      <option value="server">Server</option>
     </select>
     <button id="fetch-audit-log">Fetch Audit log</button>
   <button id="export-audit-log">Download CSV</button>

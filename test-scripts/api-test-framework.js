@@ -12,6 +12,7 @@ function initFramework(options) {
     logFilePath,
     loginPath = "/login",
     loginRole = "maintenance",
+    loginUsername = loginRole,
     loginPassword,
     loginHeaders = { "Content-Type": "application/json" },
     timeoutMs = 10000,
@@ -160,14 +161,14 @@ function initFramework(options) {
   }
 
   async function login() {
-    context.token = await loginAs(loginRole, loginPassword);
+    context.token = await loginAs(loginRole, loginPassword, loginUsername);
   }
 
-  async function loginAs(role, password) {
+  async function loginAs(role, password, username = role) {
     const { res, json, text } = await fetchJson(`${baseUrl}${loginPath}`, {
       method: "POST",
       headers: loginHeaders,
-      body: JSON.stringify({ role, password })
+      body: JSON.stringify({ username, role, password })
     });
 
     if (res.status !== 200 || !json || !json.token) {

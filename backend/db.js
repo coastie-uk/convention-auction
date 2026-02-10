@@ -8,9 +8,11 @@
 const Database = require('better-sqlite3');
 const path     = require('path');
 const fs       = require('fs');
-const schemaVersion = '2.3'; 
+const crypto   = require('crypto');
+const schemaVersion = '2.4';
 const { logLevels, log } = require('./logger');
 const bcrypt = require('bcryptjs');
+const { ROLE_LIST, ROLE_SET, ROOT_USERNAME } = require('./auth-constants');
 const {
     DB_PATH,
     DB_NAME
@@ -23,6 +25,7 @@ const {
 // 2.1   Add admin_can_change_state to auctions table
 // 2.2  Add payment_intents table and additional payments columns for SumUp integration
 // 2.3  Adds reversals
+// 2.4  Adds username-based users with multi-role permissions
 
 let dbPath = path.join(DB_PATH, DB_NAME);
 if (DB_PATH === ".") {
@@ -93,9 +96,18 @@ if(existingSchemaVersion !== schemaVersion || isNewDatabase)
         hammer_price REAL
     )`);
 
-    db.exec(`CREATE TABLE IF NOT EXISTS passwords (
-        role TEXT PRIMARY KEY,
-        password TEXT NOT NULL
+    // db.exec(`CREATE TABLE IF NOT EXISTS passwords (
+    //     role TEXT PRIMARY KEY,
+    //     password TEXT NOT NULL
+    // )`);
+
+    db.exec(`CREATE TABLE IF NOT EXISTS users (
+        username TEXT PRIMARY KEY COLLATE NOCASE,
+        password TEXT NOT NULL,
+        roles TEXT NOT NULL,
+        is_root INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now')),
+        updated_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now'))
     )`);
 
     db.exec(`CREATE TABLE IF NOT EXISTS bidders (
@@ -178,46 +190,116 @@ if(existingSchemaVersion !== schemaVersion || isNewDatabase)
   // These are critical to prevent duplicate payment records for the same provider transaction - SumUp may send multiple notifications for the same payment
   try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_provider_payments_txn ON payments(provider, provider_txn_id)`); } catch (e) { /* already exists */ }
   try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_provider_payments_intent ON payments(provider, intent_id)`); } catch (e) { /* already exists */ }
+  try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_users_single_root ON users(is_root) WHERE is_root = 1`); } catch (e) { /* already exists */ }
+  try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username_nocase ON users(username COLLATE NOCASE)`); } catch (e) { /* already exists */ }
 
 
   // 2.0 -> 2.1 Add admin_state_change
   try { db.exec("ALTER TABLE auctions ADD COLUMN admin_can_change_state INTEGER NOT NULL DEFAULT 0; -- 0=false, 1=true"); } catch (e) { /* already exists */ }
 
-  // one-time default passwords (stored as bcrypt hashes)
-  const defaultPasswords = [
-    { role: "admin",       password: "admin123" },
-    { role: "maintenance", password: "maint123" },
-    { role: "cashier",     password: "cashier123" }
-  ];
+  // 2.4: Move to username-based accounts with multi-role permissions.
+  const isBcryptHash = (value) => typeof value === 'string' && /^\$2[aby]\$\d{2}\$/.test(value);
 
-  const insertPwd = db.prepare(
-    "INSERT OR IGNORE INTO passwords (role, password) VALUES (?, ?)"
-  );
+  // const parseRoles = (raw) => {
+  //   if (Array.isArray(raw)) return raw;
+  //   if (typeof raw !== 'string') return [];
 
-  for (const { role, password } of defaultPasswords) {
-    // Hash defaults synchronously at startup with a reasonable cost factor
-    const hashed = bcrypt.hashSync(password, 12);
-    insertPwd.run(role, hashed);
-  }
+  //   const trimmed = raw.trim();
+  //   if (!trimmed) return [];
 
-  // Ensure any existing plaintext passwords are upgraded to bcrypt hashes.
+  //   try {
+  //     const parsed = JSON.parse(trimmed);
+  //     if (Array.isArray(parsed)) return parsed;
+  //   } catch (_err) {
+  //     // fall back to comma-delimited role strings
+  //   }
+  //   return trimmed.split(',');
+  // };
+
+  // const normaliseRoles = (rawRoles) => {
+  //   const roles = parseRoles(rawRoles);
+  //   const result = [];
+  //   const seen = new Set();
+  //   for (const role of roles) {
+  //     const normalized = String(role || '').trim().toLowerCase();
+  //     if (!ROLE_SET.has(normalized) || seen.has(normalized)) continue;
+  //     seen.add(normalized);
+  //     result.push(normalized);
+  //   }
+  //   return result;
+  // };
+
+  const ensureHashedPassword = (password, label) => {
+    const text = String(password || '');
+    if (!text) return null;
+    if (isBcryptHash(text)) return text;
+    const hashed = bcrypt.hashSync(text, 12);
+    log('General', logLevels.INFO, `Upgraded plaintext password to bcrypt for ${label}`);
+    return hashed;
+  };
+
   try {
-    const rows = db.prepare('SELECT role, password FROM passwords').all();
-    for (const r of rows) {
-      const p = r.password || '';
-      if (typeof p === 'string' && !p.startsWith('$2')) {
-        // Likely plaintext; hash and update
-        try {
-          const h = bcrypt.hashSync(p, 12);
-          db.prepare('UPDATE passwords SET password = ? WHERE role = ?').run(h, r.role);
-          log('General', logLevels.INFO, `Upgraded plaintext password to bcrypt for role ${r.role}`);
-        } catch (e) {
-          log('General', logLevels.ERROR, `Failed to hash password for role ${r.role}: ${e.message}`);
-        }
+    // Normalize and hash all stored users.
+    // const userRows = db.prepare('SELECT rowid, username, password, roles, is_root FROM users').all();
+    // const updateUser = db.prepare(`
+    //   UPDATE users
+    //   SET username = ?, password = ?, roles = ?, is_root = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
+    //   WHERE rowid = ?
+    // `);
+
+    // for (const row of userRows) {
+    //   try {
+    //     const normalizedUsername = String(row.username || '').trim().toLowerCase();
+    //     if (!normalizedUsername) continue;
+
+    //     const isRootUser = Number(row.is_root) === 1 || normalizedUsername === ROOT_USERNAME;
+    //     const hashed = ensureHashedPassword(row.password, `user ${normalizedUsername}`);
+    //     if (!hashed) continue;
+
+    //     let roles = isRootUser ? [...ROLE_LIST] : normaliseRoles(row.roles);
+    //     if (!isRootUser && roles.length === 0 && ROLE_SET.has(normalizedUsername)) {
+    //       roles = [normalizedUsername];
+    //     }
+
+    //     updateUser.run(
+    //       normalizedUsername,
+    //       hashed,
+    //       JSON.stringify(roles),
+    //       isRootUser ? 1 : 0,
+    //       row.rowid
+    //     );
+    //   } catch (err) {
+    //     log('General', logLevels.ERROR, `Failed to normalize user rowid=${row.rowid}: ${err.message}`);
+    //   }
+    // }
+
+    // Root is canonical and unique.
+    db.prepare('UPDATE users SET is_root = 0 WHERE lower(username) <> ?').run(ROOT_USERNAME);
+
+    const rootRow = db.prepare('SELECT rowid, password FROM users WHERE lower(username) = ?').get(ROOT_USERNAME);
+    if (!rootRow) {
+      const rootPassword = crypto.randomBytes(18).toString('base64url');
+      const rootHash = bcrypt.hashSync(rootPassword, 12);
+      db.prepare(`
+        INSERT INTO users (username, password, roles, is_root, created_at, updated_at)
+        VALUES (?, ?, ?, 1, strftime('%Y-%m-%d %H:%M:%S', 'now'), strftime('%Y-%m-%d %H:%M:%S', 'now'))
+      `).run(ROOT_USERNAME, rootHash, JSON.stringify(ROLE_LIST));
+
+      log('General', logLevels.WARN, 'Created default root account with full permissions.');
+      log('General', logLevels.WARN, `Initial root password (shown once): ${rootPassword}`);
+      console.warn(`[security] Initial ${ROOT_USERNAME} password (shown once): ${rootPassword}`);
+    } else {
+      const rootHash = ensureHashedPassword(rootRow.password, ROOT_USERNAME);
+      if (rootHash) {
+        db.prepare(`
+          UPDATE users
+          SET username = ?, password = ?, roles = ?, is_root = 1, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
+          WHERE rowid = ?
+        `).run(ROOT_USERNAME, rootHash, JSON.stringify(ROLE_LIST), rootRow.rowid);
       }
     }
   } catch (e) {
-    log('General', logLevels.ERROR, `Password migration check failed: ${e.message}`);
+    log('General', logLevels.ERROR, `User account migration failed: ${e.message}`);
   }
 
   try {

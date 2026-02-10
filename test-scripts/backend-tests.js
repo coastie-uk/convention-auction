@@ -6,20 +6,67 @@ const fs = require("fs");
 const path = require("path");
 const { initFramework } = require("./api-test-framework");
 
-const configPath = path.join(__dirname, "..", "config.json");
+const configCandidates = [
+  path.join(__dirname, "..", "config.json"),
+  path.join(__dirname, "..", "backend", "config.json")
+];
+const configPath = configCandidates.find((candidate) => fs.existsSync(candidate));
+if (!configPath) {
+  throw new Error("Unable to locate config.json (checked project root and backend/).");
+}
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 
 const baseUrl = (process.env.BASE_URL || `http://localhost:${config.PORT}`).replace(/\/$/, "");
-const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
-const maintenancePassword = process.env.MAINTENANCE_PASSWORD || "maint123";
-const cashierPassword = process.env.CASHIER_PASSWORD || "cashier123";
+const bootstrapUsername = (process.env.TEST_BOOTSTRAP_USERNAME || process.env.ROOT_USERNAME || "testuser").trim().toLowerCase();
+const bootstrapPassword =
+  process.env.TEST_BOOTSTRAP_PASSWORD ||
+  process.env.ROOT_PASSWORD ||
+  process.env.MAINTENANCE_PASSWORD ||
+  process.env.ADMIN_PASSWORD || 
+  "testpassword";
 const logFilePath = process.env.LOG_FILE || path.join(__dirname, "backend-tests.log");
+
+if (!bootstrapPassword) {
+  throw new Error(
+    "Missing bootstrap password. Set ROOT_PASSWORD or TEST_BOOTSTRAP_PASSWORD before running backend tests."
+  );
+}
+
+const userSeed = Date.now().toString(36);
+const managedUsers = {
+  admin: {
+    username: `bt_admin_${userSeed}`,
+    password: `BtAdmin_${userSeed}_A1!`,
+    roles: ["admin"]
+  },
+  maintenance: {
+    username: `bt_maint_${userSeed}`,
+    password: `BtMaint_${userSeed}_M1!`,
+    roles: ["maintenance"]
+  },
+  cashier: {
+    username: `bt_cash_${userSeed}`,
+    password: `BtCash_${userSeed}_C1!`,
+    roles: ["cashier"]
+  },
+  slideshow: {
+    username: `bt_show_${userSeed}`,
+    password: `BtShow_${userSeed}_L1!`,
+    roles: ["slideshow"]
+  },
+  selfService: {
+    username: `bt_self_${userSeed}`,
+    password: `BtSelf_${userSeed}_S1!`,
+    roles: ["cashier"]
+  }
+};
 
 const framework = initFramework({
   baseUrl,
   logFilePath,
-  loginRole: "admin",
-  loginPassword: adminPassword
+  loginRole: "maintenance",
+  loginUsername: bootstrapUsername,
+  loginPassword: bootstrapPassword
 });
 
 const {
@@ -38,9 +85,11 @@ if (!FormData || !Blob) {
 }
 
 const tokens = {
+  bootstrap: null,
   admin: null,
   maintenance: null,
   cashier: null,
+  selfService: null,
   slideshow: null
 };
 
@@ -81,20 +130,48 @@ async function waitForAuctionStatus(expected, timeoutMs = 15000, intervalMs = 25
   throw new Error(`Timed out waiting for auction status "${expected}", last="${lastStatus}"`);
 }
 
-async function attemptLogin(role, password) {
+async function attemptLoginWith(username, role, password) {
   return fetchJson(`${baseUrl}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ role, password })
+    body: JSON.stringify({ username, role, password })
   });
 }
 
 async function maintenanceRequest(pathname, body) {
   return fetchJson(`${baseUrl}${pathname}`, {
     method: "POST",
-    headers: authHeaders(tokens.maintenance, { "Content-Type": "application/json" }),
+    headers: authHeaders(tokens.maintenance || context.token, { "Content-Type": "application/json" }),
     body: JSON.stringify(body || {})
   });
+}
+
+async function ensureManagedUser(user) {
+  const create = await maintenanceRequest("/maintenance/users", {
+    username: user.username,
+    password: user.password,
+    roles: user.roles
+  });
+
+  if (create.res.status === 201) return;
+
+  if (create.res.status !== 409) {
+    throw new Error(`Unable to create ${user.username}: ${create.text || create.res.status}`);
+  }
+
+  const roleUpdate = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(user.username)}/roles`, {
+    method: "PATCH",
+    headers: authHeaders(tokens.maintenance || context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ roles: user.roles })
+  });
+  await expectStatus(roleUpdate.res, 200);
+
+  const passwordUpdate = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(user.username)}/password`, {
+    method: "POST",
+    headers: authHeaders(tokens.maintenance || context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ newPassword: user.password })
+  });
+  await expectStatus(passwordUpdate.res, 200);
 }
 
 async function setAuctionStatus(status) {
@@ -129,18 +206,35 @@ async function createItem({ publicId, description, contributor, artist, notes, p
 }
 
 addTest("B-001","setup: login all roles", async () => {
-  tokens.maintenance = await loginAs("maintenance", maintenancePassword);
-  tokens.cashier = await loginAs("cashier", cashierPassword);
-  tokens.admin = await loginAs("admin", adminPassword);
+  tokens.bootstrap = context.token;
+  tokens.maintenance = context.token;
+
+  await ensureManagedUser(managedUsers.admin);
+  await ensureManagedUser(managedUsers.maintenance);
+  await ensureManagedUser(managedUsers.cashier);
+  await ensureManagedUser(managedUsers.slideshow);
+  await ensureManagedUser(managedUsers.selfService);
+
+  tokens.maintenance = await loginAs("maintenance", managedUsers.maintenance.password, managedUsers.maintenance.username);
+  tokens.cashier = await loginAs("cashier", managedUsers.cashier.password, managedUsers.cashier.username);
+  tokens.slideshow = await loginAs("slideshow", managedUsers.slideshow.password, managedUsers.slideshow.username);
+  tokens.selfService = await loginAs("cashier", managedUsers.selfService.password, managedUsers.selfService.username);
+  tokens.admin = await loginAs("admin", managedUsers.admin.password, managedUsers.admin.username);
+  context.token = tokens.admin;
 });
 
-addTest("B-001a","get slideshow token", async () => {
-  const { res, json, text } = await fetchJson(`${baseUrl}/slideshow-auth`, {
-    
-    headers: authHeaders(context.token)
+addTest("B-001a","setup: login slideshow role directly", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: managedUsers.slideshow.username,
+      role: "slideshow",
+      password: managedUsers.slideshow.password
+    })
   });
   await expectStatus(res, 200);
-  assert.ok(json && json.token, `Slideshow auth failed: ${text}`);
+  assert.ok(json && json.token, "Slideshow login failed");
   tokens.slideshow = json.token;
 });
 
@@ -215,7 +309,11 @@ addTest("B-003","POST /login success admin", async () => {
   const { res, json } = await fetchJson(`${baseUrl}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ role: "admin", password: adminPassword })
+    body: JSON.stringify({
+      username: managedUsers.admin.username,
+      role: "admin",
+      password: managedUsers.admin.password
+    })
   });
   await expectStatus(res, 200);
   assert.ok(json && json.token, "Missing token");
@@ -225,7 +323,7 @@ addTest("B-004","POST /login failure missing password", async () => {
   const { res } = await fetchJson(`${baseUrl}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ role: "admin" })
+    body: JSON.stringify({ username: managedUsers.admin.username, role: "admin" })
   });
   await expectStatus(res, 400);
 });
@@ -234,7 +332,7 @@ addTest("B-005","POST /login failure invalid password", async () => {
   const { res } = await fetchJson(`${baseUrl}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ role: "admin", password: "wrong" })
+    body: JSON.stringify({ username: managedUsers.admin.username, role: "admin", password: "wrong" })
   });
   await expectStatus(res, 403);
 });
@@ -243,9 +341,84 @@ addTest("B-006","POST /login failure missing role", async () => {
   const { res } = await fetchJson(`${baseUrl}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: adminPassword })
+    body: JSON.stringify({ username: managedUsers.admin.username, password: managedUsers.admin.password })
   });
   await expectStatus(res, 400);
+});
+
+addTest("B-006a","POST /login failure missing username", async () => {
+  const { res } = await fetchJson(`${baseUrl}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role: "admin", password: managedUsers.admin.password })
+  });
+  await expectStatus(res, 400);
+});
+
+addTest("B-006b","POST /login failure invalid username format", async () => {
+  const { res } = await fetchJson(`${baseUrl}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "Invalid User", role: "admin", password: managedUsers.admin.password })
+  });
+  await expectStatus(res, 400);
+});
+
+addTest("B-006c","POST /login failure invalid role value", async () => {
+  const { res } = await fetchJson(`${baseUrl}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: managedUsers.admin.username, role: "nope", password: managedUsers.admin.password })
+  });
+  await expectStatus(res, 400);
+});
+
+addTest("B-006d","POST /login failure valid user with unassigned role", async () => {
+  const { res, json } = await attemptLoginWith(managedUsers.admin.username, "maintenance", managedUsers.admin.password);
+  await expectStatus(res, 403);
+  assert.equal(json?.error, "Role not assigned to this user");
+});
+
+addTest("B-006e","POST /change-password failure wrong current password", async () => {
+  const { res } = await fetchJson(`${baseUrl}/change-password`, {
+    method: "POST",
+    headers: authHeaders(tokens.selfService, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ currentPassword: "not-correct", newPassword: `${managedUsers.selfService.password}_new` })
+  });
+  await expectStatus(res, 403);
+});
+
+addTest("B-006f","POST /change-password failure short new password", async () => {
+  const { res } = await fetchJson(`${baseUrl}/change-password`, {
+    method: "POST",
+    headers: authHeaders(tokens.selfService, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ currentPassword: managedUsers.selfService.password, newPassword: "1234" })
+  });
+  await expectStatus(res, 400);
+});
+
+addTest("B-006g","POST /change-password success and login with new password", async () => {
+  const nextPassword = `${managedUsers.selfService.password}_new`;
+  const { res } = await fetchJson(`${baseUrl}/change-password`, {
+    method: "POST",
+    headers: authHeaders(tokens.selfService, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ currentPassword: managedUsers.selfService.password, newPassword: nextPassword })
+  });
+  await expectStatus(res, 200);
+
+  const oldLogin = await attemptLoginWith(managedUsers.selfService.username, "cashier", managedUsers.selfService.password);
+  await expectStatus(oldLogin.res, 403);
+
+  const newLogin = await attemptLoginWith(managedUsers.selfService.username, "cashier", nextPassword);
+  await expectStatus(newLogin.res, 200);
+  assert.ok(newLogin.json && newLogin.json.token, "Expected login token with updated password");
+
+  const revert = await fetchJson(`${baseUrl}/change-password`, {
+    method: "POST",
+    headers: authHeaders(newLogin.json.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ currentPassword: nextPassword, newPassword: managedUsers.selfService.password })
+  });
+  await expectStatus(revert.res, 200);
 });
 
 // /validate
@@ -286,32 +459,10 @@ addTest("B-010","POST /validate failure malformed token", async () => {
   await expectStatus(res, 403);
 });
 
-// /slideshow-auth
-addTest("B-011","GET /slideshow-auth success", async () => {
-  const { res, json } = await fetchJson(`${baseUrl}/slideshow-auth`, {
-    headers: authHeaders(context.token)
-  });
-  await expectStatus(res, 200);
-  assert.ok(json && json.token, "Missing slideshow token");
-});
-
-addTest("B-012","GET /slideshow-auth failure unauthenticated", async () => {
+// /slideshow-auth (legacy route disabled)
+addTest("B-011","GET /slideshow-auth disabled route", async () => {
   const res = await fetch(`${baseUrl}/slideshow-auth`);
-  await expectStatus(res, 403);
-});
-
-addTest("B-013","GET /slideshow-auth failure wrong role", async () => {
-  const res = await fetch(`${baseUrl}/slideshow-auth`, {
-    headers: authHeaders(tokens.cashier)
-  });
-  await expectStatus(res, 403);
-});
-
-addTest("B-014","GET /slideshow-auth failure invalid token", async () => {
-  const res = await fetch(`${baseUrl}/slideshow-auth`, {
-    headers: authHeaders("badtoken")
-  });
-  await expectStatus(res, 403);
+  await expectStatus(res, 404);
 });
 
 // /auctions/:auctionId/newitem
@@ -761,7 +912,7 @@ addTest("B-050","GET /auctions/:publicId/slideshow-items failure invalid auction
   await expectStatus(res, 400);
 });
 
-addTest("B-050","GET /auctions/:publicId/slideshow-items failure invalid auction_id number", async () => {
+addTest("B-050a","GET /auctions/:publicId/slideshow-items failure invalid auction_id number", async () => {
   const res = await fetch(`${baseUrl}/auctions/0/slideshow-items`, {
     headers: authHeaders(tokens.slideshow)
   });
@@ -837,6 +988,15 @@ addTest("B-061b","POST /validate-auction pass auth override", async () => {
     body: JSON.stringify({ short_name: testData.auctionShortName })
   });
   await expectStatus(res, 200);
+});
+
+addTest("B-061c","POST /validate-auction failure auth override with cashier token", async () => {
+  const { res } = await fetchJson(`${baseUrl}/validate-auction`, {
+    method: "POST",
+    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ short_name: testData.auctionShortName })
+  });
+  await expectStatus(res, 403);
 });
 
 
@@ -1066,10 +1226,10 @@ addTest("B-083","POST /login failure malformed JSON body", async () => {
 addTest("B-083a","POST /login lockout after repeated failures", async () => {
   const lockoutAfter = Number.isFinite(config.LOGIN_LOCKOUT_AFTER) ? config.LOGIN_LOCKOUT_AFTER : 5;
   for (let i = 0; i < lockoutAfter; i += 1) {
-    const { res } = await attemptLogin("admin", "wrong-password");
+    await attemptLoginWith(managedUsers.admin.username, "admin", "wrong-password");
   
   }
-  const { res, json } = await attemptLogin("admin", "wrong-password");
+  const { res, json } = await attemptLoginWith(managedUsers.admin.username, "admin", "wrong-password");
   await expectStatus(res, 429);
   assert.ok(json && typeof json.error === "string" && json.error.includes("Too many failed attempts"), "Expected lockout response");
 });
@@ -1112,10 +1272,9 @@ addTest("B-087","POST /maintenance/generate-bids failure missing auction id", as
   assert.ok(json && json.error, "Expected error payload");
 });
 
-sleep(30000); // Wait 30 seconds to ensure rate limit window has passed
-
 // /auctions/:auctionId/newitem
 addTest("B-088","POST /auctions/:auctionId/newitem rate limit reset", async () => {
+//  await sleep(30000); // Wait to ensure rate limit window has passed.
   
   await setAuctionStatus("setup");
   const form = new FormData();

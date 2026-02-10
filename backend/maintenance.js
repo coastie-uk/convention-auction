@@ -28,9 +28,21 @@ const CONFIG_PATHS = {
 };
 const { audit } = require('./middleware/audit');
 const bcrypt = require('bcryptjs');
-const maintenanceRoutes = require('./maintenance');
 const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
 const { checkAuctionState } = require('./middleware/checkAuctionState');
+const {
+  ROLE_LIST,
+  normaliseUsername,
+  isValidUsername,
+  normaliseRoles,
+  getUserByUsername,
+  listUsers,
+  createUser,
+  updateUserRoles,
+  setUserPassword,
+  deleteUser,
+  getAuditActor
+} = require('./users');
 
 // (
 //  { ttlSeconds: 2 }   // optional – default is 5
@@ -229,16 +241,26 @@ router.post("/restore", async (req, res) => {
 
 router.post("/reset", checkAuctionState(['setup', 'archived']), (req, res) => {
   const { auction_id, password } = req.body;
+  const username = req.user?.username;
 
-  if (!auction_id || !password) {
-    return res.status(400).json({ error: "Missing auction_id or password" });
+  if (!auction_id || !password || !username) {
+    return res.status(400).json({ error: "Missing auction_id or password." });
   }
 
   try {
-    const mPassword = db.prepare("SELECT password FROM passwords WHERE role = 'maintenance'").get();
-    if (!mPassword || !bcrypt.compareSync(password, mPassword.password)) {
-      logFromRequest(req, logLevels.WARN, `Incorrect maintenance password attempt for auction reset`);
-      return res.status(403).json({ error: "Incorrect maintenance password" });
+    const user = getUserByUsername(username);
+    if (!user || !user.password) {
+      return res.status(403).json({ error: "Incorrect password" });
+    }
+
+    const stored = String(user.password || '');
+    const valid = stored.startsWith('$2')
+      ? bcrypt.compareSync(password, stored)
+      : stored === password;
+
+    if (!valid) {
+      logFromRequest(req, logLevels.WARN, `Incorrect password attempt for auction reset by ${username}`);
+      return res.status(403).json({ error: "Incorrect password" });
     }
   } catch (err) {
     return res.status(500).json({ error: "Error verifying password" });
@@ -269,7 +291,7 @@ router.post("/reset", checkAuctionState(['setup', 'archived']), (req, res) => {
       deleted: result        // { payments: n, items: n, bidders: n }
     });
     logFromRequest(req, logLevels.INFO, `Auction ${auction_id} has been reset. Removed: ${result.items} items, ${result.bidders} bidders, ${result.payments} payments, ${result.payment_intents} payment intents. `);
-    audit(req.user.role, 'reset auction', 'auction', auction_id, { deleted: result  });
+    audit(getAuditActor(req), 'reset auction', 'auction', auction_id, { deleted: result  });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Reset failed' });
@@ -646,7 +668,7 @@ router.get("/check-integrity", (req, res) => {
   });
 });
 //--------------------------------------------------------------------------
-// Remove invalid items API (disabled as this only had limited usecase)
+// Remove invalid items API (disabled as this only had limited usecase and feels like more a security risk!)
 //--------------------------------------------------------------------------
 
 // router.post("/check-integrity/delete", (req, res) => {
@@ -666,38 +688,187 @@ router.get("/check-integrity", (req, res) => {
 // });
 
 //--------------------------------------------------------------------------
-// POST /change-password
-// API to change passwords
+// User management
 //--------------------------------------------------------------------------
 
-router.post("/change-password", (req, res) => {
-  const { role, newPassword } = req.body;
-  const allowedRoles = ["admin", "cashier", "maintenance"];
+router.get("/users", (req, res) => {
+  try {
+    const users = listUsers();
+    return res.json({
+      users,
+      roles: ROLE_LIST,
+      current_user: req.user?.username || null
+    });
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Failed to list users: ${err.message}`);
+    return res.status(500).json({ error: "Failed to list users." });
+  }
+});
 
-  if (!role || !allowedRoles.includes(role)) {
-    return res.status(400).json({ error: "Invalid role." });
+router.post("/users", (req, res) => {
+  const { username, password, roles } = req.body || {};
+  const normalizedUsername = normaliseUsername(username);
+  const normalizedRoles = normaliseRoles(roles);
+
+  if (!isValidUsername(normalizedUsername)) {
+    return res.status(400).json({ error: "Invalid username. Use 3-64 chars: a-z, 0-9, ., _, -" });
   }
 
-  if (!newPassword || newPassword.length < PASSWORD_MIN_LENGTH) {
+  if (!password || String(password).length < PASSWORD_MIN_LENGTH) {
     return res.status(400).json({ error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters.` });
   }
 
-  // Hash the password before storing
-  const hashed = bcrypt.hashSync(newPassword, 12);
+  if (normalizedRoles.length === 0) {
+    return res.status(400).json({ error: "At least one role is required." });
+  }
 
-  db.run(
-    `UPDATE passwords SET password = ? WHERE role = ?`,
-    [hashed, role],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) return res.status(400).json({ error: "Role not found." });
-
-      logFromRequest(req, logLevels.INFO, `Password changed for role: ${role}`);
-      audit(req.user.role, 'change password', 'server', null, { changed_role: role });
-      res.json({ message: `Password for ${role} updated.` });
+  try {
+    const hashed = bcrypt.hashSync(password, 12);
+    createUser({ username: normalizedUsername, passwordHash: hashed, roles: normalizedRoles });
+    audit(getAuditActor(req), 'create user', 'server', null, { username: normalizedUsername, roles: normalizedRoles });
+    return res.status(201).json({ message: `User "${normalizedUsername}" created.` });
+  } catch (err) {
+    if (String(err.message || '').includes('UNIQUE')) {
+      return res.status(409).json({ error: "Username already exists." });
     }
-  );
+    if (err.message === 'invalid_username') {
+      return res.status(400).json({ error: "Invalid username." });
+    }
+    if (err.message === 'roles_required') {
+      return res.status(400).json({ error: "At least one role is required." });
+    }
+    logFromRequest(req, logLevels.ERROR, `Failed to create user: ${err.message}`);
+    return res.status(500).json({ error: "Failed to create user." });
+  }
 });
+
+router.patch("/users/:username/roles", (req, res) => {
+  const target = normaliseUsername(req.params.username);
+  const roles = normaliseRoles(req.body?.roles);
+
+  if (!isValidUsername(target)) {
+    return res.status(400).json({ error: "Invalid username." });
+  }
+
+  if (roles.length === 0) {
+    return res.status(400).json({ error: "At least one role is required." });
+  }
+
+  try {
+    const result = updateUserRoles(target, roles);
+    if (!result || result.changes === 0) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    const updated = getUserByUsername(target);
+    audit(getAuditActor(req), 'update user roles', 'server', null, {
+      username: target,
+      roles: updated?.roles || roles
+    });
+
+    return res.json({ message: `Permissions updated for "${target}".`, user: updated });
+  } catch (err) {
+    if (err.message === 'roles_required') {
+      return res.status(400).json({ error: "At least one role is required." });
+    }
+    logFromRequest(req, logLevels.ERROR, `Failed to update user roles for ${target}: ${err.message}`);
+    return res.status(500).json({ error: "Failed to update user permissions." });
+  }
+});
+
+router.post("/users/:username/password", (req, res) => {
+  const target = normaliseUsername(req.params.username);
+  const { newPassword } = req.body || {};
+
+  if (!isValidUsername(target)) {
+    return res.status(400).json({ error: "Invalid username." });
+  }
+
+  if (!newPassword || String(newPassword).length < PASSWORD_MIN_LENGTH) {
+    return res.status(400).json({ error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters.` });
+  }
+
+  try {
+    const hashed = bcrypt.hashSync(newPassword, 12);
+    const result = setUserPassword(target, hashed);
+    if (!result || result.changes === 0) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    audit(getAuditActor(req), 'change password', 'server', null, { changed_user: target });
+        logFromRequest(req, logLevels.INFO, `Updated password for ${target}`);
+
+    return res.json({ message: `Password updated for "${target}".` });
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Failed to update password for ${target}: ${err.message}`);
+    return res.status(500).json({ error: "Failed to update password." });
+  }
+});
+
+router.delete("/users/:username", (req, res) => {
+  const target = normaliseUsername(req.params.username);
+  const currentUser = normaliseUsername(req.user?.username || '');
+
+  if (!isValidUsername(target)) {
+    return res.status(400).json({ error: "Invalid username." });
+  }
+
+  if (target === currentUser) {
+    return res.status(400).json({ error: "You cannot delete your own account while logged in." });
+  }
+
+  try {
+    const result = deleteUser(target);
+    if (!result || result.changes === 0) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    audit(getAuditActor(req), 'delete user', 'server', null, { username: target });
+    return res.json({ message: `User "${target}" deleted.` });
+  } catch (err) {
+    if (err.message === 'root_cannot_be_deleted') {
+      return res.status(400).json({ error: 'The root user cannot be deleted.' });
+    }
+    logFromRequest(req, logLevels.ERROR, `Failed to delete user ${target}: ${err.message}`);
+    return res.status(500).json({ error: "Failed to delete user." });
+  }
+});
+
+//--------------------------------------------------------------------------
+// POST /change-password
+// Backward-compatible password update endpoint for maintenance UI.
+// Accepts either { username, newPassword } or legacy { role, newPassword }.
+//--------------------------------------------------------------------------
+
+// router.post("/change-password", (req, res) => {
+//   const { username, role, newPassword } = req.body || {};
+//   const legacyRole = String(role || '').trim().toLowerCase();
+//   if (!username && role && !ROLE_LIST.includes(legacyRole)) {
+//     return res.status(400).json({ error: "Invalid role." });
+//   }
+//   const target = normaliseUsername(username || role);
+//
+//   if (!target || !isValidUsername(target)) {
+//     return res.status(400).json({ error: "Invalid user." });
+//   }
+//
+//   if (!newPassword || String(newPassword).length < PASSWORD_MIN_LENGTH) {
+//     return res.status(400).json({ error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters.` });
+//   }
+//
+//   try {
+//     const hashed = bcrypt.hashSync(newPassword, 12);
+//     const result = setUserPassword(target, hashed);
+//     if (!result || result.changes === 0) {
+//       return res.status(404).json({ error: "User not found." });
+//     }
+//
+//     audit(getAuditActor(req), 'change password', 'server', null, { changed_user: target });
+//     return res.json({ message: `Password for "${target}" updated.` });
+//   } catch (err) {
+//     return res.status(500).json({ error: err.message });
+//   }
+// });
 
 //--------------------------------------------------------------------------
 // POST /restart
@@ -906,12 +1077,6 @@ router.post("/cleanup-orphan-photos", (req, res) => {
   });
 });
 
-// Simple shuffle function
-// function shuffleArray(arr) {
-//   return arr.map(value => ({ value, sort: Math.random() }))
-//     .sort((a, b) => a.sort - b.sort)
-//     .map(({ value }) => value);
-// }
 
 function getNextItemNumber(auction_id, callback) {
   db.get(`SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ?`, [auction_id], (err, row) => {
@@ -1026,7 +1191,7 @@ router.post("/generate-test-data", checkAuctionState(['setup']), async (req, res
 
     const itemId = result.lastInsertRowid;
 
-    audit(req.user.role, 'new item (test)', 'item', itemId, { description: item.description, initial_number: itemNumber });
+    audit(getAuditActor(req), 'new item (test)', 'item', itemId, { description: item.description, initial_number: itemNumber });
 
   }
 
@@ -1219,7 +1384,7 @@ router.post("/auctions/delete", (req, res) => {
         return res.status(500).json({ error: err.message });
       }
       
-      audit(req.user.role, 'delete auction', 'auction', auction_id, {});
+      audit(getAuditActor(req), 'delete auction', 'auction', auction_id, {});
       // Step 3: Check how many auctions remain
       db.get("SELECT COUNT(*) AS count FROM auctions", [], (err, result) => {
         if (err) return res.status(500).json({ error: err.message });
@@ -1254,7 +1419,7 @@ router.post("/auctions/delete", (req, res) => {
             deleteBatch(); // execute the transaction
 
             res.json({ message: "Database reset actions completed successfully." });
-            audit(req.user.role, 'reset database', 'database', null, { reason: 'last auction deleted' });
+            audit(getAuditActor(req), 'reset database', 'database', null, { reason: 'last auction deleted' });
 
           } catch (err) {
             logFromRequest(req, logLevels.ERROR, `Reset failed: ${err.message}`);
@@ -1264,7 +1429,7 @@ router.post("/auctions/delete", (req, res) => {
         } else {
           // The normal case.....
           logFromRequest(req, logLevels.INFO, `Auction ${auction_id} deleted`);
-          audit(req.user.role, 'delete auction', 'auction', auction_id, {});
+          audit(getAuditActor(req), 'delete auction', 'auction', auction_id, {});
           return res.json({ message: "Auction deleted." });
         }
       });
@@ -1321,7 +1486,7 @@ router.post("/auctions/create", (req, res) => {
     );
     const NewId = result.lastInsertRowid;
     logFromRequest(req, logLevels.INFO, `Created new auction Id ${NewId} ${short_name} with logo: ${logo}`);
-    audit(req.user.role, 'create auction', 'auction', NewId, { short_name: short_name.trim().toLowerCase(), full_name: sanitised_full_name.trim(), logo });
+    audit(getAuditActor(req), 'create auction', 'auction', NewId, { short_name: short_name.trim().toLowerCase(), full_name: sanitised_full_name.trim(), logo });
     return res.status(201).json({ message: `Auction ${sanitised_full_name.trim()} created.` });
     
   } catch (err) {
@@ -1574,7 +1739,7 @@ router.post('/auctions/set-admin-state-permission', async (req, res) => {
     db.run(`UPDATE auctions SET admin_can_change_state = ? WHERE id = ?`, [enabled, auction_id]);
 
     logFromRequest(req, logLevels.INFO, `Updated admin state control for auction ${auction_id} set to: ${enabled}`);
-    audit(req.user.role, 'auction settings', 'auction', auction_id, { admin_can_change_state: enabled });
+    audit(getAuditActor(req), 'auction settings', 'auction', auction_id, { admin_can_change_state: enabled });
     return res.json({ message: `Auction ${auction_id} admin state control updated` });
 
   } catch (err) {
@@ -1632,14 +1797,14 @@ router.post("/generate-bids", checkAuctionState(['live', 'settlement']), (req, r
 
     for (const itemId of shuffledItems) {
       const selected = bidders[Math.floor(Math.random() * bidders.length)];
-      const price = Math.floor(Math.random() * 500) + 10;
+      const price = Math.floor(Math.random() * 200) + 10;
       const testBid = 1;
 
       db.prepare('UPDATE items SET winning_bidder_id = ?, hammer_price = ?, test_bid = ? WHERE id = ?')
         .run(selected.id, price, testBid, itemId);
 
       logLines.push(`Item ${itemId} → Paddle ${selected.paddle} → £${price}`);
-      audit(req.user.role, 'finalize (test)', 'item', itemId, {  bidder: selected.paddle, price, description: items.find(i => i.id === itemId)?.description || ''  });
+      audit(getAuditActor(req), 'finalize (test)', 'item', itemId, {  bidder: selected.paddle, price, description: items.find(i => i.id === itemId)?.description || ''  });
 
     }
     logFromRequest(req, logLevels.INFO, `Generated ${num_bids} test bid(s) for auction ${auction_id}:\n` + logLines.join("\n"));
@@ -1680,7 +1845,7 @@ router.post("/delete-test-bids", checkAuctionState(['live', 'settlement']), (req
     db.pragma('foreign_keys = ON');
 
     logFromRequest(req, logLevels.INFO, `Deleted ${result.changes} test bid(s) and ${deleted.changes} unreferenced bidder(s) from auction ${auction_id}`);
-    audit(req.user.role, 'delete test bids', 'auction', auction_id, { test_bids_deleted: result.changes, bidders_deleted: deleted.changes });
+    audit(getAuditActor(req), 'delete test bids', 'auction', auction_id, { test_bids_deleted: result.changes, bidders_deleted: deleted.changes });
     res.json({
       message: `Removed ${result.changes} test bids and ${deleted.changes} unused bidders.`
     });

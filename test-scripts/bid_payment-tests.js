@@ -6,20 +6,56 @@ const fs = require("fs");
 const path = require("path");
 const { initFramework } = require("./api-test-framework");
 
-const configPath = path.join(__dirname, "..", "config.json");
+const configCandidates = [
+  path.join(__dirname, "..", "config.json"),
+  path.join(__dirname, "..", "backend", "config.json")
+];
+const configPath = configCandidates.find((candidate) => fs.existsSync(candidate));
+if (!configPath) {
+  throw new Error("Unable to locate config.json (checked project root and backend/).");
+}
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 
 const baseUrl = (process.env.BASE_URL || `http://localhost:${config.PORT}`).replace(/\/$/, "");
-const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
-const maintenancePassword = process.env.MAINTENANCE_PASSWORD || "maint123";
-const cashierPassword = process.env.CASHIER_PASSWORD || "cashier123";
+const bootstrapUsername = (process.env.TEST_BOOTSTRAP_USERNAME || process.env.ROOT_USERNAME || "testuser").trim().toLowerCase();
+const bootstrapPassword =
+  process.env.TEST_BOOTSTRAP_PASSWORD ||
+  process.env.ROOT_PASSWORD ||
+  process.env.MAINTENANCE_PASSWORD ||
+  process.env.ADMIN_PASSWORD || "testpassword";
 const logFilePath = process.env.LOG_FILE || path.join(__dirname, "bid_payment-tests.log");
+
+if (!bootstrapPassword) {
+  throw new Error(
+    "Missing bootstrap password. Set ROOT_PASSWORD or TEST_BOOTSTRAP_PASSWORD before running bid/payment tests."
+  );
+}
+
+const userSeed = Date.now().toString(36);
+const managedUsers = {
+  admin: {
+    username: `pt_admin_${userSeed}`,
+    password: `PtAdmin_${userSeed}_A1!`,
+    roles: ["admin"]
+  },
+  maintenance: {
+    username: `pt_maint_${userSeed}`,
+    password: `PtMaint_${userSeed}_M1!`,
+    roles: ["maintenance"]
+  },
+  cashier: {
+    username: `pt_cash_${userSeed}`,
+    password: `PtCash_${userSeed}_C1!`,
+    roles: ["cashier"]
+  }
+};
 
 const framework = initFramework({
   baseUrl,
   logFilePath,
-  loginRole: "cashier",
-  loginPassword: cashierPassword
+  loginRole: "maintenance",
+  loginUsername: bootstrapUsername,
+  loginPassword: bootstrapPassword
 });
 
 const {
@@ -40,7 +76,8 @@ if (!FormData || !Blob) {
 
 const tokens = {
   admin: null,
-  maintenance: null
+  maintenance: null,
+  cashier: null
 };
 
 const testData = {
@@ -63,7 +100,6 @@ const testData = {
   isolationPaddle: null,
   sumupIntentId: null,
   sumupFailIntentId: null,
-  sumupBlocked: false,
   sumupBidderId: null,
   sumupAuctionId: null,
   sumupStartingPaymentsTotal: null,
@@ -75,9 +111,37 @@ const testData = {
 async function maintenanceRequest(pathname, body) {
   return fetchJson(`${baseUrl}${pathname}`, {
     method: "POST",
-    headers: authHeaders(tokens.maintenance, { "Content-Type": "application/json" }),
+    headers: authHeaders(tokens.maintenance || context.token, { "Content-Type": "application/json" }),
     body: JSON.stringify(body || {})
   });
+}
+
+async function ensureManagedUser(user) {
+  const create = await maintenanceRequest("/maintenance/users", {
+    username: user.username,
+    password: user.password,
+    roles: user.roles
+  });
+
+  if (create.res.status === 201) return;
+
+  if (create.res.status !== 409) {
+    throw new Error(`Unable to create ${user.username}: ${create.text || create.res.status}`);
+  }
+
+  const roleUpdate = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(user.username)}/roles`, {
+    method: "PATCH",
+    headers: authHeaders(tokens.maintenance || context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ roles: user.roles })
+  });
+  await expectStatus(roleUpdate.res, 200);
+
+  const passwordUpdate = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(user.username)}/password`, {
+    method: "POST",
+    headers: authHeaders(tokens.maintenance || context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ newPassword: user.password })
+  });
+  await expectStatus(passwordUpdate.res, 200);
 }
 
 // async function setAuctionStatusFor(auctionId, status) {
@@ -138,11 +202,6 @@ async function waitForAuctionStatus(auctionId, expected, timeoutMs = 15000, inte
 //   return setAuctionStatusFor(testData.auctionId, status);
 // }
 
-  // Sleep function that returns a promise
-  function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
 async function waitForLog(snippet, timeoutMs = 2000) {
   const deadline = Date.now() + timeoutMs;
   let lastLog = "";
@@ -200,8 +259,15 @@ async function createItem(auctionPublicId, description) {
 }
 
 addTest("P-001","setup: login other roles", async () => {
-  tokens.admin = await loginAs("admin", adminPassword);
-  tokens.maintenance = await loginAs("maintenance", maintenancePassword);
+  tokens.maintenance = context.token;
+  await ensureManagedUser(managedUsers.admin);
+  await ensureManagedUser(managedUsers.maintenance);
+  await ensureManagedUser(managedUsers.cashier);
+
+  tokens.admin = await loginAs("admin", managedUsers.admin.password, managedUsers.admin.username);
+  tokens.maintenance = await loginAs("maintenance", managedUsers.maintenance.password, managedUsers.maintenance.username);
+  tokens.cashier = await loginAs("cashier", managedUsers.cashier.password, managedUsers.cashier.username);
+  context.token = tokens.cashier;
 });
 
 addTest("P-002","setup: create auction and items", async () => {
@@ -898,14 +964,16 @@ addTest("P-053","POST /payments/intents failure wrong role", async () => {
 });
 
 addTest("P-054a","Set non-default cashier password", async () => {
-  const tempPassword = `${cashierPassword}_temp`;
-  const { res: res1 } = await fetchJson(`${baseUrl}/maintenance/change-password`, {
+  const tempPassword = `${managedUsers.cashier.password}_temp`;
+  const { res: res1 } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(managedUsers.cashier.username)}/password`, {
     method: "POST",
     headers: authHeaders(tokens.maintenance, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ role: "cashier", newPassword: tempPassword })
+    body: JSON.stringify({ newPassword: tempPassword })
   });
   await expectStatus(res1, 200);
-
+  managedUsers.cashier.password = tempPassword;
+  tokens.cashier = await loginAs("cashier", managedUsers.cashier.password, managedUsers.cashier.username);
+  context.token = tokens.cashier;
 });
 
 addTest("P-054","POST /payments/intents success", async () => {
@@ -935,9 +1003,6 @@ addTest("P-054","POST /payments/intents success", async () => {
 
 
 addTest("P-055","POST /payments/intents failure missing auction id", async () => {
-  if (testData.sumupBlocked) {
-    return skipTest("SumUp intents blocked by default cashier password.");
-  }
   const { res } = await fetchJson(`${baseUrl}/payments/intents`, {
     method: "POST",
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
@@ -951,9 +1016,6 @@ addTest("P-055","POST /payments/intents failure missing auction id", async () =>
 });
 
 addTest("P-056","POST /payments/intents failure wrong state", async () => {
-  if (testData.sumupBlocked) {
-    return skipTest("SumUp intents blocked by default cashier password.");
-  }
   await setAuctionStatusFor(testData.sumupAuctionId, "live");
   await sleep(3000);
   const { res } = await fetchJson(`${baseUrl}/payments/intents`, {
@@ -972,9 +1034,6 @@ addTest("P-056","POST /payments/intents failure wrong state", async () => {
 });
 
 addTest("P-057","POST /payments/intents failure invalid params", async () => {
-  if (testData.sumupBlocked) {
-    return skipTest("SumUp intents blocked by default cashier password.");
-  }
   const { res } = await fetchJson(`${baseUrl}/payments/intents`, {
     method: "POST",
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
@@ -989,9 +1048,6 @@ addTest("P-057","POST /payments/intents failure invalid params", async () => {
 });
 
 addTest("P-058","POST /payments/intents failure invalid channel", async () => {
-  if (testData.sumupBlocked) {
-    return skipTest("SumUp intents blocked by default cashier password.");
-  }
   const { res } = await fetchJson(`${baseUrl}/payments/intents`, {
     method: "POST",
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
@@ -1006,9 +1062,6 @@ addTest("P-058","POST /payments/intents failure invalid channel", async () => {
 });
 
 addTest("P-059","POST /payments/intents failure amount exceeds outstanding", async () => {
-  if (testData.sumupBlocked) {
-    return skipTest("SumUp intents blocked by default cashier password.");
-  }
   const amountMinor = testData.sumupOutstandingMinor + 1;
   const { res, json } = await fetchJson(`${baseUrl}/payments/intents`, {
     method: "POST",
@@ -1025,9 +1078,6 @@ addTest("P-059","POST /payments/intents failure amount exceeds outstanding", asy
 });
 
 addTest("P-060","GET /payments/intents/:id success", async () => {
-  if (testData.sumupBlocked) {
-    return skipTest("SumUp intents blocked by default cashier password.");
-  }
   if (!testData.sumupIntentId) {
     return skipTest("No SumUp intent available.");
   }
@@ -1040,9 +1090,6 @@ addTest("P-060","GET /payments/intents/:id success", async () => {
 });
 
 addTest("P-061","GET /payments/intents/:id failure not found", async () => {
-  if (testData.sumupBlocked) {
-    return skipTest("SumUp intents blocked by default cashier password.");
-  }
   const { res } = await fetchJson(`${baseUrl}/payments/intents/00000000-0000-0000-0000-000000000000`, {
     headers: authHeaders(context.token)
   });
@@ -1088,10 +1135,6 @@ addTest("P-065","GET /payments/sumup/callback/success missing foreign id no paym
 
 addTest("P-066","GET /payments/sumup/callback/fail updates intent", async () => {
   await setAuctionStatusFor(testData.sumupAuctionId, "settlement");
-
-  if (testData.sumupBlocked) {
-    return skipTest("SumUp intents blocked by default cashier password.");
-  }
   const amountMinor = Math.min(testData.sumupOutstandingMinor, 1000);
   if (amountMinor < 1) {
     return skipTest("No outstanding balance available for SumUp intent tests.");
@@ -1107,10 +1150,6 @@ addTest("P-066","GET /payments/sumup/callback/fail updates intent", async () => 
       note: "phase1 sumup fail intent"
     })
   });
-  if (create.res.status === 403) {
-    testData.sumupBlocked = true;
-    return skipTest("SumUp intents blocked by default cashier password.");
-  }
   await expectStatus(create.res, 201);
   testData.sumupFailIntentId = create.json.intent_id;
   const before = await getBidderSummary(testData.sumupAuctionId, testData.sumupBidderId);
@@ -1136,9 +1175,6 @@ addTest("P-067","GET /payments/sumup/callback/success unknown foreign id no paym
 });
 
 addTest("P-068","GET /payments/sumup/callback/success finalizes intent", async () => {
-  if (testData.sumupBlocked) {
-    return skipTest("SumUp intents blocked by default cashier password.");
-  }
   if (!testData.sumupIntentId) {
     return skipTest("No SumUp intent available.");
   }
@@ -1156,9 +1192,6 @@ addTest("P-068","GET /payments/sumup/callback/success finalizes intent", async (
 });
 
 addTest("P-069","GET /payments/sumup/callback/success duplicate no payment", async () => {
-  if (testData.sumupBlocked) {
-    return skipTest("SumUp intents blocked by default cashier password.");
-  }
   if (!testData.sumupIntentId || testData.sumupPaymentsAfterSuccess == null) {
     return skipTest("No SumUp intent available.");
   }
@@ -1166,63 +1199,6 @@ addTest("P-069","GET /payments/sumup/callback/success duplicate no payment", asy
   const after = await getBidderSummary(testData.sumupAuctionId, testData.sumupBidderId);
   assert.equal(after.payments_total, testData.sumupPaymentsAfterSuccess);
 });
-
-addTest("P-070","maintenance/set default cashier password", async () => {
-
-    const { res: res2 } = await fetchJson(`${baseUrl}/maintenance/change-password`, {
-    method: "POST",
-    headers: authHeaders(tokens.maintenance, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ role: "cashier", newPassword: "admin123" })
-  });
-  sleep(1000); // wait for password change to propagate
-  await expectStatus(res2, 200);
-}); 
-
-
-
-
-
-addTest("P-071","POST /payments/intents default-password block", async () => {
-  await setAuctionStatusFor(testData.sumupAuctionId, "settlement");
-  if (testData.sumupOutstandingMinor < 1) {
-    return skipTest("No outstanding balance available for SumUp intent tests.");
-  }
-  const amountMinor = Math.min(testData.sumupOutstandingMinor, 1000);
-  const { res, json, text } = await fetchJson(`${baseUrl}/payments/intents`, {
-    method: "POST",
-    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({
-      auction_id: testData.sumupAuctionId,
-      bidder_id: testData.sumupBidderId,
-      amount_minor: amountMinor,
-      channel: "app",
-      note: "phase1 sumup intent"
-    })
-  });
-  // await expectStatus(res, 403);
-
-    if (res.status === 403) {
-    assert.ok(json?.error?.includes("default cashier password") || text.includes("default cashier password"),
-      "Unexpected SumUp intent rejection");
-
-    return;
-  }
-
-  assert.ok(json && json.intent_id, `Missing intent id: ${text}`);
-  assert.ok(json.deep_link, "Missing deep link for app intent");
-  testData.sumupIntentId = json.intent_id;
-  testData.sumupAmountMinor = amountMinor;
-});
-
-addTest("P-072","maintenance/set cashier password", async () => {
-
-    const { res: res2 } = await fetchJson(`${baseUrl}/maintenance/change-password`, {
-    method: "POST",
-    headers: authHeaders(tokens.maintenance, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ role: "cashier", newPassword: cashierPassword })
-  });
-  await expectStatus(res2, 200);
-}); 
 
 run().catch(err => {
   console.error(`Fatal error: ${err.message}`);
