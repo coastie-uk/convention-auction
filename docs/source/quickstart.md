@@ -19,7 +19,7 @@ The following pages are provided:
 | `/admin`    | admin       | Tools for managing auctions                                          |
 | `/maint`    | maintenance | Tools for setting up and using the program                           |
 | `/cashier`  | cashier     | Tools for viewing the live progress of the auction, and performing payment tasks |
-| `/slideshow`| admin       | A standalone slideshow of auction items for public display          |
+| `/slideshow`| slideshow   | A standalone slideshow of auction items for public display          |
 
 
 All logins are session based and will remain logged in for several hours, unless explicitly logged out
@@ -39,17 +39,16 @@ Multiple auctions are supported (default limit is 20). This has been included fo
 * Retain previous years auction data  
 * Create separate test auctions for template generation or training
 
-\[Maintenance\] Set passwords as required for the admin, maintenance and cashier roles. Note that if the maintenance password is lost, it will need to be reset by running node set-maint-pw.js on the server.
+\[Maintenance\] Configure users and permissions:
 
-Default passwords:
+* On first run, the backend creates a default **root** user with full permissions.  
+* The initial root password is generated randomly and shown once in server startup logs.  
+* Sign in as root on the maintenance page, then create named user accounts as required.  
+* Each user can be assigned any combination of: `admin`, `maintenance`, `cashier`, `slideshow`.  
+* The root user cannot be deleted and always has full permissions.  
+* If a password is lost, reset it with the `server-management.js` console tool on the server.
 
-| Role        | Pass  |
-|-------------|-------|
-| admin       | admin123 |
-| maintenance | maint123 |
-| cashier     | cashier123 |
-
-\[Maintenance\] Configure the auction template generator and item card generator (if needed). This uses the pptxgenjs library. Custom graphics can be added via the “manage resources” function.
+\[Maintenance\] Configure the auction template generator and item card generator (if needed). This uses the pptxgenjs library. Custom graphics can be added via the “manage resources” function. See pptx_template_editing.md for the JSON fields that control slide layout.
 
 Items can now be added via four routes:
 
@@ -78,7 +77,7 @@ Item number is automatically updated to maintain a 1…n sequence with no gaps.
 * Generate auction slide pack  
 * Generate item labels (e.g. for table display)
 
-\[admin\] A slideshow is provided. This is designed to run full screen / unattended and cycles through all items in the auction. Touchscreen-only operation is supported. 
+\[slideshow\] A slideshow is provided. This is designed to run full screen / unattended and cycles through all items in the auction. Touchscreen-only operation is supported. 
 
 The following controls are provided:
 
@@ -117,28 +116,4 @@ Setup: Public submission of items. Admin can edit as required
 Locked: Public submission is blocked, but admin can continue to edit or add items as needed  
 Live: Bids are being recorded. No editing is possible  
 Settlement: Payments are being taken. Bids can be edited, but only if the winning bidder has not paid  
-Archive: The auction is preserved in a read-only state
-
-| Function                | User | Setup                     | Locked                     | Live  | Settlement                | Archive          |
-|-------------------------|------|---------------------------|----------------------------|-------|---------------------------|------------------|
-| Submit item (public)    |      | Yes                       | No                         | No    | No                        | No               |
-| Add new item            | A    | Yes                       | Yes                        | No    | No                        | No               |
-| Edit item               | A    | Yes                       | Yes                        | No    | No                        | No               |
-| Move (within auction)   | A    | Yes                       | Yes                        | No    | No                        | No               |
-| Move (to auction)       | A    | target “setup” or “locked”| target “setup” or “locked” | No    | No                        | No               |
-| Rotate photo            | A    | Yes                       | Yes                        | No    | No                        | No               |
-| Crop photo              | A    | Yes                       | Yes                        | No    | No                        | No               |
-| Delete item             | A    | Yes                       | Yes                        | No    | No                        | No               |
-| Record bid              | A    | No                        | No                         | Yes   | Yes                       | No               |
-| Undo bid                | A    | No                        | No                         | Yes   | If bidder not paid        | No               |
-| View payments           | C    | Yes                       | Yes                        | Yes   | Yes                       | Yes              |
-| Take payments           | C    | No                        | No                         | No    | Yes                       | No               |
-| Undo payments           | C    | No                        | No                         | No    | Yes                       | No               |
-| Run slideshow           | A    | Yes                       | Yes                        | Yes   | Yes                       | Yes              |
-| Show live bidding view  | A,C  | Yes                       | Yes                        | Yes   | Yes                       | Yes              |
-| Add test items          | M    | Yes                       | Yes                        | No    | No                        | No               |
-| Add test bids           | M    | No                        | No                         | Yes   | No                        | No               |
-| Reset auction           | M    | Yes                       | No                         | No    | No                        | Yes              |
-| Delete auction          | M    | When no items             | No                         | No    | No                        | When no items    |
-
-
+Archived: The auction is preserved in a read-only state

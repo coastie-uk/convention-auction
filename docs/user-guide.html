@@ -195,9 +195,11 @@ document.addEventListener("DOMContentLoaded", () => {
     <img class="placeholder screenshot-small" src="images/admin-other-pg.png" alt="Admin other page screenshot">
 
 
-    <h3>Session</h3>
+    <h3>User Controls</h3>
     <ul>
-      <li><strong>Logout:</strong> Ends your current admin session and returns you to the login screen.</li>
+      <li><strong>User:</strong> Displays the current username</li>
+      <li><strong>Change password:</strong> Allows user to change password.</li>
+      <li><strong>Log out:</strong> End the session and returns you to the login screen.</li>
     </ul>
  
   </div>
@@ -244,6 +246,13 @@ document.addEventListener("DOMContentLoaded", () => {
     </ul>
     <img class="placeholder screenshot-small" src="images/cashier-payment-buttons.png" alt="Cashier payment buttons screenshot">
     <img class="placeholder screenshot-small" src="images/cashier-summary.png" alt="Cashier summary screenshot">
+          <h3>User Controls</h3>
+    <ul>
+      <li><strong>User:</strong> Displays the current username</li>
+      <li><strong>Change password:</strong> Allows user to change password.</li>
+      <li><strong>Log out:</strong> End the session and returns you to the login screen.</li>
+    </ul>
+  
   </div>
 
   <h2>Live Feed</h2>
@@ -276,7 +285,7 @@ document.addEventListener("DOMContentLoaded", () => {
     <h2>Getting Started</h2>
     <img class="placeholder screenshot-large" src="images/slideshow-login.png" alt="Slideshow getting started screenshot">
     <ul>
-      <li>On first load, you'll be prompted to enter the <strong>auction short name</strong> and <strong>admin password</strong>.</li>
+      <li>On first load, you'll be prompted to enter the <strong>auction short name</strong> and <strong>slideshow user password</strong>.</li>
       <li>Once validated, the system enters full-screen slideshow mode and logs out any existing elevated user sessions for security.</li>
     </ul>
   </div>
@@ -307,15 +316,7 @@ document.addEventListener("DOMContentLoaded", () => {
     </ul>
   </div>
 
-  <div class="section">
-    <h2>How It Works</h2>
-    <img class="placeholder screenshot-large" src="images/slideshow-how-it-works.png" alt="Slideshow how it works screenshot">
-    <ul>
-      <li>Items are loaded dynamically from the server, but only if a photo is present for the item.</li>
-      <li>Items are shuffled (if enabled) and loop continuously. Once the queue is exhausted, it restarts.</li>
-      <li>The slideshow polls the backend regularly to fetch new items and updates in real-time.</li>
-    </ul>
-  </div>
+
 
  <h1>Maintenance Panel</h1>
 
@@ -374,8 +375,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     <h3>Security</h3>
     <ul>
-      <li><strong>Change Password:</strong> Update password for Admin, Cashier, or Maintenance roles </li>
-      <li>If the maintenance password is lost, it will need to be reset by running the <code>server-management.js</code> console tool on the server</li>
+      <li><strong>User Management:</strong> Create and delete named users, assign any combination of <code>admin</code>, <code>cashier</code>, <code>maintenance</code>, and <code>slideshow</code> roles, and set per-user passwords.</li>
+      <li><strong>Own Password:</strong> Logged-in users can change their own password from their own panel.</li>
+      <li><strong>Root Account:</strong> A default <code>root</code> user is created on first run with full permissions and cannot be deleted.</li>
+      <li>If access is lost, passwords can be reset using the <code>server-management.js</code> console tool on the server.</li>
     </ul>
     <img class="placeholder screenshot-small" src="images/maintenance-security.png" alt="Maintenance security screenshot">
 
