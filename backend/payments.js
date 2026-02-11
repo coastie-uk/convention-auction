@@ -5,7 +5,7 @@
  * @license     GPL3
  */
 
-const paymentProcessorVer = 'SumUp 1.1.0(2026-01-24)';
+const paymentProcessorVer = 'SumUp 1.2.0(2026-02-09)';
 
 const express = require('express');
 const crypto = require('node:crypto');
@@ -49,6 +49,18 @@ api.post('/payments/intents', authenticateRole("cashier"), checkAuctionState(['s
     const { bidder_id, amount_minor, currency, channel, note } = req.body || {};
     if (!posInt(bidder_id) || !posInt(amount_minor)) return res.status(400).json({ error: 'invalid parameters' });
     const sanitisedNote = sanitiseText(note, 100);
+    const requestAuctionId = Number(req.auction?.id);
+
+    // Bidder must belong to the same auction as the request auction_id.
+    const bidderInAuction = db.prepare(`
+      SELECT id
+      FROM bidders
+      WHERE id = ? AND auction_id = ?
+    `).get(bidder_id, requestAuctionId);
+    if (!bidderInAuction) {
+      logFromRequest(req, logLevels.WARN, `Intent bidder/auction mismatch: bidder=${bidder_id} auction_id=${requestAuctionId}`);
+      return res.status(400).json({ error: 'Bidder not found for this auction' });
+    }
     
     // Check that the requested amount does not exceed the bidder's outstanding balance
     const sums = db.prepare(`
@@ -556,16 +568,17 @@ function expireStaleIntents() {
   }
 }
 
+// Generate a payment description for the SumUp checkout. Includes looking up the paddle number
 const getPaymentLabelForBidder = (bidderId) => {
   const row = db.prepare(`
-  SELECT a.id AS auction_id, a.short_name, a.full_name
+  SELECT a.id AS auction_id, a.short_name, a.full_name, b.paddle_number
   FROM bidders b
   JOIN auctions a ON a.id = b.auction_id
   WHERE b.id = ?
 `).get(bidderId);
   if (!row) return `Bidder ${bidderId}`;
   const auctionName = row.full_name || row.short_name;
-  return `${auctionName} - Bidder ${bidderId}`;
+  return `${auctionName} - Bidder ${row.paddle_number}`;
 };
 
 module.exports = { api, paymentProcessorVer, verifyAndFinalizeIntent };

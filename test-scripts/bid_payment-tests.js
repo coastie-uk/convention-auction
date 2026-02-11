@@ -87,6 +87,10 @@ const testData = {
   item1: null,
   item2: null,
   item3: null,
+  autoSettleAuctionId: null,
+  autoSettleAuctionPublicId: null,
+  autoSettleAuctionShortName: null,
+  autoSettleItemId: null,
   bidderId: null,
   paymentId: null,
   auction2Id: null,
@@ -96,9 +100,12 @@ const testData = {
   auction2BidderId: null,
   moveAuctionId: null,
   moveAuctionShortName: null,
+  moveItemSuccess: null,
+  moveItemTargetState: null,
   isolationBidderId: null,
   isolationPaddle: null,
   sumupIntentId: null,
+  sumupHostedIntentId: null,
   sumupFailIntentId: null,
   sumupBidderId: null,
   sumupAuctionId: null,
@@ -442,6 +449,56 @@ addTest("P-019","POST /lots/:itemid/finalize failure unauthenticated", async () 
   await expectStatus(res, 403);
 });
 
+addTest("P-0190","setup: create single-lot auction for auto-settlement", async () => {
+  const stamp = Date.now();
+  testData.autoSettleAuctionShortName = `test_phase1_autosettle_${stamp}`;
+  const { res, json } = await maintenanceRequest("/maintenance/auctions/create", {
+    short_name: testData.autoSettleAuctionShortName,
+    full_name: `Phase1 Auto-Settlement Auction ${stamp}`,
+    logo: "default_logo.png"
+  });
+  await expectStatus(res, 201);
+  assert.ok(json && json.message, "Auto-settlement auction create failed");
+
+  const list = await fetchJson(`${baseUrl}/list-auctions`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({})
+  });
+  await expectStatus(list.res, 200);
+  const found = list.json.find(a => a.short_name === testData.autoSettleAuctionShortName);
+  assert.ok(found, "Auto-settlement auction not found");
+  testData.autoSettleAuctionId = found.id;
+  testData.autoSettleAuctionPublicId = found.public_id;
+
+  await maintenanceRequest("/maintenance/auctions/set-admin-state-permission", {
+    auction_id: testData.autoSettleAuctionId,
+    admin_can_change_state: true
+  });
+  await setAuctionStatusFor(testData.autoSettleAuctionId, "setup");
+  testData.autoSettleItemId = await createItem(testData.autoSettleAuctionPublicId, "Phase1 Auto-Settlement Item");
+});
+
+addTest("P-0191","POST /lots/:itemid/finalize auto-transitions final lot auction to settlement", async () => {
+  await setAuctionStatusFor(testData.autoSettleAuctionId, "live");
+  const { res, json } = await fetchJson(`${baseUrl}/lots/${testData.autoSettleItemId}/finalize`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ paddle: 901, price: 25, auctionId: testData.autoSettleAuctionId })
+  });
+  await expectStatus(res, 200);
+  assert.equal(json?.auction_status, "settlement");
+
+  await waitForAuctionStatus(testData.autoSettleAuctionId, "settlement");
+  const stateCheck = await fetchJson(`${baseUrl}/auction-status`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ auction_id: testData.autoSettleAuctionId })
+  });
+  await expectStatus(stateCheck.res, 200);
+  assert.equal(stateCheck.json?.status, "settlement");
+});
+
 addTest("P-019a","setup: create target auction for bid edit protections", async () => {
   const stamp = Date.now();
   testData.moveAuctionShortName = `test_phase1_move_${stamp}`;
@@ -468,7 +525,10 @@ addTest("P-019a","setup: create target auction for bid edit protections", async 
     admin_can_change_state: true
   });
 
+  await setAuctionStatusFor(testData.auctionId, "setup");
   await setAuctionStatusFor(testData.moveAuctionId, "setup");
+  testData.moveItemSuccess = await createItem(testData.auctionPublicId, "Phase1 Move Success Item");
+  testData.moveItemTargetState = await createItem(testData.auctionPublicId, "Phase1 Move Target-State Item");
 });
 
 addTest("P-019b","POST /auctions/:auctionId/items/:id/update blocked for finalized item in setup", async () => {
@@ -506,6 +566,84 @@ addTest("P-019d","DELETE /items/:id blocked for finalized item in setup", async 
   });
   await expectStatus(res, 400);
   assert.ok(json?.error || text, "Expected delete block error response");
+  await setAuctionStatusFor(testData.auctionId, "live");
+});
+
+addTest("P-019e","POST /auctions/:auctionId/items/:id/move-auction/:targetAuctionId failure unauthenticated", async () => {
+  await setAuctionStatusFor(testData.auctionId, "setup");
+  await setAuctionStatusFor(testData.moveAuctionId, "setup");
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/${testData.moveItemSuccess}/move-auction/${testData.moveAuctionId}`, {
+    method: "POST"
+  });
+  await expectStatus(res, 403);
+});
+
+addTest("P-019f","POST /auctions/:auctionId/items/:id/move-auction/:targetAuctionId failure wrong role", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/${testData.moveItemSuccess}/move-auction/${testData.moveAuctionId}`, {
+    method: "POST",
+    headers: authHeaders(tokens.cashier)
+  });
+  await expectStatus(res, 403);
+});
+
+addTest("P-019g","POST /auctions/:auctionId/items/:id/move-auction/:targetAuctionId failure missing target auction", async () => {
+  const { res } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/${testData.moveItemSuccess}/move-auction/999999999`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin)
+  });
+  await expectStatus(res, 400);
+});
+
+addTest("P-019h","POST /auctions/:auctionId/items/:id/move-auction/:targetAuctionId success", async () => {
+  const { res, json } = await fetchJson(
+    `${baseUrl}/auctions/${testData.auctionId}/items/${testData.moveItemSuccess}/move-auction/${testData.moveAuctionId}`,
+    {
+      method: "POST",
+      headers: authHeaders(tokens.admin)
+    }
+  );
+  await expectStatus(res, 200);
+  assert.ok(json && json.message, "Expected move success response");
+
+  const sourceItems = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items`, {
+    headers: authHeaders(tokens.admin)
+  });
+  await expectStatus(sourceItems.res, 200);
+  const sourceList = Array.isArray(sourceItems.json) ? sourceItems.json : sourceItems.json?.items;
+  assert.ok(Array.isArray(sourceList), "Expected source items array");
+  assert.ok(!sourceList.some((row) => Number(row.id) === Number(testData.moveItemSuccess)), "Moved item still present in source auction");
+
+  const targetItems = await fetchJson(`${baseUrl}/auctions/${testData.moveAuctionId}/items`, {
+    headers: authHeaders(tokens.admin)
+  });
+  await expectStatus(targetItems.res, 200);
+  const targetList = Array.isArray(targetItems.json) ? targetItems.json : targetItems.json?.items;
+  assert.ok(Array.isArray(targetList), "Expected target items array");
+  assert.ok(targetList.some((row) => Number(row.id) === Number(testData.moveItemSuccess)), "Moved item not found in target auction");
+});
+
+addTest("P-019i","POST /auctions/:auctionId/items/:id/move-auction/:targetAuctionId failure same target auction", async () => {
+  const { res } = await fetchJson(
+    `${baseUrl}/auctions/${testData.moveAuctionId}/items/${testData.moveItemSuccess}/move-auction/${testData.moveAuctionId}`,
+    {
+      method: "POST",
+      headers: authHeaders(tokens.admin)
+    }
+  );
+  await expectStatus(res, 400);
+});
+
+addTest("P-019j","POST /auctions/:auctionId/items/:id/move-auction/:targetAuctionId failure target wrong state", async () => {
+  await setAuctionStatusFor(testData.moveAuctionId, "live");
+  const { res } = await fetchJson(
+    `${baseUrl}/auctions/${testData.auctionId}/items/${testData.moveItemTargetState}/move-auction/${testData.moveAuctionId}`,
+    {
+      method: "POST",
+      headers: authHeaders(tokens.admin)
+    }
+  );
+  await expectStatus(res, 400);
+  await setAuctionStatusFor(testData.moveAuctionId, "setup");
   await setAuctionStatusFor(testData.auctionId, "live");
 });
 
@@ -935,6 +1073,24 @@ addTest("P-051b","POST /settlement/payment/:auctionId overpay no payment", async
   assert.equal(after.payments_total, before.payments_total);
 });
 
+addTest("P-051c","POST /payments/intents bidder/auction mismatch no payment intent", async () => {
+  const before = await getBidderSummary(testData.sumupAuctionId, testData.sumupBidderId);
+  const mismatchAmountMinor = Math.max(1, Math.min(testData.sumupOutstandingMinor, 100));
+  const { res } = await fetchJson(`${baseUrl}/payments/intents`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      auction_id: testData.auctionId,
+      bidder_id: testData.sumupBidderId,
+      amount_minor: mismatchAmountMinor,
+      channel: "app"
+    })
+  });
+  await expectStatus(res, 400);
+  const after = await getBidderSummary(testData.sumupAuctionId, testData.sumupBidderId);
+  assert.equal(after.payments_total, before.payments_total);
+});
+
 addTest("P-052","POST /payments/intents failure unauthenticated", async () => {
   const res = await fetch(`${baseUrl}/payments/intents`, {
     method: "POST",
@@ -998,6 +1154,52 @@ addTest("P-054","POST /payments/intents success", async () => {
   assert.ok(json.deep_link, "Missing deep link for app intent");
   testData.sumupIntentId = json.intent_id;
   testData.sumupAmountMinor = amountMinor;
+});
+
+addTest("P-054b","POST /payments/intents hosted channel coverage", async () => {
+  if (testData.sumupOutstandingMinor < 1) {
+    return skipTest("No outstanding balance available for SumUp hosted intent tests.");
+  }
+  const amountMinor = Math.min(testData.sumupOutstandingMinor, 200);
+  const { res, json, text } = await fetchJson(`${baseUrl}/payments/intents`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      auction_id: testData.sumupAuctionId,
+      bidder_id: testData.sumupBidderId,
+      amount_minor: amountMinor,
+      channel: "hosted",
+      note: "phase1 sumup hosted intent"
+    })
+  });
+  if (res.status === 503) {
+    return skipTest(`Hosted SumUp disabled in this environment: ${text || json?.error || "503"}`);
+  }
+  await expectStatus(res, 201);
+  assert.ok(json && json.intent_id, `Missing hosted intent id: ${text}`);
+  testData.sumupHostedIntentId = json.intent_id;
+});
+
+addTest("P-054c","GET /payments/intents/:id success hosted intent", async () => {
+  if (!testData.sumupHostedIntentId) {
+    return skipTest("No hosted SumUp intent available.");
+  }
+  const { res, json } = await fetchJson(`${baseUrl}/payments/intents/${testData.sumupHostedIntentId}`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  assert.equal(json.intent_id, testData.sumupHostedIntentId);
+  assert.equal(json.channel, "hosted");
+  assert.equal(json.status, "pending");
+});
+
+addTest("P-054d","GET /payments/sumup/callback/fail marks hosted intent failed", async () => {
+  if (!testData.sumupHostedIntentId) {
+    return skipTest("No hosted SumUp intent available.");
+  }
+  const res = await fetch(`${baseUrl}/payments/sumup/callback/fail?status=failed&foreign-tx-id=${testData.sumupHostedIntentId}`);
+  await expectStatus(res, 200);
+  await waitForIntentStatus(testData.sumupHostedIntentId, "failed", 3000);
 });
 
 

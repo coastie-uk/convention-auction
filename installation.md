@@ -165,14 +165,16 @@ From within /srv/auction/ confirm that the backend starts
 You should see a number of log entries similar to those shown below. Any errors should be investigated before proceeding. Most likely culprits are paths and permissions
 
 ```
-[WARN] [unknown] [General] Database file not found; creating new database
-[WARN] [unknown] [General] Schema version missing or mismatched (db=missing, expected=2.3); Running DB setup
+[WARN] [unknown] [General] Database file not found; creating new database at /var/lib/auction/auction.db
+[WARN] [unknown] [General] Schema version missing or mismatched (db=missing, expected=2.4); Running DB se>
+[WARN] [unknown] [General] Created default root account with full permissions.
+[WARN] [unknown] [General] Initial root password (shown once): [Random password]
 [INFO] [unknown] [General] Database opened
 [INFO] [unknown] [General] ~~ Starting up Auction backend ~~
-[unknown] [Logger] Logging framework initialized. 
-[INFO] [unknown] [General] Backend version: 2.0.0, DB schema version: 2.3
-[INFO] [unknown] [General] Payment processor: SumUp
-[INFO] [unknown] [Logger] Log level set to INFO
+[INFO] [unknown] [Logger] Logging framework initialized.
+[INFO] [unknown] [General] Backend version: 2.1.0, DB schema version: 2.4
+[INFO] [unknown] [General] Payment processor: SumUp 1.2.0(2026-02-09)
+[INFO] [unknown] [Logger] Log level set to DEBUG
 [INFO] [unknown] [General] CORS is disabled.
 [INFO] [unknown] [General] Server startup complete and listening on port 3000
 ```
@@ -180,10 +182,11 @@ You should see a number of log entries similar to those shown below. Any errors 
 On first run the backend will:
     Create the database
     Create a logfile
+    Create a root user and set the intial password
     Generate default pptx config files
     Copy default image resource files into the required folder
 
-Ctrl-C to terminate the backend process, and continue setting up.
+Note the root password (it won't be shown again). Ctrl-C to terminate the backend process, and continue setting up.
 
 ## Create the systemd service
 
@@ -322,10 +325,11 @@ The default setup assumes that frontend and backend are running on the same serv
 
 `node server-management.js` is a self-contained node CLI tool which exposes maintenance tasks that are intentionally not available in the web UI. Run it from the server to perform:
 
-- Reset the maintenance password
+- Reset passwords
+- Remove all users (apart from the root user)
 - Clear the audit log
 - Reset the database (clears bidders, auctions, items, payments, and payment intents). Item counters are not reset to maintain alignment with the audit log
-- Reset the database **and** counters (effectively results in a new database, but with the existing passwords)
+- Reset the database **and** counters (effectively results in a new database, but with the existing users)
 
 
 ## **Setup PM2 to Run the Backend**

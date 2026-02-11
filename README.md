@@ -17,6 +17,7 @@ This software provides a single platform which automates the process from item s
 - Cashier panel to record payments
 - Integration with SumUp supporting web hosted checkouts and app payments with a card reader.
 - Maintenance tools: manage auctions, logs, auditing, import/export, auto-create test items, etc.
+- User accounts with username/password login and per-user role assignment (`admin`, `cashier`, `maintenance`, `slideshow`)
 - Automatic PowerPoint generation from custom templates (slide deck + item cards)
 - Auto-updating slideshow for in-venue advertising
 - Automatic randomised item & bid generators (for testing/training/evaluation)
@@ -39,8 +40,9 @@ This software provides a single platform which automates the process from item s
 
 ## Installation
 
-See installation.md
+For general server setup see installation.md
 For payment setup see sumup_setup.md
+For Powerpoint template setup see pptx_template_editing.md
 
 ## Quick-start
 

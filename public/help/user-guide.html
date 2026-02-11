@@ -152,6 +152,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <body>
 
   <h1>Function / state quick reference</h1>
+  <p><strong>User key:</strong> A = admin role, C = cashier role, M = maintenance role, S = slideshow role.</p>
 
 <table border="1" class="dataframe function-matrix">
   <thead>
@@ -286,7 +287,7 @@ document.addEventListener("DOMContentLoaded", () => {
     </tr>
     <tr>
       <td>Run slideshow</td>
-      <td>A</td>
+      <td>S</td>
       <td class="tick-yes">✅</td>
       <td class="tick-yes">✅</td>
       <td class="tick-yes">✅</td>
@@ -397,19 +398,19 @@ document.addEventListener("DOMContentLoaded", () => {
     <ul>
       <li><strong>Public Form:</strong> Opens the public-facing item submission page.</li>
       <li><strong>Live Feed:</strong> Opens the auction live bid display.</li>
-      <li><strong>Maintenance:</strong> Opens the maintenance panel (separate login required).</li>
-      <li><strong>Cashier:</strong> Opens the cashier interface (separate login required).</li>
+      <li><strong>Maintenance:</strong> Opens the maintenance panel.</li>
+      <li><strong>Cashier:</strong> Opens the cashier interface.</li>
       <li><strong>Slideshow:</strong> Opens the presentation slideshow mode</li>
     </ul>
 
     <img class="placeholder screenshot-small" src="/help/images/admin-other-pg.png" alt="Admin other page screenshot">
-
-
-    <h3>Session</h3>
+    <h3>User Controls</h3>
     <ul>
-      <li><strong>Logout:</strong> Ends your current admin session and returns you to the login screen.</li>
+      <li><strong>User:</strong> Displays the current username</li>
+      <li><strong>Change password:</strong> Allows user to change password.</li>
+      <li><strong>Log out:</strong> End the session and returns you to the login screen.</li>
     </ul>
- 
+
   </div>
 
   
@@ -454,6 +455,14 @@ document.addEventListener("DOMContentLoaded", () => {
     </ul>
     <img class="placeholder screenshot-small" src="/help/images/cashier-payment-buttons.png" alt="Cashier payment buttons screenshot">
     <img class="placeholder screenshot-small" src="/help/images/cashier-summary.png" alt="Cashier summary screenshot">
+  
+        <h3>User Controls</h3>
+    <ul>
+      <li><strong>User:</strong> Displays the current username</li>
+      <li><strong>Change password:</strong> Allows user to change password.</li>
+      <li><strong>Log out:</strong> End the session and returns you to the login screen.</li>
+    </ul>
+  
   </div>
 
   <h2>Live Feed</h2>
@@ -484,7 +493,7 @@ document.addEventListener("DOMContentLoaded", () => {
     <h2>Getting Started</h2>
     <img class="placeholder screenshot-large" src="/help/images/slideshow-login.png" alt="Slideshow getting started screenshot">
     <ul>
-      <li>On first load, you'll be prompted to enter the <strong>auction short name</strong> and <strong>admin password</strong>.</li>
+      <li>On first load, you'll be prompted to enter the <strong>auction short name</strong>, <strong>slideshow username</strong>, and <strong>slideshow password</strong>.</li>
       <li>Once validated, the system enters full-screen slideshow mode and logs out any existing elevated user sessions for security.</li>
     </ul>
   </div>
@@ -531,14 +540,14 @@ document.addEventListener("DOMContentLoaded", () => {
     <h3>Auction Management</h3>
     <ul>
       <li><strong>Create New Auction:</strong> Define a full display name and a short URL tag (e.g. <code>?auction=fof2026</code>).</li>
-      <li><strong>Select Logo:</strong> Choose a logo from the uploaded image set for branding & PowerPoint slides.</li>
+      <li><strong>Select Logo:</strong> Choose a logo from the uploaded image set for branding.</li>
       <li><strong>Existing Auctions Table:</strong> Lists all auctions, showing ID, name, tag, logo, item count, and status. 
         <ul>
           <li>Set auction state</li>
           <li>Allow admin to change auction state. If enabled, a state dropdown is provided on the admin interface </li>
           <li>Reset - Remove all items from the auction. Only available in state "setup" or "archived"</li> 
           <li>Delete - Only if empty. Deleting the last auction will clear and reset all counters in the database.</li>
-          <li>Audit history cannot be cleared from the web interface. Use the server-management.js console tool</li>
+          <li>Audit history cannot be modified or cleared from the web interface. Use the server-management.js console tool</li>
         
           
         </ul></li>
@@ -573,8 +582,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     <h3>Security</h3>
     <ul>
-      <li><strong>Change Password:</strong> Update password for Admin, Cashier, or Maintenance roles </li>
-      <li>If the maintenance password is lost, it will need to be reset by running the <code>server-management.js</code> console tool on the server</li>
+      <li><strong>User Management:</strong> Create and delete named users, assign any combination of <code>admin</code>, <code>cashier</code>, <code>maintenance</code>, and <code>slideshow</code> roles, and set per-user passwords.</li>
+      <li><strong>Own Password:</strong> Logged-in users can change their own password from their own panel.</li>
+      <li><strong>Root Account:</strong> A default <code>root</code> user is created on first run with full permissions and cannot be deleted.</li>
+      <li>If access is lost, passwords can be reset using the <code>server-management.js</code> console tool on the server.</li>
     </ul>
     <img class="placeholder screenshot-small" src="/help/images/maintenance-security.png" alt="Maintenance security screenshot">
 

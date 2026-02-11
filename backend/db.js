@@ -200,36 +200,7 @@ if(existingSchemaVersion !== schemaVersion || isNewDatabase)
   // 2.4: Move to username-based accounts with multi-role permissions.
   const isBcryptHash = (value) => typeof value === 'string' && /^\$2[aby]\$\d{2}\$/.test(value);
 
-  // const parseRoles = (raw) => {
-  //   if (Array.isArray(raw)) return raw;
-  //   if (typeof raw !== 'string') return [];
-
-  //   const trimmed = raw.trim();
-  //   if (!trimmed) return [];
-
-  //   try {
-  //     const parsed = JSON.parse(trimmed);
-  //     if (Array.isArray(parsed)) return parsed;
-  //   } catch (_err) {
-  //     // fall back to comma-delimited role strings
-  //   }
-  //   return trimmed.split(',');
-  // };
-
-  // const normaliseRoles = (rawRoles) => {
-  //   const roles = parseRoles(rawRoles);
-  //   const result = [];
-  //   const seen = new Set();
-  //   for (const role of roles) {
-  //     const normalized = String(role || '').trim().toLowerCase();
-  //     if (!ROLE_SET.has(normalized) || seen.has(normalized)) continue;
-  //     seen.add(normalized);
-  //     result.push(normalized);
-  //   }
-  //   return result;
-  // };
-
-  const ensureHashedPassword = (password, label) => {
+   const ensureHashedPassword = (password, label) => {
     const text = String(password || '');
     if (!text) return null;
     if (isBcryptHash(text)) return text;
@@ -239,39 +210,7 @@ if(existingSchemaVersion !== schemaVersion || isNewDatabase)
   };
 
   try {
-    // Normalize and hash all stored users.
-    // const userRows = db.prepare('SELECT rowid, username, password, roles, is_root FROM users').all();
-    // const updateUser = db.prepare(`
-    //   UPDATE users
-    //   SET username = ?, password = ?, roles = ?, is_root = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
-    //   WHERE rowid = ?
-    // `);
-
-    // for (const row of userRows) {
-    //   try {
-    //     const normalizedUsername = String(row.username || '').trim().toLowerCase();
-    //     if (!normalizedUsername) continue;
-
-    //     const isRootUser = Number(row.is_root) === 1 || normalizedUsername === ROOT_USERNAME;
-    //     const hashed = ensureHashedPassword(row.password, `user ${normalizedUsername}`);
-    //     if (!hashed) continue;
-
-    //     let roles = isRootUser ? [...ROLE_LIST] : normaliseRoles(row.roles);
-    //     if (!isRootUser && roles.length === 0 && ROLE_SET.has(normalizedUsername)) {
-    //       roles = [normalizedUsername];
-    //     }
-
-    //     updateUser.run(
-    //       normalizedUsername,
-    //       hashed,
-    //       JSON.stringify(roles),
-    //       isRootUser ? 1 : 0,
-    //       row.rowid
-    //     );
-    //   } catch (err) {
-    //     log('General', logLevels.ERROR, `Failed to normalize user rowid=${row.rowid}: ${err.message}`);
-    //   }
-    // }
+  
 
     // Root is canonical and unique.
     db.prepare('UPDATE users SET is_root = 0 WHERE lower(username) <> ?').run(ROOT_USERNAME);

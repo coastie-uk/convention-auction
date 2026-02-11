@@ -8,7 +8,7 @@ This document describes the project’s architecture and, **for each end‑user 
 - The **backend endpoint(s)** involved (as called by the browser, i.e. under the `/api` prefix)
 - The **data flows** (SQLite tables + filesystem side effects)
 
-It is written from the perspective of the code currently in this repo (`backend/` + `public/`). Current version 2.0.0.
+It is written from the perspective of the code currently in this repo (`backend/` + `public/`). Current version 2.1.0.
 
 Disclosure: This document was written entirely by ChatGPT 5.2 (and subsequently proof read).
 
@@ -44,6 +44,7 @@ Disclosure: This document was written entirely by ChatGPT 5.2 (and subsequently 
 - SQLite via `better-sqlite3`: `backend/db.js`
 - Authentication via JWT (`Authorization` header) with role claims:
   - `admin`, `maintenance`, `cashier`, `slideshow`
+  - Tokens also include `username` and the user’s full assigned role set.
 - Auction state gating via middleware `backend/middleware/checkAuctionState.js`:
   - State machine: `setup → locked → live → settlement → archived`
 
@@ -88,7 +89,7 @@ This section describes how an HTTP request is processed by the backend, and how 
 
 - **Role authentication**: `backend/middleware/authenticateRole.js`
   - Expects a JWT string in the `Authorization` header.
-  - On success sets `req.user = { role: ... }`.
+  - On success sets `req.user` including `username`, active `role`, and assigned `roles`.
   - Enforced roles: `admin`, `maintenance`, `cashier`, `slideshow`.
 - **Auction state guard**: `backend/middleware/checkAuctionState.js`
   - Resolves auction id from request (including `publicId`), loads `auctions.status`, and blocks if it’s not in the allowed set.
@@ -104,8 +105,8 @@ In production, the frontend calls these under `/api/*` (the backend itself gener
 
 Auth/session:
 - `POST /validate` — validate JWT and return version info
-- `POST /login` — role-based login (admin/cashier/maintenance)
-- `GET /slideshow-auth` — admin-only helper to mint a `slideshow` JWT
+- `POST /login` — username/password login selecting one assigned role
+- `POST /change-password` — authenticated user changes own password
 
 Core auction + item management (mostly admin-facing):
 - `POST /validate-auction` — resolve short name and enforce public submission eligibility
@@ -184,6 +185,9 @@ Primary tables (see `backend/db.js`):
   - `sumup_checkout_id` for hosted checkout flow
 - `audit_log`
   - `user`, `action`, `object_type`, `object_id`, `details`, `created_at`
+- `users`
+  - `username`, `password` (bcrypt hash), `roles` (JSON array), `is_root`
+  - Root is canonical (`username='root'`) and always has full permissions.
 
 ---
 
@@ -227,7 +231,7 @@ The auction lifecycle is represented by `auctions.status` (strings), and is enfo
 
 - `checkAuctionState()` resolves the auction id from (in precedence order): `req.params.auctionId`, `req.body.auctionId` / `req.body.auction_id`, `req.params.id` (item id → auction id), or `req.params.publicId` (public id → auction id).
 - Public submission is effectively “setup only” due to `POST /api/validate-auction` (even though `/auctions/:publicId/newitem` allows `locked` too). This is intentional as `locked` supports “admin-only intake”.
-- There is a minor naming inconsistency to be aware of: some code paths refer to `archive` while others use `archived`. The canonical status list in several places is `["setup","locked","live","settlement","archived"]`.
+- Canonical auction statuses are: `["setup","locked","live","settlement","archived"]`.
 
 ---
 
@@ -308,18 +312,18 @@ Data flows:
 #### 2.2 Login / logout
 
 Flow:
-1. User enters password and presses “Login”.
+1. User enters username + password and presses “Login”.
 2. Frontend requests a JWT for the `admin` role.
 3. Token stored in `localStorage.token`.
 4. Logout clears token and returns to login view.
 
 Backend endpoints:
 - `POST /api/login`
-  - Request: `{ password, role: "admin" }`
+  - Request: `{ username, password, role: "admin" }`
   - Response: `{ token, currency, versions }`
 
 Data flows:
-- Reads `passwords` (bcrypt compare).
+- Reads `users` (bcrypt compare + role assignment check).
 - No DB writes on successful login (aside from rate/lockout state in memory).
 
 #### 2.3 Load auctions / select auction
@@ -558,11 +562,11 @@ Flow:
 4. Logout clears `cashierToken`.
 
 Backend endpoints:
-- `POST /api/login` with `{ role: "cashier" }`
+- `POST /api/login` with `{ username, password, role: "cashier" }`
 - `POST /api/list-auctions` (requires cashier JWT)
 
 Data flows:
-- Reads `passwords` at login.
+- Reads `users` at login.
 - Reads `auctions` for list.
 
 #### 3.2 Choose auction and open embedded sub-pages
@@ -667,13 +671,12 @@ Data flows:
 Flow:
 1. Frontend requests a payment methods object.
 2. Buttons are shown/hidden and labelled based on backend config.
-3. Backend can also set `blockedFlag` (e.g., default cashier password blocks SumUp methods).
 
 Backend endpoints:
 - `GET /api/settlement/payment-methods` (requires cashier JWT)
 
 Data flows:
-- Reads runtime config values and `passwords` table to detect default cashier password.
+- Reads runtime config values.
 
 #### 5.4 Record a manual payment (cash / manual card / manual PayPal)
 
@@ -773,7 +776,7 @@ Flow:
 
 Backend endpoints:
 - `POST /api/validate`
-- `POST /api/login` with `{ role: "maintenance" }`
+- `POST /api/login` with `{ username, password, role: "maintenance" }`
 
 Data flows:
 - JWT verification and password hash checks; no DB writes.
@@ -834,17 +837,24 @@ Data flows:
 #### 6.5 Password management / server management / logs
 
 Flow:
-- Change password for a role (admin/cashier/maintenance).
+- Manage user accounts (create users, assign roles, set passwords, delete users).
+- Change the logged-in user’s own password.
 - Restart backend service.
 - Load server logs (optionally auto-refresh).
 
 Backend endpoints:
+- `GET /api/maintenance/users`
+- `POST /api/maintenance/users`
+- `PATCH /api/maintenance/users/:username/roles`
+- `POST /api/maintenance/users/:username/password`
+- `DELETE /api/maintenance/users/:username`
 - `POST /api/maintenance/change-password`
+- `POST /api/change-password`
 - `POST /api/maintenance/restart`
 - `GET /api/maintenance/logs`
 
 Data flows:
-- Writes to `passwords` (bcrypt hash) for changes.
+- Reads/writes `users` (bcrypt hash) for account and password changes.
 - Restart uses OS-level service control (see maintenance implementation + `SERVICE_NAME`).
 - Logs are filesystem reads from `LOG_DIR/LOG_NAME`.
 
@@ -923,34 +933,32 @@ Backend endpoints:
 - `GET /api/settlement/payment-methods`
 
 Data flows:
-- Reads config + `passwords` to detect default cashier password.
+- Reads runtime payment config.
 
 ---
 
 ### 7) Slideshow (`public/slideshow/index.html`)
 
-#### 7.1 Authenticate and obtain a slideshow token
+#### 7.1 Authenticate with slideshow role
 
 Flow:
-1. User enters auction short name + admin password.
-2. Frontend logs in as admin to obtain an admin JWT.
-3. Frontend uses admin JWT to request a slideshow JWT.
-4. Frontend clears other elevated tokens (admin/maintenance/cashier) because slideshow is expected to be unattended.
+1. User enters auction short name + slideshow username + slideshow password.
+2. Frontend logs in directly with role `slideshow`.
+3. Frontend stores the slideshow JWT and clears other elevated tokens (admin/maintenance/cashier) because slideshow is expected to be unattended.
 
 Backend endpoints:
-- `POST /api/login` (role `admin`)
-- `GET /api/slideshow-auth` (requires admin JWT)
-  - Response: `{ token }` (role `slideshow`)
+- `POST /api/login` (role `slideshow`)
+  - Response includes `{ token }`
 
 Data flows:
-- Reads `passwords` for admin login.
+- Reads `users` for slideshow login.
 - No DB writes.
 
-#### 7.2 Validate auction short name (admin bypass) and store `public_id`
+#### 7.2 Validate auction short name (authorised bypass) and store `public_id`
 
 Flow:
 1. Frontend calls validate-auction with slideshow JWT in `Authorization`.
-2. Backend treats it as “admin bypass” and does not require `status === setup`.
+2. Backend treats slideshow/admin/maintenance/root JWT as authorised bypass and does not require `status === setup`.
 3. Frontend stores `public_id` and auction name in local storage.
 
 Backend endpoints:
@@ -981,9 +989,9 @@ Data flows:
 ## Appendix: Endpoint index (only those used by the frontend)
 
 Authentication & session:
-- `POST /api/login` (admin/cashier/maintenance)
+- `POST /api/login` (admin/cashier/maintenance/slideshow)
 - `POST /api/validate` (all roles)
-- `GET /api/slideshow-auth` (admin → slideshow token)
+- `POST /api/change-password` (all authenticated roles)
 
 Auctions:
 - `POST /api/validate-auction` (public; optional auth bypass)
@@ -1035,5 +1043,6 @@ Maintenance (all require maintenance role and are prefixed `/api/maintenance/*`)
 - Auctions: `auctions/list`, `auctions/create`, `auctions/delete`, `reset`, `auctions/set-admin-state-permission`
 - Generators: `generate-test-data`, `generate-bids`, `delete-test-bids`
 - Config/resources: `get-pptx-config/:name`, `save-pptx-config/:name`, `pptx-config/reset`, `resources`, `resources/upload`, `resources/delete`
+- Users: `users`, `users/:username/roles`, `users/:username/password`
 - Ops: `change-password`, `restart`, `logs`
 - Audit export: `audit-log/export`

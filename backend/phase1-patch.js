@@ -155,7 +155,7 @@ module.exports = function phase1Patch (app) {
   // API to fetch the enabled payment methods
   //--------------------------------------------------------------------------
   settlement.get('/payment-methods', authenticateRole(['cashier', 'maintenance']), (req, res) => {
-    logFromRequest(req, logLevels.DEBUG, `Payment methods requested`);
+ //   logFromRequest(req, logLevels.DEBUG, `Payment methods requested`);
     try {
       return res.json({ paymentMethods });
 
