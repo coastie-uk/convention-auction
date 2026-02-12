@@ -304,7 +304,9 @@ Test automatic renewal:
 Restart Apache if changes don’t take effect:  
     sudo systemctl restart apache2
 
-To test your installation, go to [Your URL]/maint and enter the default password "maint123". For futher instructions, see quickstart.md
+To test your installation, go to [Your URL]/maint. Login as "root" and the initial password you noted earlier. The "security" tab can be used to create additional users as required. 
+
+For futher instructions, see quickstart.md
 
 For instructions for setting up SumUp, see sumup_setup.md
 
