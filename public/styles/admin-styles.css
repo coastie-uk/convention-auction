@@ -134,6 +134,21 @@ h2 {
     font-weight: bold;
 }
 
+.print-slip-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 34px;
+    padding: 3px 3px;
+}
+
+.print-slip-button svg {
+    width: 17px;
+    height: 17px;
+    fill: currentColor;
+    pointer-events: none;
+}
+
 /* Forms */
 form input[type="text"],
 form input[type="file"],

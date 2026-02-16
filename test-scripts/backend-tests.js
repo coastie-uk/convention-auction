@@ -808,6 +808,30 @@ addTest("B-038","POST /generate-cards failure invalid token", async () => {
   await expectStatus(res, 403);
 });
 
+// /auctions/:auctionId/items/:id/print-slip
+addTest("B-038a","GET /auctions/:auctionId/items/:id/print-slip success", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/${testData.itemA}/print-slip`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  const contentType = res.headers.get("content-type") || "";
+  assert.ok(contentType.includes("application/pdf"), `Unexpected content-type: ${contentType}`);
+  const buffer = await res.arrayBuffer();
+  assert.ok(buffer.byteLength > 0, "Slip PDF is empty");
+});
+
+addTest("B-038b","GET /auctions/:auctionId/items/:id/print-slip failure unauthenticated", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/${testData.itemA}/print-slip`);
+  await expectStatus(res, 403);
+});
+
+addTest("B-038c","GET /auctions/:auctionId/items/:id/print-slip failure wrong role", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/${testData.itemA}/print-slip`, {
+    headers: authHeaders(tokens.cashier)
+  });
+  await expectStatus(res, 403);
+});
+
 // /export-csv
 addTest("B-039","POST /export-csv success", async () => {
   const res = await fetch(`${baseUrl}/export-csv`, {

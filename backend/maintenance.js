@@ -15,6 +15,7 @@ const router = express.Router();
 const { CONFIG_IMG_DIR, SAMPLE_DIR, UPLOAD_DIR, DB_PATH, DB_NAME, BACKUP_DIR, MAX_UPLOADS, allowedExtensions, MAX_AUCTIONS, PPTX_CONFIG_DIR, LOG_DIR, LOG_NAME, PASSWORD_MIN_LENGTH, SERVICE_NAME } = require('./config');
 const crypto = require('crypto');
 const { validateJsonPaths } = require('./middleware/json-path-validator');
+const { validateAndNormalizeSlipConfig } = require('./slip-config');
 const { sanitiseText } = require('./middleware/sanitiseText');
 const upload = multer({ dest: UPLOAD_DIR });
 const sharp = require("sharp");
@@ -24,7 +25,8 @@ const logFilePath = path.join(LOG_DIR, LOG_NAME);
 const logLines = 500;
 const CONFIG_PATHS = {
   pptx: path.join(PPTX_CONFIG_DIR, 'pptxConfig.json'),
-  card: path.join(PPTX_CONFIG_DIR, 'cardConfig.json')
+  card: path.join(PPTX_CONFIG_DIR, 'cardConfig.json'),
+  slip: path.join(PPTX_CONFIG_DIR, 'slipConfig.json')
 };
 const { audit } = require('./middleware/audit');
 const bcrypt = require('bcryptjs');
@@ -32,6 +34,7 @@ const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('.
 const { checkAuctionState } = require('./middleware/checkAuctionState');
 const {
   ROLE_LIST,
+  ROOT_USERNAME,
   normaliseUsername,
   isValidUsername,
   normaliseRoles,
@@ -55,7 +58,8 @@ if (!fs.existsSync(PPTX_CONFIG_DIR)) fs.mkdirSync(PPTX_CONFIG_DIR, { recursive: 
 
 const defaultConfigs = [
   { src: 'default.cardConfig.json', dest: 'cardConfig.json' },
-  { src: 'default.pptxConfig.json', dest: 'pptxConfig.json' }
+  { src: 'default.pptxConfig.json', dest: 'pptxConfig.json' },
+  { src: 'default.slipConfig.json', dest: 'slipConfig.json' }
 ];
 
 for (const { src, dest } of defaultConfigs) {
@@ -788,6 +792,14 @@ router.post("/users/:username/password", (req, res) => {
     return res.status(400).json({ error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters.` });
   }
 
+  const currentUser = normaliseUsername(req.user?.username || '');
+  logFromRequest(req, logLevels.DEBUG, `Requested password change for ${target} by ${currentUser} `);
+
+  if (target === ROOT_USERNAME && currentUser !== ROOT_USERNAME) {
+     logFromRequest(req, logLevels.WARN, `Root password change can only be done by ${target}, attempted by ${currentUser} `);
+    return res.status(403).json({ error: `Only ${ROOT_USERNAME} can change this password.` });
+  }
+
   try {
     const hashed = bcrypt.hashSync(newPassword, 12);
     const result = setUserPassword(target, hashed);
@@ -795,7 +807,7 @@ router.post("/users/:username/password", (req, res) => {
       return res.status(404).json({ error: "User not found." });
     }
 
-    audit(getAuditActor(req), 'change password', 'server', null, { changed_user: target });
+    audit(getAuditActor(req), 'change password', 'server', null, { changed_user: target, requestor: currentUser });
         logFromRequest(req, logLevels.INFO, `Updated password for ${target}`);
 
     return res.json({ message: `Password updated for "${target}".` });
@@ -1213,7 +1225,8 @@ router.post("/generate-test-data", checkAuctionState(['setup']), async (req, res
 
 
 router.get('/get-pptx-config/:name', (req, res) => {
-  const file = CONFIG_PATHS[req.params.name];
+  const configName = String(req.params.name || "").trim().toLowerCase();
+  const file = CONFIG_PATHS[configName];
   if (!file) {
     logFromRequest(req, logLevels.ERROR, `Unexpected file read requested`);
     return res.status(400).json({ error: 'Invalid config name' });
@@ -1251,10 +1264,11 @@ router.get('/get-pptx-config/:name', (req, res) => {
 // });
 
 router.post('/save-pptx-config/:name', async (req, res) => {
-  const file = CONFIG_PATHS[req.params.name];
+  const configName = String(req.params.name || "").trim().toLowerCase();
+  const file = CONFIG_PATHS[configName];
   if (!file) {
     logFromRequest(req, logLevels.WARN, `Unexpected file write requested`);
-    return res.status(400).json({ error: `Invalid config name ${req.params.name}` });
+    return res.status(400).json({ error: `Invalid config name ${configName}` });
   }
 
   // ensure we have a parsed JSON object
@@ -1264,37 +1278,44 @@ router.post('/save-pptx-config/:name', async (req, res) => {
   }
 
   try {
-    // 🔒 validate JSON paths BEFORE saving
-    const { ok, errors, normalizedJson } = await validateJsonPaths(req.body, {
-      baseImgDir: CONFIG_IMG_DIR,
-      allowedExtensions: allowedExtensions,
-      requireExistence: true,   // set false if you allow references that will exist later
-      contentSniff: true,       // uses sharp under the hood to confirm it's a real image
-      // Narrow to expected keys to reduce false positives (adjust to your schema):
-      checkOnlyKeys: ['image', 'images', 'thumbnail', 'background', 'path'],
-      checkKeysRegex: [/image/i, /thumb/i, /background/i, /photo/i, /^background$/i, /path/i],
-      outputStyle: 'absolute',
-    });
+    let ok;
+    let errors;
+    let normalizedJson;
 
-    
+    if (configName === "slip") {
+      ({ ok, errors, normalizedJson } = validateAndNormalizeSlipConfig(req.body));
+    } else {
+      // validate image paths for pptx/card configs before saving
+      ({ ok, errors, normalizedJson } = await validateJsonPaths(req.body, {
+        baseImgDir: CONFIG_IMG_DIR,
+        allowedExtensions: allowedExtensions,
+        requireExistence: true,   // set false if you allow references that will exist later
+        contentSniff: true,       // uses sharp under the hood to confirm it's a real image
+        checkOnlyKeys: ['image', 'images', 'thumbnail', 'background', 'path'],
+        checkKeysRegex: [/image/i, /thumb/i, /background/i, /photo/i, /^background$/i, /path/i],
+        outputStyle: 'absolute',
+      }));
+    }
+
     if (!ok) {
-      // Log a concise summary…
       logFromRequest(
         req,
         logLevels.WARN,
-        `PPTX config rejected: ${errors.length} validation error(s)`
+        `${configName} config rejected: ${errors.length} validation error(s)`
       );
 
-      // …and log each exact failure with structured context
       errors.forEach((e, idx) => {
         logFromRequest(
           req,
           logLevels.WARN,
-          `Path validation failed [${idx + 1}/${errors.length}] at ${e.jsonPath}: ${e.error}; value="${preview(e.value)}"`
+          `Config validation failed [${idx + 1}/${errors.length}] at ${e.jsonPath}: ${e.error}; value="${preview(e.value)}"`
         );
       });
 
-      return res.status(400).json({ error: `PPTX Template validation failed with ${errors.length} error(s)`, details: errors });
+      return res.status(400).json({
+        error: `${configName} configuration validation failed with ${errors.length} error(s)`,
+        details: errors
+      });
     }
 
     // save the sanitized JSON produced by the validator (normalized POSIX paths, etc.)
@@ -1306,7 +1327,7 @@ router.post('/save-pptx-config/:name', async (req, res) => {
         return res.status(500).json({ error: 'Unable to save config' });
       }
       res.json({ message: 'Configuration updated successfully.' });
-      logFromRequest(req, logLevels.INFO, `PPTX config file ${file} updated`);
+      logFromRequest(req, logLevels.INFO, `Config file ${file} updated`);
     });
   } catch (err) {
     logFromRequest(req, logLevels.ERROR, `Unhandled error in save-pptx-config: ${err.message}`);
@@ -1325,7 +1346,7 @@ function preview(str, max = 180) {
 router.post("/pptx-config/reset", (req, res) => {
   const { configType } = req.body;
 
-  if (!configType || !["pptx", "card"].includes(configType)) {
+  if (!configType || !["pptx", "card", "slip"].includes(configType)) {
     logFromRequest(req, logLevels.ERROR, `Invalid config type:` + configType);
     return res.status(400).json({ error: "Invalid config type." });
   }
@@ -1335,7 +1356,6 @@ router.post("/pptx-config/reset", (req, res) => {
 
   const defaultPath = path.join(__dirname, `default.${configType}Config.json`);
   const livePath = path.join(PPTX_CONFIG_DIR, `${configType}Config.json`);
-console.log(livePath);
   try {
     if (!fs.existsSync(defaultPath)) {
       logFromRequest(req, logLevels.ERROR, `Default config not found:` + defaultPath);

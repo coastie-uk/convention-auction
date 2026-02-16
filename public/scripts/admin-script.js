@@ -49,6 +49,74 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const API = "/api"
 
+    function renderPrintButton(itemId) {
+        return `
+            <button class="print-slip-button" data-id="${itemId}" title="Print item slip" aria-label="Print item slip">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M7 3h10v4H7zM7 17h10v4H7zM7 12h10v4H7z"></path>
+                    <path d="M4 8h16a2 2 0 0 1 2 2v5h-3v-3H5v3H2v-5a2 2 0 0 1 2-2z"></path>
+                </svg>
+            </button>
+        `;
+    }
+
+    async function printItemSlip(itemId) {
+        const token = localStorage.getItem("token");
+        const auctionId = Number(selectedAuctionId);
+        if (!token || !auctionId || !itemId) return;
+
+        try {
+            const response = await fetch(`${API}/auctions/${auctionId}/items/${itemId}/print-slip`, {
+                headers: { Authorization: token }
+            });
+
+            if (!response.ok) {
+                let message = "Failed to generate slip";
+                try {
+                    const data = await response.json();
+                    message = data.error || message;
+                } catch (parseErr) {
+                    // keep fallback message when response is not JSON
+                }
+                throw new Error(message);
+            }
+
+            const pdfBlob = await response.blob();
+            const pdfUrl = URL.createObjectURL(pdfBlob);
+            const iframe = document.createElement("iframe");
+            iframe.style.position = "fixed";
+            iframe.style.width = "0";
+            iframe.style.height = "0";
+            iframe.style.border = "0";
+            iframe.style.opacity = "0";
+            iframe.style.pointerEvents = "none";
+
+            const cleanup = () => {
+                URL.revokeObjectURL(pdfUrl);
+                iframe.remove();
+            };
+
+            iframe.onload = () => {
+                setTimeout(() => {
+                    try {
+                        iframe.contentWindow?.focus();
+                        iframe.contentWindow?.print();
+                    } catch (err) {
+                        window.open(pdfUrl, "_blank", "noopener,noreferrer");
+                        showMessage("Auto print blocked. Opened the PDF in a new tab.", "info");
+                    } finally {
+                        setTimeout(cleanup, 15000);
+                    }
+                }, 150);
+            };
+
+            iframe.src = pdfUrl;
+            document.body.appendChild(iframe);
+        } catch (error) {
+            showMessage("Print failed: " + error.message, "error");
+        }
+    }
+
     function setAdminUserMenu(username) {
         if (!username) return;
         if (loggedInUserEl) loggedInUserEl.textContent = username;
@@ -488,6 +556,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 <td>
                     <button onclick="editItem('${encodedItem}')">Edit</button>
                     <button onclick="showItemHistory(${item.id})">History</button>
+                    ${renderPrintButton(item.id)}
                     <button class="move-toggle" data-id="${item.id}">Move</button>
                     <div class="move-panel" data-id="${item.id}" style="display:none; margin-top: 5px;">
                         <select class="move-auction-select" data-id="${item.id}">
@@ -533,6 +602,14 @@ document.addEventListener("DOMContentLoaded", function () {
             button.addEventListener("click", function () {
                 const panel = this.nextElementSibling;
                 panel.style.display = panel.style.display === "none" ? "block" : "none";
+            });
+        });
+
+        document.querySelectorAll(".print-slip-button").forEach((button) => {
+            button.addEventListener("click", async function () {
+                const itemId = parseInt(this.dataset.id, 10);
+                if (!itemId || isNaN(itemId)) return;
+                await printItemSlip(itemId);
             });
         });
 

@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "paper": {
+    "format": "receipt80",
+    "orientation": "landscape",
+    "widthMm": 80,
+    "heightMm": 120
+  },
+  "defaults": {
+    "font": "Helvetica",
+    "fontSizePt": 12,
+    "lineGapPt": 1,
+    "align": "left"
+  },
+  "fields": [
+    {
+      "parameter": "item_number",
+      "label": "Item: ",
+      "xMm": 70,
+      "yMm": 3,
+      "maxWidthMm": 30,
+      "fontSizePt": 20,
+      "align": "right",
+      "multiline": false,
+      "truncate": {
+        "enabled": false
+      }
+    },
+    {
+      "parameter": "item_name",
+      "label": "",
+      "xMm": 4,
+      "yMm": 14,
+      "maxWidthMm": 110,
+      "fontSizePt": 18,
+      "multiline": true,
+      "truncate": {
+        "enabled": true,
+        "maxChars": 80,
+        "ellipsis": "..."
+      }
+    },
+    {
+      "parameter": "creator",
+      "label": "Creator: ",
+      "xMm": 4,
+      "yMm": 40,
+      "maxWidthMm": 110,
+      "multiline": true,
+      "truncate": {
+        "enabled": true,
+        "maxChars": 70,
+        "ellipsis": "..."
+      }
+    },
+    {
+      "parameter": "contributor",
+      "label": "Contributor: ",
+      "xMm": 4,
+      "yMm": 50,
+      "maxWidthMm": 110,
+      "multiline": true,
+      "truncate": {
+        "enabled": true,
+        "maxChars": 70,
+        "ellipsis": "..."
+      }
+    },
+    {
+      "parameter": "notes",
+      "label": "Notes: ",
+      "xMm": 4,
+      "yMm": 60,
+      "maxWidthMm": 110,
+      "multiline": true,
+      "truncate": {
+        "enabled": true,
+        "maxChars": 120,
+        "ellipsis": "..."
+      }
+    }
+  ]
+}

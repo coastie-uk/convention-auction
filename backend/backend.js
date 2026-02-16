@@ -13,6 +13,7 @@ const path = require('path');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const pptxgen = require('pptxgenjs');
+const PDFDocument = require('pdfkit');
 const { Parser } = require('@json2csv/plainjs');
 const bodyParser = require('body-parser');
 var strftime = require('strftime');
@@ -22,6 +23,13 @@ const app = express();
 const fsp = require('fs').promises;
 const { audit, auditTypes } = require('./middleware/audit');
 const { sanitiseText } = require('./middleware/sanitiseText');
+const {
+  validateAndNormalizeSlipConfig,
+  resolveSlipPageSizeMm,
+  resolveSlipItemValue,
+  truncateTextForSlip,
+  mmToPoints
+} = require('./slip-config');
 const {
   ROLE_LIST,
   ROLE_SET,
@@ -1128,6 +1136,103 @@ app.post('/generate-cards', authenticateRole("admin"), async (req, res) => {
         logFromRequest(req, logLevels.ERROR, `card gen for auction ${auction_id} failed: ` + error.message);
 
 
+    }
+});
+
+//--------------------------------------------------------------------------
+// GET /auctions/:auctionId/items/:id/print-slip
+// API to generate a single-item print slip PDF from slipConfig.json
+//--------------------------------------------------------------------------
+
+app.get('/auctions/:auctionId/items/:id/print-slip', authenticateRole("admin"), checkAuctionState(allowedStatuses), async (req, res) => {
+    const auctionId = Number(req.params.auctionId);
+    const itemId = Number(req.params.id);
+
+    if (!auctionId || !itemId) {
+        return res.status(400).json({ error: "Invalid auction id or item id" });
+    }
+
+    try {
+        const item = db.get(
+            `SELECT id, item_number, description, contributor, artist, notes
+             FROM items
+             WHERE id = ? AND auction_id = ?`,
+            [itemId, auctionId]
+        );
+
+        if (!item) {
+            return res.status(400).json({ error: "Item not found" });
+        }
+
+        const configPath = path.join(PPTX_CONFIG_DIR, 'slipConfig.json');
+        const configText = await fsp.readFile(configPath, 'utf-8');
+        const slipConfigRaw = JSON.parse(configText);
+
+        const { ok, errors, normalizedJson } = validateAndNormalizeSlipConfig(slipConfigRaw);
+        if (!ok) {
+            logFromRequest(req, logLevels.ERROR, `Slip config invalid (${errors.length} error(s))`);
+            return res.status(500).json({
+                error: "Slip configuration is invalid. Update slipConfig.json in Maintenance.",
+                details: errors
+            });
+        }
+
+        const pageSize = resolveSlipPageSizeMm(normalizedJson.paper);
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="item_${item.item_number || item.id}_slip.pdf"`);
+
+        const pdf = new PDFDocument({
+            size: [mmToPoints(pageSize.widthMm), mmToPoints(pageSize.heightMm)],
+            margin: 0
+        });
+
+        pdf.pipe(res);
+
+        normalizedJson.fields.forEach((field) => {
+            const baseValue = resolveSlipItemValue(item, field.parameter);
+            if (!baseValue && !field.includeIfEmpty) {
+                return;
+            }
+
+            const value = truncateTextForSlip(baseValue, field.truncate);
+            const text = `${field.label || ""}${value}`;
+
+            const x = mmToPoints(field.xMm);
+            const y = mmToPoints(field.yMm);
+            const textOptions = {
+                width: mmToPoints(field.maxWidthMm),
+                align: field.align,
+                lineBreak: field.multiline !== false,
+                lineGap: field.lineGapPt
+            };
+
+            if (field.maxHeightMm) {
+                textOptions.height = mmToPoints(field.maxHeightMm);
+            }
+
+            pdf.save();
+            pdf.font(field.font);
+            pdf.fontSize(field.fontSizePt);
+            if (field.rotationDeg) {
+                pdf.rotate(field.rotationDeg, { origin: [x, y] });
+            }
+            pdf.text(text, x, y, textOptions);
+            pdf.restore();
+        });
+
+        audit(getAuditActor(req), 'print slip', 'item', itemId, {
+            auction_id: auctionId,
+            format: normalizedJson.paper.format,
+            orientation: normalizedJson.paper.orientation
+        });
+        logFromRequest(req, logLevels.INFO, `Generated slip PDF for item ID ${itemId} (number ${item.item_number}) in auction ${auctionId}`);
+        pdf.end();
+    } catch (error) {
+        logFromRequest(req, logLevels.ERROR, `Slip generation failed for item ${itemId}: ${error.message}`);
+        if (!res.headersSent) {
+            return res.status(500).json({ error: "Failed to generate item slip PDF" });
+        }
     }
 });
 

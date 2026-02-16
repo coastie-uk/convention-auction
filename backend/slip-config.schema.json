@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://convention-auction.local/schemas/slip-config.schema.json",
+  "title": "Item Slip Print Configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["paper", "fields"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "paper": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "orientation"],
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": ["receipt80", "label6x4", "custom"]
+        },
+        "orientation": {
+          "type": "string",
+          "enum": ["portrait", "landscape"]
+        },
+        "widthMm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "heightMm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "font": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fontSizePt": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "lineGapPt": {
+          "type": "number",
+          "minimum": 0
+        },
+        "align": {
+          "type": "string",
+          "enum": ["left", "center", "right"]
+        }
+      }
+    },
+    "fields": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["parameter", "xMm", "yMm", "maxWidthMm"],
+        "properties": {
+          "parameter": {
+            "type": "string",
+            "enum": ["item_number", "item_name", "description", "creator", "artist", "contributor", "notes"]
+          },
+          "label": {
+            "type": "string"
+          },
+          "xMm": {
+            "type": "number",
+            "minimum": 0
+          },
+          "yMm": {
+            "type": "number",
+            "minimum": 0
+          },
+          "maxWidthMm": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "maxHeightMm": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "font": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fontSizePt": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "lineGapPt": {
+            "type": "number",
+            "minimum": 0
+          },
+          "align": {
+            "type": "string",
+            "enum": ["left", "center", "right"]
+          },
+          "rotationDeg": {
+            "type": "number"
+          },
+          "multiline": {
+            "type": "boolean"
+          },
+          "includeIfEmpty": {
+            "type": "boolean"
+          },
+          "truncate": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "maxChars": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "ellipsis": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
