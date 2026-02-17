@@ -601,7 +601,7 @@ app.post('/auctions/:publicId/newitem', checkAuctionState(['setup', 'locked']), 
                         return res.status(500).json({ error: "Database error" });
                     }
 
-                    db.run(`INSERT INTO items (item_number, description, contributor, artist, notes, photo, auction_id, date) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%d-%m-%Y %H:%M', 'now'))`,
+                    db.run(`INSERT INTO items (item_number, description, contributor, artist, notes, photo, auction_id, date) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%d-%m-%Y %H:%M:%S', 'now'))`,
                         [itemNumber, sanitisedDescription, sanitisedContributor, sanitisedArtist, sanitisedNotes, photoPath, auction_id],
                         function (err) {
                             if (err) {
@@ -655,7 +655,9 @@ app.get('/auctions/:auctionId/items', authenticateRole("admin"), (req, res) => {
            i.test_item,
            i.test_bid,
            i.date,
-           i.mod_date
+           i.mod_date,
+           i.text_mod_date,
+           i.last_print
     FROM items   i
     LEFT JOIN bidders b ON b.id = i.winning_bidder_id
     WHERE i.auction_id = ?
@@ -741,7 +743,7 @@ try {
 
 
                 await sharp(req.file.path)
-                    .resize(2000, 2000, { fit: 'inside' })
+                    .resize(2500, 2500, { fit: 'inside' })
                     .jpeg({ quality: 90 })
                     .toFile(resizedPath);
 
@@ -779,13 +781,14 @@ try {
         // Only collect fields that are provided (and not undefined/null)
         const updates = [];
         const params = [];
-
+        let textFieldsChanged = false;
         // For each field, check if it's provided and different from current value. If so, add to updates (minimize DB writes)
         const fields = ["description", "contributor", "artist", "notes"];
         fields.forEach(field => {
             if (req.body[field] !== undefined && req.body[field] !== null && req.body[field] !== row[field]) {
                 updates.push(`${field} = ?`);
                 params.push(req.body[field]);
+                textFieldsChanged = true;
             }
         });
 
@@ -795,13 +798,17 @@ try {
             params.push(photoPath);
         }
 
+        // Always update text_mod_date if any text fields changed
+        if (textFieldsChanged) {
+            updates.push("text_mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now')");
+        }
 
         // For each field, check if it's provided and different from current value. If so, add to updates (minimize DB writes)
         // update mod_date if there are any updates
         if (updates.length > 0) {
             const updateSummary = JSON.stringify(updates) + " / " + JSON.stringify(params);
             logFromRequest(req, logLevels.DEBUG, `updates and values: ${updateSummary}, photo: ${req.file ? photoPath : 'no file'}`);
-            updates.push("mod_date = strftime('%d-%m-%Y %H:%M', 'now')");
+            updates.push("mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now')");
             const sql = `UPDATE items SET ${updates.join(", ")} WHERE id = ?`;
             params.push(id);
 
@@ -891,7 +898,7 @@ app.post('/auctions/:auctionId/items/:id/move-auction/:targetAuctionId', authent
                     return res.status(500).json({ error: err2.message });
                 }
                 const newNumber = result?.next || 1;
-                db.run("UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M', 'now'), auction_id = ?, item_number = ? WHERE id = ?",
+                db.run("UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now'), text_mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now'), auction_id = ?, item_number = ? WHERE id = ?",
                     [newAuctionId, newNumber, id],
                     function (err3) {
                         if (err3) {
@@ -1221,8 +1228,18 @@ app.get('/auctions/:auctionId/items/:id/print-slip', authenticateRole("admin"), 
             pdf.restore();
         });
 
+        const printStamp = strftime('%d-%m-%Y %H:%M:%S');
+        const updateInfo = db.run(
+            "UPDATE items SET last_print = ? WHERE id = ? AND auction_id = ?",
+            [printStamp, itemId, auctionId]
+        );
+        if (!updateInfo || updateInfo.changes !== 1) {
+            throw new Error(`Unable to store print timestamp for item ${itemId}`);
+        }
+
         audit(getAuditActor(req), 'print slip', 'item', itemId, {
             auction_id: auctionId,
+            printed_at: printStamp,
             format: normalizedJson.paper.format,
             orientation: normalizedJson.paper.orientation
         });
@@ -1311,7 +1328,7 @@ app.post('/rotate-photo', authenticateRole("admin"), async (req, res) => {
             fs.renameSync(previewPath + '.tmp', previewPath);
 
             // Update mod_date after rotation
-            db.run(`UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M', 'now') WHERE id = ?`, [id], function (err) {
+            db.run(`UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now') WHERE id = ?`, [id], function (err) {
                 if (err) {
                     logFromRequest(req, logLevels.ERROR, `Rotate: Failed to update mod_date:` + err.message);
 

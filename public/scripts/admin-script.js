@@ -49,9 +49,41 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const API = "/api"
 
-    function renderPrintButton(itemId) {
+    function parseDbDateTime(value) {
+        if (!value || typeof value !== "string") return null;
+        const match = value.trim().match(/^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/);
+        if (!match) return null;
+        const [, dd, mm, yyyy, hh, min, sec] = match;
+        const parsed = new Date(
+            Number(yyyy),
+            Number(mm) - 1,
+            Number(dd),
+            Number(hh),
+            Number(min),
+            sec ? Number(sec) : 0
+        );
+        const ts = parsed.getTime();
+        return Number.isFinite(ts) ? ts : null;
+    }
+
+    function getPrintStatus(modDate, lastPrint) {
+        const lastPrintTs = parseDbDateTime(lastPrint);
+        if (!lastPrintTs) return "unprinted";
+
+        const modTs = parseDbDateTime(modDate);
+        if (!modTs) return "printed";
+        return modTs > lastPrintTs ? "stale" : "printed";
+    }
+
+    function renderPrintButton(itemId, printStatus) {
+        const statusClass = printStatus === "printed"
+            ? "print-slip-button--printed"
+            : (printStatus === "stale" ? "print-slip-button--stale" : "");
+        const statusHint = printStatus === "printed"
+            ? "Slip print is up to date"
+            : (printStatus === "stale" ? "Slip may be out of date" : "Not printed yet");
         return `
-            <button class="print-slip-button" data-id="${itemId}" title="Print item slip" aria-label="Print item slip">
+            <button class="print-slip-button ${statusClass}" data-id="${itemId}" title="Print item slip (${statusHint})" aria-label="Print item slip">
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path d="M7 3h10v4H7zM7 17h10v4H7zM7 12h10v4H7z"></path>
                     <path d="M4 8h16a2 2 0 0 1 2 2v5h-3v-3H5v3H2v-5a2 2 0 0 1 2-2z"></path>
@@ -112,6 +144,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
             iframe.src = pdfUrl;
             document.body.appendChild(iframe);
+            await loadItems();
         } catch (error) {
             showMessage("Print failed: " + error.message, "error");
         }
@@ -511,6 +544,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 const contributor = normalizeString(item.contributor);
                 const artist = normalizeString(item.artist);
                 const notes = normalizeString(item.notes);
+                const printStatus = getPrintStatus(item.text_mod_date, item.last_print);
 
                 const escapedDescription = escapeHtml(description);
                 const escapedContributor = escapeHtml(contributor);
@@ -525,6 +559,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     date: item.date,
                     notes,
                     mod_date: item.mod_date,
+                    last_print: item.last_print,
                     item_number: item.item_number,
                     auction_id: item.auction_id
                 });
@@ -533,11 +568,14 @@ document.addEventListener("DOMContentLoaded", function () {
                 const imgSrc = item.photo ? `${API}/uploads/preview_${item.photo}${modToken}` : '';
 
                 const row = document.createElement("tr");
+                const hasBid = item.hammer_price != null || item.paddle_no != null;
 
+            
 
                 /* NEW — dataset hooks for the finalize‑lot add‑on */
                 row.dataset.itemId = item.id;                         // used by add‑on
-                row.dataset.sold = item.hammer_price ? "1" : "0";   // 1 = already sold
+                row.dataset.sold = hasBid ? "1" : "0";               // 1 = already sold/has bid
+                row.dataset.hasBid = hasBid ? "1" : "0";
                 row.dataset.item_number = item.item_number;
                 row.dataset.description = item.description;
                 row.innerHTML = `
@@ -554,10 +592,11 @@ document.addEventListener("DOMContentLoaded", function () {
                     <td>${fmtPrice(item.hammer_price ?? '')}</td>` : ''
                     }
                 <td>
-                    <button onclick="editItem('${encodedItem}')">Edit</button>
-                    <button onclick="showItemHistory(${item.id})">History</button>
-                    ${renderPrintButton(item.id)}
-                    <button class="move-toggle" data-id="${item.id}">Move</button>
+            
+                    ${renderPrintButton(item.id, printStatus)}
+                    <button onclick="showItemHistory(${item.id})" title="Display item history">History</button>
+                    <button onclick="editItem('${encodedItem}')" data-default-title="Edit item" title="${hasBid ? 'Item has bids and cannot be edited' : 'Edit item'}" ${hasBid ? 'disabled' : ''}>Edit</button>
+                    <button class="move-toggle" data-id="${item.id}" data-default-title="Move item within auction or to a different auction" title="${hasBid ? 'Item has bids and cannot be moved' : 'Move item within auction or to a different auction'}" ${hasBid ? 'disabled' : ''} >Move</button>
                     <div class="move-panel" data-id="${item.id}" style="display:none; margin-top: 5px;">
                         <select class="move-auction-select" data-id="${item.id}">
                         <option value="">Move to auction...</option>

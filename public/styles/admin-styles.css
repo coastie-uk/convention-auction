@@ -149,6 +149,16 @@ h2 {
     pointer-events: none;
 }
 
+.print-slip-button--printed {
+    background-color: #2e8b57;
+    color: #fff;
+}
+
+.print-slip-button--stale {
+    background-color: #f0ad4e;
+    color: #111;
+}
+
 /* Forms */
 form input[type="text"],
 form input[type="file"],

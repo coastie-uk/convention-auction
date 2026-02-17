@@ -818,6 +818,16 @@ addTest("B-038a","GET /auctions/:auctionId/items/:id/print-slip success", async 
   assert.ok(contentType.includes("application/pdf"), `Unexpected content-type: ${contentType}`);
   const buffer = await res.arrayBuffer();
   assert.ok(buffer.byteLength > 0, "Slip PDF is empty");
+
+  const { res: itemsRes, json: itemsJson } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(itemsRes, 200);
+  const printedItem = Array.isArray(itemsJson?.items)
+    ? itemsJson.items.find((row) => row.id === testData.itemA)
+    : null;
+  assert.ok(printedItem, "Printed item not found in item list");
+  assert.ok(printedItem.last_print, "Expected last_print to be set after slip print");
 });
 
 addTest("B-038b","GET /auctions/:auctionId/items/:id/print-slip failure unauthenticated", async () => {

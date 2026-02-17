@@ -19,7 +19,6 @@ const PARAMETER_TO_ITEM_FIELD = Object.freeze({
   item_name: "description",
   description: "description",
   creator: "artist",
-  artist: "artist",
   contributor: "contributor",
   notes: "notes"
 });

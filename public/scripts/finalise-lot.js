@@ -243,18 +243,34 @@ const API = "/api"
     TABLE_BODY.querySelectorAll('tr').forEach(tr => {
       const editBtn = tr.querySelector('button[onclick^="editItem"]');
       const moveBtn = tr.querySelector('.move-toggle');
+      const printBtn = tr.querySelector('button[onclick^="printItem"]');
+      const hasBid = tr.dataset.sold === '1';
       [editBtn, moveBtn].forEach(btn => {
         if (!btn) return;
-        if (isLive) {
+        const defaultTitle = btn.dataset.defaultTitle || btn.title || '';
+        const isMoveBtn = btn.classList.contains('move-toggle');
+        if (isLive || hasBid) {
           btn.disabled = true;
+          btn.style.display = isLive ? 'none' : 'inline'; // hide move if live without bids
           btn.classList.add('disabled');
           btn.style.pointerEvents = 'none';
           btn.style.opacity = '0.5';
+          if (hasBid) {
+            btn.title = isMoveBtn
+              ? 'Item has bids and cannot be moved'
+              : 'Item has bids and cannot be edited';
+          } else {
+            btn.title = isMoveBtn
+              ? 'Items cannot be moved while editing is locked for this auction'
+              : 'Items cannot be edited while editing is locked for this auction';
+          }
         } else {
           btn.disabled = false;
+          btn.style.display = 'inline';
           btn.classList.remove('disabled');
           btn.style.pointerEvents = '';
           btn.style.opacity = '';
+          btn.title = defaultTitle;
         }
       });
     });

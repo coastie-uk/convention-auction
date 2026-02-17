@@ -429,7 +429,7 @@ router.post("/import", async (req, res) => {
          (item_number, description, artist, contributor, notes, auction_id, date)
        VALUES
          (@item_number, @description, @artist, @contributor, @notes, @auction_id,
-          strftime('%d-%m-%Y %H:%M','now'))`
+          strftime('%d-%m-%Y %H:%M:%S','now'))`
     );
 
     // keep a local counter per auction to avoid N queries inside the loop
@@ -730,6 +730,7 @@ router.post("/users", (req, res) => {
     const hashed = bcrypt.hashSync(password, 12);
     createUser({ username: normalizedUsername, passwordHash: hashed, roles: normalizedRoles });
     audit(getAuditActor(req), 'create user', 'server', null, { username: normalizedUsername, roles: normalizedRoles });
+    logFromRequest(req, logLevels.INFO, `Created user ${normalizedUsername} with roles: ${normalizedRoles.join(", ")}`);
     return res.status(201).json({ message: `User "${normalizedUsername}" created.` });
   } catch (err) {
     if (String(err.message || '').includes('UNIQUE')) {
@@ -769,7 +770,7 @@ router.patch("/users/:username/roles", (req, res) => {
       username: target,
       roles: updated?.roles || roles
     });
-
+    logFromRequest(req, logLevels.INFO, `Updated roles for user ${target}: ${updated?.roles.join(", ") || roles.join(", ")}`);
     return res.json({ message: `Permissions updated for "${target}".`, user: updated });
   } catch (err) {
     if (err.message === 'roles_required') {
@@ -836,6 +837,7 @@ router.delete("/users/:username", (req, res) => {
     }
 
     audit(getAuditActor(req), 'delete user', 'server', null, { username: target });
+    logFromRequest(req, logLevels.INFO, `Deleted user ${target} by ${currentUser}`);
     return res.json({ message: `User "${target}" deleted.` });
   } catch (err) {
     if (err.message === 'root_cannot_be_deleted') {
@@ -846,41 +848,6 @@ router.delete("/users/:username", (req, res) => {
   }
 });
 
-//--------------------------------------------------------------------------
-// POST /change-password
-// Backward-compatible password update endpoint for maintenance UI.
-// Accepts either { username, newPassword } or legacy { role, newPassword }.
-//--------------------------------------------------------------------------
-
-// router.post("/change-password", (req, res) => {
-//   const { username, role, newPassword } = req.body || {};
-//   const legacyRole = String(role || '').trim().toLowerCase();
-//   if (!username && role && !ROLE_LIST.includes(legacyRole)) {
-//     return res.status(400).json({ error: "Invalid role." });
-//   }
-//   const target = normaliseUsername(username || role);
-//
-//   if (!target || !isValidUsername(target)) {
-//     return res.status(400).json({ error: "Invalid user." });
-//   }
-//
-//   if (!newPassword || String(newPassword).length < PASSWORD_MIN_LENGTH) {
-//     return res.status(400).json({ error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters.` });
-//   }
-//
-//   try {
-//     const hashed = bcrypt.hashSync(newPassword, 12);
-//     const result = setUserPassword(target, hashed);
-//     if (!result || result.changes === 0) {
-//       return res.status(404).json({ error: "User not found." });
-//     }
-//
-//     audit(getAuditActor(req), 'change password', 'server', null, { changed_user: target });
-//     return res.json({ message: `Password for "${target}" updated.` });
-//   } catch (err) {
-//     return res.status(500).json({ error: err.message });
-//   }
-// });
 
 //--------------------------------------------------------------------------
 // POST /restart
@@ -1157,7 +1124,7 @@ router.post("/generate-test-data", checkAuctionState(['setup']), async (req, res
     notes: getRandom(sampleData.notes)
   }));
 
-  const stmt = db.prepare(`INSERT INTO items (description, contributor, artist, notes, photo, auction_id, item_number, date, test_item) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%d-%m-%Y %H:%M', 'now'), '1')`);
+  const stmt = db.prepare(`INSERT INTO items (description, contributor, artist, notes, photo, auction_id, item_number, date, test_item) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%d-%m-%Y %H:%M:%S', 'now'), '1')`);
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
@@ -1240,28 +1207,6 @@ router.get('/get-pptx-config/:name', (req, res) => {
   });
 });
 
-// router.post('/save-pptx-config/:name', (req, res) => {
-//   const file = CONFIG_PATHS[req.params.name];
-//   if (!file) {
-//     logFromRequest(req, logLevels.WARN, `Unexpected file write requested`);
-//     return res.status(400).json({ error: `Invalid config name ${req.params.name}` });
-//   }
-//   let json;
-//   try {
-//     json = JSON.stringify(req.body, null, 2);
-//   } catch (err) {
-//     logFromRequest(req, logLevels.WARN, `PPTX config rejected, invalid JSON`);
-
-//     return res.status(400).json({ error: 'Invalid JSON' });
-//   }
-
-//   fs.writeFile(file, json, 'utf8', err => {
-//     if (err) return res.status(500).json({ error: 'Unable to save config' });
-//     res.json({ message: 'Configuration updated successfully.' });
-//     logFromRequest(req, logLevels.INFO, `PPTX config file ${file} updated`);
-
-//   });
-// });
 
 router.post('/save-pptx-config/:name', async (req, res) => {
   const configName = String(req.params.name || "").trim().toLowerCase();
