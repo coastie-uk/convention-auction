@@ -45,7 +45,7 @@ document.addEventListener("DOMContentLoaded", function () {
     // controls whether to show bidder & amount columns
     const showBidStates = ['live', 'settlement', 'archived'];
 
-    const fmtPrice = v => `${currencySymbol}${Number(v).toFixed(2)}`;
+    const fmtPrice = (a, v) => a ? `${currencySymbol}${Number(v).toFixed(2)}` : '';
 
     const API = "/api"
 
@@ -589,7 +589,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 ${showBidCols ? `
                     <td>${item.paddle_no ?? ''}</td>
-                    <td>${fmtPrice(item.hammer_price ?? '')}</td>` : ''
+                    <td>${fmtPrice(hasBid, item.hammer_price ?? '')}</td>` : ''
                     }
                 <td>
             
