@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Convention Auction Platform</title>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header id="top">
+    <nav class="nav">
+      <div class="brand">Convention Auction</div>
+      <div class="nav-links">
+        <a href="#overview">Overview</a>
+        <a href="#operations">Description</a>
+        <a href="installation.html">Deployment Guides</a>
+        <a href="user-guide.html">User Manual</a>
+      </div>
+    </nav>
+
+    <div class="hero">
+      <div>
+        <div class="badge">Auction Ops, End-to-End</div>
+        <h1>Integrated end-to-end management of live auctions</h1>
+        <p>
+          Convention Auction is a web platform for fan-convention style auctions: public item intake, organisation tools,
+          slide deck generation, live bid recording, and cashier settlement.
+          It supports multiple auctions, mobile-friendly flows, and SumUp payments.
+        </p>
+        <div class="hero-actions">
+          <a class="btn" href="https://github.com/coastie-uk/convention-auction" target="_blank" rel="noreferrer">Repository</a>
+          <a class="btn secondary" href="installation.html">Deployment Guides</a>
+          <a class="btn secondary" href="user-guide.html">User Manual</a>
+        </div>
+      </div>
+      <div class="hero-card">
+        <h3>Typical flow</h3>
+        <ul>
+          <li>Attendees submit items before or during the event.</li>
+          <li>Live auction runs from a slide deck with paddle bidding.</li>
+          <li>Cashier settles winners and records payments.</li>
+          <li>Items are collected by winning bidders.</li>
+        </ul>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="overview" class="reveal">
+      <div class="section-title"><span>Overview</span></div>
+      <div class="grid">
+        <div class="panel">
+          <h3>Core features</h3>
+          <ul>
+            <li>Multiple simultaneous auctions with managed lifecycle states.</li>
+            <li>Public item submission with optional photos and QR support.</li>
+            <li>Admin tools for editing, photos, moving items, and exports.</li>
+            <li>Automatic PowerPoint slide deck and item card generation with customisable templates</li>
+            <li>Live bid recording with undo and running totals.</li>
+            <li>Cashier panel to collate bidders' items, handle payments and refunds</li>
+            <li>Auto-updating slideshow for in-venue displays.</li>
+            <li>SumUp payment integration (web checkout and card reader).</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Stack</h3>
+          <ul>
+            <li>Node.js + Express backend.</li>
+            <li>SQLite via better-sqlite3.</li>
+            <li>Plain HTML, CSS, JS frontend.</li>
+          </ul>
+          <h3>Requirements</h3>
+          <ul>
+            <li>Linux server with sudo access for setup</li>
+            <li>Domain name pointing to your server.</li>
+            <li>SumUp merchant account for card payments.</li>
+          </ul>
+        </div>
+        
+      </div>
+
+          </section>
+
+    
+        <section id="operations" class="reveal">
+      <div class="section-title"><span>Description</span></div>
+
+      <div class="panel" style="margin-top: 24px;">
+        <h3>Public Submission</h3>
+        <p>Intake form for attendees. Supports QR short-name routing.</p>
+        <div class="grid">
+          <img class="screenshot" src="images/public-submit.png" alt="Public submission form">
+          <div>
+            <ul>
+              <li>Use ?auction=shortname to auto-select an auction.</li>
+              <li>Item description and contributor are required.</li>
+              <li>Optional photo upload</li>
+              <li>Mobile-friendly capture or gallery upload.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Admin Panel</h3>
+        <p>Manage items, record bids, and generate exports for the live auction.</p>
+        <div class="grid">
+          <div>
+            <ul>
+              <li>Create, edit, reorder, and delete items.</li>
+              <li>Rotate, crop, and replace item photos.</li>
+              <li>Move items between auctions</li>
+              <li>Record bids with undo support.</li>
+              <li>Generate auction slides and item cards.</li>
+              <li>Launch public intake, live feed, cashier, and maintenance pages.</li>
+            </ul>
+          </div>
+          <img class="screenshot" src="images/admin-overview.png" alt="Admin panel overview">
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top: 24px;">
+        <h3>Cashier Panel</h3>
+        <p>Close out balances, manage refunds, and track payment methods.</p>
+        <div class="grid">
+          <img class="screenshot" src="images/cashier-overview.png" alt="Cashier overview">
+          <div>
+            <ul>
+              <li>List bidders, totals due, and settlement status.</li>
+              <li>Supports cash, PayPal, manual card, or SumUp payments.</li>
+              <li>Payment methods can be enabled/disabled in server setup</li>
+              <li>Payment operations are logged for audit trail</li>
+              <li>View detailed payment history and issue refunds.</li>
+              <li>Export CSV summaries by bidder and payment method.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top: 24px;">
+        <h3>Live Feed</h3>
+        <p>Real-time view of finalized bids to help organize winning lots.</p>
+        <div class="grid">
+          <div>
+            <ul>
+              <li>Shows paddle number, lot, title, and hammer price.</li>
+              <li>Filter by paddle or include unsold items.</li>
+              <li>Updates automatically as bids are taken.</li>
+              <li>Hover lot titles to preview photos.</li>
+            </ul>
+          </div>
+          <img class="screenshot" src="images/live-feed-overview.png" alt="Live feed overview">
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top: 24px;">
+        <h3>Maintenance Panel</h3>
+        <p>Full control over auctions, data management, templates, and diagnostics.</p>
+        <div class="grid">
+          <img class="screenshot" src="images/maintenance-overview.png" alt="Maintenance overview">
+          <div>
+            <ul>
+              <li>Create and manage auctions and states.</li>
+              <li>Import/export CSV, back up or restore the database.</li>
+              <li>Automatically generate test items and bids.</li>
+              <li>Manage PowerPoint templates and image resources.</li>
+              <li>Review audits and backend logs.</li>
+              <li>Manage passwords</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top: 24px;">
+        <h3>Slideshow</h3>
+        <p>Unattended full-screen slideshow with live updates from the server.</p>
+        <div class="grid">
+          <div>
+            <ul>
+              <li>Configurable overlays for description, contributor, creator.</li>
+              <li>Keyboard and touch controls for pause, resume, and settings.</li>
+              <li>Auto-refreshes items as new photos are added.</li>
+                <li>No stored credentials - Safe to leave unattended</li>
+            </ul>
+          </div>
+          <img class="screenshot" src="images/slideshow-view.png" alt="Slideshow view">
+        </div>
+      </div>
+
+
+    </section>
+
+  <div class="panel lifecycle-panel">
+          <h3>Auction lifecycle</h3>
+          <svg class="lifecycle-diagram" viewBox="0 0 700 200" role="img" aria-label="Auction lifecycle: Setup to Locked to Live to Settlement to Archived.">
+            <defs>
+              <linearGradient id="stageFill" x1="0" x2="1">
+                <stop offset="0%" stop-color="#1b2b4f"></stop>
+                <stop offset="100%" stop-color="#22385f"></stop>
+              </linearGradient>
+              <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L10,4 L0,8 Z" fill="#2ec4b6"></path>
+              </marker>
+            </defs>
+            <g font-family="Space Grotesk, sans-serif" font-size="14" fill="#eef3f8">
+              <rect x="20" y="40" width="120" height="60" rx="14" fill="url(#stageFill)" stroke="rgba(255,255,255,0.12)"></rect>
+              <text x="80" y="68" text-anchor="middle" font-weight="600">Setup</text>
+              <text x="80" y="88" text-anchor="middle" font-size="12" fill="#a7b3c8">Accept items</text>
+
+              <rect x="160" y="40" width="120" height="60" rx="14" fill="url(#stageFill)" stroke="rgba(255,255,255,0.12)"></rect>
+              <text x="220" y="68" text-anchor="middle" font-weight="600">Locked</text>
+              <text x="220" y="88" text-anchor="middle" font-size="12" fill="#a7b3c8">Organise & edit</text>
+
+              <rect x="300" y="40" width="120" height="60" rx="14" fill="url(#stageFill)" stroke="rgba(255,255,255,0.12)"></rect>
+              <text x="360" y="68" text-anchor="middle" font-weight="600">Live</text>
+              <text x="360" y="88" text-anchor="middle" font-size="12" fill="#a7b3c8">Take bids</text>
+
+              <rect x="440" y="40" width="120" height="60" rx="14" fill="url(#stageFill)" stroke="rgba(255,255,255,0.12)"></rect>
+              <text x="500" y="68" text-anchor="middle" font-weight="600">Settlement</text>
+              <text x="500" y="88" text-anchor="middle" font-size="12" fill="#a7b3c8">Take payment</text>
+
+              <rect x="580" y="40" width="120" height="60" rx="14" fill="url(#stageFill)" stroke="rgba(255,255,255,0.12)"></rect>
+              <text x="640" y="68" text-anchor="middle" font-weight="600">Archived</text>
+              <text x="640" y="88" text-anchor="middle" font-size="12" fill="#a7b3c8">Freeze</text>
+
+              <line x1="140" y1="70" x2="160" y2="70" stroke="#2ec4b6" stroke-width="2" marker-end="url(#arrow)"></line>
+              <line x1="280" y1="70" x2="300" y2="70" stroke="#2ec4b6" stroke-width="2" marker-end="url(#arrow)"></line>
+              <line x1="420" y1="70" x2="440" y2="70" stroke="#2ec4b6" stroke-width="2" marker-end="url(#arrow)"></line>
+              <line x1="560" y1="70" x2="580" y2="70" stroke="#2ec4b6" stroke-width="2" marker-end="url(#arrow)"></line>
+
+            </g>
+          </svg>
+        </div>
+
+  </main>
+
+  <footer>
+    <p>Convention Auction Platform. Built for fan conventions and live auctions</p>
+    <p><a href="#top">Back to top</a></p>
+  </footer>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>
