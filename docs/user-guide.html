@@ -154,19 +154,19 @@ document.addEventListener("DOMContentLoaded", () => {
     <img class="placeholder screenshot-small" src="images/admin-auction-tools.png" alt="Admin auction tools screenshot">
 
     <h3>Item Management</h3>
-    <p>The controls available will depend on the auction state (and for moves, the state of the target auction).</p>
+    <p>The controls available will depend on the auction state (and for moves, the state of the target auction). Items with recorded bids cannot be edited or moved</p>
     <ul>
       <li><strong>Create New Item:</strong> Opens the item form to enter a new submission with optional photo and notes.</li>
       <li><strong>Edit:</strong> Opens the edit form to modify the selected item.</li>
       <li><strong>Print Slip:</strong> Generates a single-item PDF for local printing (receipt or label, depending on configuration).</li>
-      <li><strong>Print confirmation:</strong> After the print dialogue closes, a confirmation modal asks whether printing succeeded. The print tracking timestamp is only updated when confirmed.</li>
+      <li><strong>Print confirmation:</strong> After the print dialogue closes, a confirmation asks whether printing succeeded. The print tracking icon is only updated when confirmed.</li>
       <li><strong>Photo Tools:</strong> Rotate, crop, or replace an image.</li>
       <li><strong>Delete:</strong> Remove the item and its photos permanently.</li>
-      <li><strong>Move within auction:</strong> Move the item within the auction. It will be placed after the selected specific item.</li>
+      <li><strong>Move within auction:</strong> Move the item within the auction. It will be placed after the selected item.</li>
       <li><strong>Move to auction:</strong> Move the item to a different auction. The item will be placed at the end of the target auction</li>
       <li><strong>History:</strong> Displays a detailed log of changes for a specific item, including timestamp, user, and action type.</li>
     </ul>
-    <p><strong>Print icon status colours:</strong> grey = never printed, green = printed and up to date, yellow = item changed after last print (slip may be out of date).</p>
+    <p><strong>Print icon status colours:</strong> grey = never printed, green = printed and up to date, yellow = item text changed after last print (slip may be out of date).</p>
     <img class="placeholder screenshot-small" src="images/admin-edit.png" alt="Admin item management screenshot">
 
     <h3>Bid controls</h3>
@@ -248,6 +248,9 @@ document.addEventListener("DOMContentLoaded", () => {
       <li><strong>Cutter:</strong> Enable auto-cut and set cut mode to cut after each page/job so each slip is separated.</li>
       <li><strong>Paper feed:</strong> Ensure top-of-form/start position is calibrated to avoid vertical drift between slips.</li>
     </ul>
+
+        <img class="placeholder screenshot-small" src="images/admin-slip-print.png" alt="Admin slip print setup screenshot">
+
 
     <h3>6x4 Label Printer</h3>
     <ul>
