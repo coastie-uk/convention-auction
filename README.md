@@ -41,10 +41,10 @@ This software provides a single platform which automates the process from item s
 
 ## Installation
 
-For general server setup see installation.md
-For payment setup see sumup_setup.md
-For Powerpoint & Item slip template setup see pptx_template_editing.md
+For general server setup see docs/installation.md
+For payment setup see docs/sumup_setup.md
+For Powerpoint & Item slip template setup see docs/pptx_template_editing.md
 
 ## Quick-start
 
-see quickstart.md
+see docs/quickstart.md
