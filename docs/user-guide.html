@@ -158,12 +158,15 @@ document.addEventListener("DOMContentLoaded", () => {
     <ul>
       <li><strong>Create New Item:</strong> Opens the item form to enter a new submission with optional photo and notes.</li>
       <li><strong>Edit:</strong> Opens the edit form to modify the selected item.</li>
+      <li><strong>Print Slip:</strong> Generates a single-item PDF for local printing (receipt or label, depending on configuration).</li>
+      <li><strong>Print confirmation:</strong> After the print dialogue closes, a confirmation modal asks whether printing succeeded. The print tracking timestamp is only updated when confirmed.</li>
       <li><strong>Photo Tools:</strong> Rotate, crop, or replace an image.</li>
       <li><strong>Delete:</strong> Remove the item and its photos permanently.</li>
       <li><strong>Move within auction:</strong> Move the item within the auction. It will be placed after the selected specific item.</li>
       <li><strong>Move to auction:</strong> Move the item to a different auction. The item will be placed at the end of the target auction</li>
       <li><strong>History:</strong> Displays a detailed log of changes for a specific item, including timestamp, user, and action type.</li>
     </ul>
+    <p><strong>Print icon status colours:</strong> grey = never printed, green = printed and up to date, yellow = item changed after last print (slip may be out of date).</p>
     <img class="placeholder screenshot-small" src="images/admin-edit.png" alt="Admin item management screenshot">
 
     <h3>Bid controls</h3>
@@ -180,6 +183,9 @@ document.addEventListener("DOMContentLoaded", () => {
       <li><strong>Generate CSV Export:</strong> Download all items in spreadsheet format.</li>
       <li><strong>Generate Auction Slides:</strong> Create a PowerPoint deck with one slide per item, styled according to the current template configuration.</li>
       <li><strong>Generate Item Cards:</strong> Produces A6-sized slides/cards for printing and on-site use.</li>
+      <li><strong>Print All Item Slips (PDF):</strong> Generates a multi-page slip PDF containing all items in the selected auction.</li>
+      <li><strong>Print Unprinted/Out-of-date Slips (PDF):</strong> Generates a multi-page slip PDF for items that are unprinted or stale (changed after the last confirmed print).</li>
+      <li><strong>Reset Slip Print Tracking:</strong> Clears slip print tracking for all items in the selected auction (requires confirmation).</li>
     </ul>
     <img class="placeholder screenshot-small" src="images/admin-export.png" alt="Admin export options screenshot">
 
@@ -205,6 +211,64 @@ document.addEventListener("DOMContentLoaded", () => {
   </div>
 
   
+  <h1>Item Slip Printing</h1>
+
+  <div class="section">
+    <h2>Overview</h2>
+    <p>Item slips are text-only PDFs used to tag donated items quickly. Layout is controlled by <code>slipConfig.json</code> in Maintenance and supports both 80mm receipt printers and 6x4 label printers.</p>
+    <ul>
+      <li><strong>Single item:</strong> Use the print icon in the item row.</li>
+      <li><strong>Batch:</strong> Use Admin &gt; Export &gt; <strong>Print All Item Slips (PDF)</strong> or <strong>Print Unprinted/Out-of-date Slips (PDF)</strong>.</li>
+      <li><strong>Tracking:</strong> <code>last_print</code> is only updated after operator confirmation that printing succeeded.</li>
+      <li><strong>Reset tracking:</strong> Use Admin &gt; Export &gt; <strong>Reset Slip Print Tracking</strong> (confirmation required).</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h2>Operator Workflow</h2>
+    <ol>
+      <li>Start print (single item or batch).</li>
+      <li>Print dialog opens for local printer output.</li>
+      <li>Complete or cancel printing in the browser dialog.</li>
+      <li>When prompted, confirm whether print succeeded.</li>
+      <li>If confirmed, print status is updated and icon colour refreshes automatically.</li>
+    </ol>
+    <p><strong>Icon colours:</strong> grey = never confirmed as printed, green = confirmed and current, yellow = item text changed since last confirmed print.</p>
+  </div>
+
+  <div class="section">
+    <h2>Printer Setup (Recommended)</h2>
+    <h3>80mm Receipt Printer (for example MUNBYN ITPP047)</h3>
+    <ul>
+      <li><strong>Paper size:</strong> Match driver and slip config. Typical receipt setup is 80mm width with your configured page length.</li>
+      <li><strong>Orientation:</strong> Use the same orientation as <code>slipConfig.json</code> (<code>portrait</code> or <code>landscape</code>).</li>
+      <li><strong>Scale:</strong> 100% (or “Actual size”). Avoid “Fit to page” if it changes text placement.</li>
+      <li><strong>Margins:</strong> None or minimum available.</li>
+      <li><strong>Duplex:</strong> Off.</li>
+      <li><strong>Cutter:</strong> Enable auto-cut and set cut mode to cut after each page/job so each slip is separated.</li>
+      <li><strong>Paper feed:</strong> Ensure top-of-form/start position is calibrated to avoid vertical drift between slips.</li>
+    </ul>
+
+    <h3>6x4 Label Printer</h3>
+    <ul>
+      <li><strong>Media size:</strong> 4in x 6in (101.6 x 152.4mm) in both printer driver and slip config.</li>
+      <li><strong>Orientation:</strong> Match slip config orientation.</li>
+      <li><strong>Scale:</strong> 100% (Actual size).</li>
+      <li><strong>Margins / offset:</strong> Use zero/minimal margins and calibrate label origin if content is shifted.</li>
+      <li><strong>Cut/tear:</strong> If cutter is fitted, set to one cut per page; otherwise use tear-after-each-label mode.</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h2>Troubleshooting</h2>
+    <ul>
+      <li><strong>Layout does not align:</strong> Check printer media size and browser scaling first, then adjust field coordinates in <code>slipConfig.json</code>.</li>
+      <li><strong>No separator/cut between slips:</strong> Enable cutter and set cut-after-each-page in printer preferences/driver utility.</li>
+      <li><strong>Print status updated by mistake:</strong> Use <strong>Reset Slip Print Tracking</strong> from the Export menu.</li>
+      <li><strong>Wrong items in batch:</strong> Use <strong>Print Unprinted/Out-of-date Slips</strong> for operational reprints only.</li>
+    </ul>
+  </div>
+
 
     <h1>Cashier Panel</h1>
 
@@ -390,12 +454,13 @@ document.addEventListener("DOMContentLoaded", () => {
     </ul>
     <img class="placeholder screenshot-small" src="images/maintenance-generate-test-data.png" alt="Maintenance generate test data screenshot">
 
-    <h3>PowerPoint Template Editor</h3>
+    <h3>Generator Config Editor</h3>
     <ul>
-      <li><strong>Edit Config:</strong> Select between <code>Slide Config</code> or <code>Card Config</code> to modify PowerPoint layout settings in JSON format.</li>
+      <li><strong>Edit Config:</strong> Select between <code>Slide Config</code>, <code>Card Config</code>, or <code>Item Slip Config</code>.</li>
+      <li><strong>Item Slip Config:</strong> Controls PDF slip page size/orientation and text layout for the admin <strong>Print Slip</strong> action.</li>
       <li><strong>Reset to Default:</strong> Revert selected config to factory settings.</li>
     </ul>
-           See the <a href="pptx_guide.html">Powerpoint template guide</a> for more information
+           See the <a href="pptx_guide.html">Powerpoint template guide</a> for slide/card templates and <code>slipConfig.json</code> schema editing
 
     <img class="placeholder screenshot-small" src="images/maintenance-pptx-template-editor.png" alt="Maintenance PowerPoint template editor screenshot">
 
@@ -534,6 +599,15 @@ document.addEventListener("DOMContentLoaded", () => {
       <td class="tick-no">❌</td>
       <td class="tick-no">❌</td>
       <td class="tick-no">❌</td>
+    </tr>
+    <tr>
+      <td>Print item slip</td>
+      <td>A</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
+      <td class="tick-yes">✅</td>
     </tr>
     <tr>
       <td>Record bid</td>

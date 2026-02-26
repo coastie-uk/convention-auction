@@ -52,10 +52,10 @@
       const container = document.getElementById('doc-content');
       const mdFilename = 'sumup_setup.md';
       const candidates = [
-        '/source/' + mdFilename,
-        './source/' + mdFilename,
-        'source/' + mdFilename,
-        '../source/' + mdFilename
+        '../' + mdFilename,
+        '/' + mdFilename,
+        'https://github.com/coastie-uk/convention-auction/blob/main/source/' + mdFilename + '?raw=true'
+
       ];
 
       async function fetchFirst(urls) {

@@ -1,6 +1,6 @@
 {
     "name": "convention-auction-backend",
-    "version": "2.2.0-dev03",
+    "version": "2.2.0",
     "description": "Backend for Convention Auction Submission Management",
     "main": "backend.js",
     "scripts": {
@@ -35,6 +35,6 @@
         "nodemon": "^3.0.1"
     },
     "engines": {
-        "node": ">=18"
+        "node": ">=20.0.0"
     }
 }

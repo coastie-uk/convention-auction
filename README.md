@@ -19,13 +19,14 @@ This software provides a single platform which automates the process from item s
 - Maintenance tools: manage auctions, logs, auditing, import/export, auto-create test items, etc.
 - User accounts with username/password login and per-user role assignment (`admin`, `cashier`, `maintenance`, `slideshow`)
 - Automatic PowerPoint generation from custom templates (slide deck + item cards)
+- Printing of receipt-style item slips
 - Auto-updating slideshow for in-venue advertising
 - Automatic randomised item & bid generators (for testing/training/evaluation)
 - Mobile-friendly interfaces
 
 ## System Requirements
 
-- Linux server (developed on Mint) 
+- Linux server (developed on Ubuntu & Mint) 
 - Root/sudo access for installation (runs as normal user)  
 - A registered domain name pointing to your server's IP address
 - For SumUp payments, a SumUp merchant account and card reader
@@ -42,7 +43,7 @@ This software provides a single platform which automates the process from item s
 
 For general server setup see installation.md
 For payment setup see sumup_setup.md
-For Powerpoint template setup see pptx_template_editing.md
+For Powerpoint & Item slip template setup see pptx_template_editing.md
 
 ## Quick-start
 
