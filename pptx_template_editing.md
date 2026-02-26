@@ -171,7 +171,7 @@ Each field controls one text block:
   "paper": {
     "format": "receipt80",
     "orientation": "landscape",
-    "widthMm": 80,
+    "widthMm": 72,
     "heightMm": 120
   },
   "defaults": {
@@ -262,7 +262,7 @@ Use this when printing to an 80mm receipt printer in portrait orientation.
   "paper": {
     "format": "receipt80",
     "orientation": "portrait",
-    "widthMm": 80,
+    "widthMm": 72,
     "heightMm": 100
   },
   "defaults": {

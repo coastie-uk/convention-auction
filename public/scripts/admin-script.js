@@ -16,6 +16,9 @@ document.addEventListener("DOMContentLoaded", function () {
     const exportCSVButton = document.getElementById("export-csv");
     const generatePPTButton = document.getElementById("generate-ppt");
     const generateCardsButton = document.getElementById("generate-cards");
+    const printAllSlipsButton = document.getElementById("print-all-slips");
+    const printNeedsPrintSlipsButton = document.getElementById("print-needs-print-slips");
+    const resetSlipPrintTrackingButton = document.getElementById("reset-slip-print-tracking");
     const addSection = document.getElementById("add-section");
     const addForm = document.getElementById("add-form");
     const cancelAddButton = document.getElementById("cancel-add");
@@ -92,28 +95,8 @@ document.addEventListener("DOMContentLoaded", function () {
         `;
     }
 
-    async function printItemSlip(itemId) {
-        const token = localStorage.getItem("token");
-        const auctionId = Number(selectedAuctionId);
-        if (!token || !auctionId || !itemId) return;
-
-        try {
-            const response = await fetch(`${API}/auctions/${auctionId}/items/${itemId}/print-slip`, {
-                headers: { Authorization: token }
-            });
-
-            if (!response.ok) {
-                let message = "Failed to generate slip";
-                try {
-                    const data = await response.json();
-                    message = data.error || message;
-                } catch (parseErr) {
-                    // keep fallback message when response is not JSON
-                }
-                throw new Error(message);
-            }
-
-            const pdfBlob = await response.blob();
+    function openPdfBlobForPrinting(pdfBlob, confirmationPrompt) {
+        return new Promise((resolve) => {
             const pdfUrl = URL.createObjectURL(pdfBlob);
             const iframe = document.createElement("iframe");
             iframe.style.position = "fixed";
@@ -123,7 +106,32 @@ document.addEventListener("DOMContentLoaded", function () {
             iframe.style.opacity = "0";
             iframe.style.pointerEvents = "none";
 
+            let isCleaned = false;
+            let isSettled = false;
+            const finish = (value) => {
+                if (isSettled) return;
+                isSettled = true;
+                resolve(value);
+            };
+            const askForConfirmation = async () => {
+                if (isSettled) return;
+                try {
+                    if (window.DayPilot?.Modal?.confirm) {
+                        const modal = await DayPilot.Modal.confirm(
+                            confirmationPrompt || "Did the print complete successfully?"
+                        );
+                        finish(!modal?.canceled);
+                        return;
+                    }
+                } catch (_) {
+                    // fallback to native confirm
+                }
+                const confirmed = window.confirm(confirmationPrompt || "Did the print complete successfully?");
+                finish(confirmed);
+            };
             const cleanup = () => {
+                if (isCleaned) return;
+                isCleaned = true;
                 URL.revokeObjectURL(pdfUrl);
                 iframe.remove();
             };
@@ -131,11 +139,39 @@ document.addEventListener("DOMContentLoaded", function () {
             iframe.onload = () => {
                 setTimeout(() => {
                     try {
-                        iframe.contentWindow?.focus();
-                        iframe.contentWindow?.print();
+                        const frameWindow = iframe.contentWindow;
+                        if (!frameWindow) {
+                            throw new Error("Unable to access print frame");
+                        }
+
+                        let printedOrClosed = false;
+                        const onDialogClosed = () => {
+                            if (printedOrClosed || isSettled) return;
+                            printedOrClosed = true;
+                            removeHandlers();
+                            setTimeout(() => {
+                                void askForConfirmation();
+                            }, 120);
+                        };
+
+                        const removeHandlers = () => {
+                            window.removeEventListener("focus", onDialogClosed);
+                        };
+
+                        window.addEventListener("focus", onDialogClosed, { once: true });
+
+                        frameWindow.focus();
+                        frameWindow.print();
+
+                        // Fallback: if no focus-return signal arrives, ask anyway.
+                        setTimeout(() => {
+                            removeHandlers();
+                            onDialogClosed();
+                        }, 120000);
                     } catch (err) {
                         window.open(pdfUrl, "_blank", "noopener,noreferrer");
-                        showMessage("Auto print blocked. Opened the PDF in a new tab.", "info");
+                        showMessage("Auto print blocked. Opened the PDF in a new tab. Print status was not updated.", "info");
+                        finish(false);
                     } finally {
                         setTimeout(cleanup, 15000);
                     }
@@ -144,9 +180,180 @@ document.addEventListener("DOMContentLoaded", function () {
 
             iframe.src = pdfUrl;
             document.body.appendChild(iframe);
+            setTimeout(() => {
+                if (!isSettled) {
+                    finish(false);
+                    cleanup();
+                }
+            }, 120000);
+        });
+    }
+
+    async function fetchSlipPdfBlob(url, defaultMessage) {
+        const token = localStorage.getItem("token");
+        if (!token) {
+            logout();
+            throw new Error("Not authenticated");
+        }
+
+        const response = await fetch(url, {
+            headers: { Authorization: token }
+        });
+
+        if (!response.ok) {
+            let message = defaultMessage;
+            try {
+                const data = await response.json();
+                message = data.error || message;
+            } catch (parseErr) {
+                // keep fallback message when response is not JSON
+            }
+            const err = new Error(message);
+            err.status = response.status;
+            throw err;
+        }
+
+        const itemIdsHeader = response.headers.get("x-slip-item-ids") || "";
+        const itemIds = itemIdsHeader
+            .split(",")
+            .map((id) => Number(id))
+            .filter((id) => Number.isInteger(id) && id > 0);
+        const blob = await response.blob();
+        return { blob, itemIds };
+    }
+
+    async function confirmSlipPrinted(itemIds) {
+        const token = localStorage.getItem("token");
+        const auctionId = Number(selectedAuctionId);
+        if (!token || !auctionId) {
+            logout();
+            throw new Error("Not authenticated");
+        }
+
+        if (!Array.isArray(itemIds) || itemIds.length === 0) {
+            throw new Error("No printed item ids returned by server");
+        }
+
+        const response = await fetch(`${API}/auctions/${auctionId}/items/confirm-slip-print`, {
+            method: "POST",
+            headers: {
+                Authorization: token,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ item_ids: itemIds })
+        });
+
+        if (!response.ok) {
+            let message = "Failed to confirm print";
+            try {
+                const data = await response.json();
+                message = data.error || message;
+            } catch (parseErr) {
+                // keep fallback message when response is not JSON
+            }
+            throw new Error(message);
+        }
+    }
+
+    async function printItemSlip(itemId) {
+        const auctionId = Number(selectedAuctionId);
+        if (!auctionId || !itemId) return;
+
+        try {
+            const { blob, itemIds } = await fetchSlipPdfBlob(
+                `${API}/auctions/${auctionId}/items/${itemId}/print-slip`,
+                "Failed to generate slip"
+            );
+            const confirmed = await openPdfBlobForPrinting(
+                blob,
+                "Did the item slip print successfully?"
+            );
+            if (!confirmed) {
+                showMessage("Print not confirmed. Slip print status was not updated.", "info");
+                return;
+            }
+
+            const idsToConfirm = itemIds.length > 0 ? itemIds : [itemId];
+            await confirmSlipPrinted(idsToConfirm);
             await loadItems();
         } catch (error) {
             showMessage("Print failed: " + error.message, "error");
+        }
+    }
+
+    async function printAuctionSlips(scope) {
+        const auctionId = Number(selectedAuctionId);
+        if (!auctionId) {
+            showMessage("Please select an auction first", "error");
+            return;
+        }
+
+        try {
+            const { blob, itemIds } = await fetchSlipPdfBlob(
+                `${API}/auctions/${auctionId}/items/print-slip?scope=${encodeURIComponent(scope)}`,
+                "Failed to generate slips"
+            );
+            const confirmed = await openPdfBlobForPrinting(
+                blob,
+                "Did all item slips print successfully?"
+            );
+            if (!confirmed) {
+                showMessage("Print not confirmed. Slip print status was not updated.", "info");
+                return;
+            }
+
+            await confirmSlipPrinted(itemIds);
+            await loadItems();
+        } catch (error) {
+            const level = error.status === 400 ? "info" : "error";
+            showMessage("Print failed: " + error.message, level);
+        }
+    }
+
+    async function resetSlipPrintTracking() {
+        const auctionId = Number(selectedAuctionId);
+        if (!auctionId) {
+            showMessage("Please select an auction first", "error");
+            return;
+        }
+
+        const token = localStorage.getItem("token");
+        if (!token) return logout();
+
+        try {
+            const modal = await DayPilot.Modal.confirm(
+                "Clear slip print tracking for all items in this auction?"
+            );
+            if (modal?.canceled) {
+                showMessage("Reset cancelled", "info");
+                return;
+            }
+
+            const response = await fetch(`${API}/auctions/${auctionId}/items/reset-slip-print`, {
+                method: "POST",
+                headers: {
+                    Authorization: token,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({})
+            });
+
+            if (!response.ok) {
+                let message = "Failed to reset slip print tracking";
+                try {
+                    const data = await response.json();
+                    message = data.error || message;
+                } catch (parseErr) {
+                    // keep fallback message when response is not JSON
+                }
+                throw new Error(message);
+            }
+
+            const data = await response.json();
+            showMessage(data.message || "Slip print tracking reset", "success");
+            await loadItems();
+        } catch (error) {
+            showMessage("Reset failed: " + error.message, "error");
         }
     }
 
@@ -981,6 +1188,18 @@ document.addEventListener("DOMContentLoaded", function () {
         } catch (err) {
             showMessage(`Failed to generate cards: ${err}`, "error");
         }
+    });
+
+    printAllSlipsButton.addEventListener("click", async function () {
+        await printAuctionSlips("all");
+    });
+
+    printNeedsPrintSlipsButton.addEventListener("click", async function () {
+        await printAuctionSlips("needs-print");
+    });
+
+    resetSlipPrintTrackingButton.addEventListener("click", async function () {
+        await resetSlipPrintTracking();
     });
 
 

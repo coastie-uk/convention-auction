@@ -3,7 +3,7 @@
   "paper": {
     "format": "receipt80",
     "orientation": "landscape",
-    "widthMm": 80,
+    "widthMm": 72,
     "heightMm": 120
   },
   "defaults": {
@@ -31,7 +31,7 @@
       "label": "",
       "xMm": 4,
       "yMm": 14,
-      "maxWidthMm": 110,
+      "maxWidthMm": 90,
       "fontSizePt": 18,
       "multiline": true,
       "truncate": {

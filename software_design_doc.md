@@ -118,7 +118,10 @@ Core auction + item management (mostly admin-facing):
 - `POST /auctions/:auctionId/items/:id/update` — update item (admin; setup/locked only)
 - `POST /auctions/:auctionId/items/:id/move-auction/:targetAuctionId` — move item to another auction (admin; setup/locked only)
 - `POST /auctions/:auctionId/items/:id/move-after/:after_id` — reorder items (admin; setup/locked only)
-- `GET /auctions/:auctionId/items/:id/print-slip` — generate one-item PDF slip + update print timestamp (admin)
+- `GET /auctions/:auctionId/items/:id/print-slip` — generate one-item PDF slip (admin)
+- `GET /auctions/:auctionId/items/print-slip?scope=all|needs-print` — generate batch multi-page slip PDF (admin)
+- `POST /auctions/:auctionId/items/confirm-slip-print` — confirm successful print and update `last_print` (admin)
+- `POST /auctions/:auctionId/items/reset-slip-print` — clear `last_print` for all items in an auction (admin)
 - `DELETE /items/:id` — delete item (admin; setup/locked only)
 - `POST /rotate-photo` — rotate both full + preview image (admin)
 - `POST /generate-pptx` / `POST /generate-cards` / `POST /export-csv` — admin exports
@@ -507,23 +510,29 @@ Data flows:
 - Reads `items` (and bidder paddle numbers for export).
 - Writes temp files to `OUTPUT_DIR` (`auction_data.csv`, `auction_presentation.pptx`, `auction_cards.pptx`).
 
-#### 2.13 Print item slip (admin)
+#### 2.13 Print item slip (admin, single + batch)
 
 Flow:
 1. Admin clicks the print icon for an item row.
-2. Frontend calls the item slip endpoint and receives an inline PDF.
+2. Frontend calls the slip endpoint and receives an inline PDF.
 3. Browser opens the print dialog automatically (hidden iframe print).
-4. Frontend refreshes the table after successful print to update icon colour state
+4. After the print dialog closes, frontend asks for operator confirmation (DayPilot modal).
+5. Only if confirmed does frontend call print confirmation endpoint to write `items.last_print`.
+6. Frontend refreshes the table to update print icon colour state.
 
 Backend endpoints:
 - `GET /api/auctions/:auctionId/items/:id/print-slip` (requires admin JWT)
+- `GET /api/auctions/:auctionId/items/print-slip?scope=all|needs-print` (requires admin JWT)
+- `POST /api/auctions/:auctionId/items/confirm-slip-print` (requires admin JWT)
+  - Request: `{ item_ids: [<id>, ...] }`
+- `POST /api/auctions/:auctionId/items/reset-slip-print` (requires admin JWT)
 
 Data flows:
-- Reads one `items` row for the selected auction item.
+- Reads one or many `items` rows for the selected auction.
 - Reads and validates `slipConfig.json` from `PPTX_CONFIG_DIR`.
 - Generates a PDF (text-only) using configured paper size, orientation, and field layout.
-- Writes `items.last_print` to current timestamp.
-- Inserts `audit_log` entry (`action='print slip'`).
+- On confirmation call, writes `items.last_print` to current timestamp for confirmed items.
+- Inserts `audit_log` entries for confirmed print actions (`print slip`, `print slip batch`) and reset action (`reset slip print tracking`).
 
 #### 2.14 Change auction state (admin)
 
@@ -1029,6 +1038,9 @@ Items:
 - `POST /api/auctions/:auctionId/items/:id/move-auction/:targetAuctionId` (admin)
 - `POST /api/auctions/:auctionId/items/:id/move-after/:after_id` (admin)
 - `GET /api/auctions/:auctionId/items/:id/print-slip` (admin)
+- `GET /api/auctions/:auctionId/items/print-slip?scope=all|needs-print` (admin)
+- `POST /api/auctions/:auctionId/items/confirm-slip-print` (admin)
+- `POST /api/auctions/:auctionId/items/reset-slip-print` (admin)
 - `POST /api/rotate-photo` (admin)
 
 Exports:
