@@ -52,10 +52,10 @@
       const container = document.getElementById('doc-content');
       const mdFilename = 'quickstart.md';
       const candidates = [
+        mdFilename,
         '../' + mdFilename,
         '/' + mdFilename,
         'https://github.com/coastie-uk/convention-auction/blob/main/source/' + mdFilename + '?raw=true'
-
       ];
 
       async function fetchFirst(urls) {
