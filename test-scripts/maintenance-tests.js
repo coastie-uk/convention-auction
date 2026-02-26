@@ -65,6 +65,7 @@ context.testAuctionFullName = null;
 context.testAuctionId = null;
 context.auctionCount = null;
 context.pptxConfig = null;
+context.slipConfig = null;
 context.resourceFilename = null;
 context.dbBackupBuffer = null;
 context.managedUser = managedUsers.lifecycle;
@@ -537,6 +538,15 @@ addTest("M-024","maintenance/get-pptx-config failure invalid name", async () => 
   await expectStatus(res, 400);
 });
 
+addTest("M-024a","maintenance/get-slip-config success", async () => {
+  const { res, text } = await fetchJson(`${baseUrl}/maintenance/get-pptx-config/slip`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  context.slipConfig = JSON.parse(text);
+  assert.ok(context.slipConfig && typeof context.slipConfig === "object", "Slip config not parsed");
+});
+
 addTest("M-025","maintenance/save-pptx-config failure invalid JSON", async () => {
   const { res } = await fetchJson(`${baseUrl}/maintenance/save-pptx-config/pptx`, {
     method: "POST",
@@ -551,6 +561,16 @@ addTest("M-026","maintenance/save-pptx-config success", async () => {
     method: "POST",
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
     body: JSON.stringify(context.pptxConfig)
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && json.message, `Unexpected response: ${text}`);
+});
+
+addTest("M-026a","maintenance/save-slip-config success", async () => {
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/save-pptx-config/slip`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify(context.slipConfig)
   });
   await expectStatus(res, 200);
   assert.ok(json && json.message, `Unexpected response: ${text}`);
@@ -578,6 +598,23 @@ addTest("M-028","maintenance/pptx-config/reset success (restores)", async () => 
     method: "POST",
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
     body: JSON.stringify(context.pptxConfig)
+  });
+  await expectStatus(res2, 200);
+});
+
+addTest("M-028a","maintenance/pptx-config/reset success for slip", async () => {
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/pptx-config/reset`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ configType: "slip" })
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && json.message, `Unexpected reset response: ${text}`);
+
+  const { res: res2 } = await fetchJson(`${baseUrl}/maintenance/save-pptx-config/slip`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify(context.slipConfig)
   });
   await expectStatus(res2, 200);
 });

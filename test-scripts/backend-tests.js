@@ -100,7 +100,8 @@ const testData = {
   itemA: null,
   itemB: null,
   deleteItem: null,
-  photoItem: null
+  photoItem: null,
+  allSlipItemIds: []
 };
 
   // Sleep function that returns a promise
@@ -806,6 +807,207 @@ addTest("B-038","POST /generate-cards failure invalid token", async () => {
     body: JSON.stringify({ auction_id: testData.auctionId })
   });
   await expectStatus(res, 403);
+});
+
+// /auctions/:auctionId/items/:id/print-slip
+addTest("B-038a","GET /auctions/:auctionId/items/:id/print-slip success", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/${testData.itemA}/print-slip`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  const contentType = res.headers.get("content-type") || "";
+  assert.ok(contentType.includes("application/pdf"), `Unexpected content-type: ${contentType}`);
+  const idsHeader = (res.headers.get("x-slip-item-ids") || "").trim();
+  assert.ok(idsHeader.length > 0, "Expected X-Slip-Item-Ids header");
+  assert.ok(idsHeader.split(",").map((v) => Number(v)).includes(testData.itemA), "Expected printed item id in X-Slip-Item-Ids");
+  const buffer = await res.arrayBuffer();
+  assert.ok(buffer.byteLength > 0, "Slip PDF is empty");
+
+  const { res: itemsRes, json: itemsJson } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(itemsRes, 200);
+  const printedItem = Array.isArray(itemsJson?.items)
+    ? itemsJson.items.find((row) => row.id === testData.itemA)
+    : null;
+  assert.ok(printedItem, "Printed item not found in item list");
+  assert.ok(!printedItem.last_print, "Expected last_print to remain unchanged before confirmation");
+});
+
+addTest("B-038aa","POST /auctions/:auctionId/items/confirm-slip-print success single item", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/confirm-slip-print`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ item_ids: [testData.itemA] })
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && json.updated_count === 1, "Expected one updated item");
+
+  const { res: itemsRes, json: itemsJson } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(itemsRes, 200);
+  const printedItem = Array.isArray(itemsJson?.items)
+    ? itemsJson.items.find((row) => row.id === testData.itemA)
+    : null;
+  assert.ok(printedItem, "Printed item not found in item list after confirmation");
+  assert.ok(printedItem.last_print, "Expected last_print to be set after confirmation");
+});
+
+addTest("B-038b","GET /auctions/:auctionId/items/:id/print-slip failure unauthenticated", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/${testData.itemA}/print-slip`);
+  await expectStatus(res, 403);
+});
+
+addTest("B-038c","GET /auctions/:auctionId/items/:id/print-slip failure wrong role", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/${testData.itemA}/print-slip`, {
+    headers: authHeaders(tokens.cashier)
+  });
+  await expectStatus(res, 403);
+});
+
+addTest("B-038d","GET /auctions/:auctionId/items/print-slip scope=needs-print success", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/print-slip?scope=needs-print`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  const contentType = res.headers.get("content-type") || "";
+  assert.ok(contentType.includes("application/pdf"), `Unexpected content-type: ${contentType}`);
+  const idsHeader = (res.headers.get("x-slip-item-ids") || "").trim();
+  assert.ok(idsHeader.length > 0, "Expected X-Slip-Item-Ids header for needs-print");
+  const buffer = await res.arrayBuffer();
+  assert.ok(buffer.byteLength > 0, "Needs-print PDF is empty");
+});
+
+addTest("B-038e","GET /auctions/:auctionId/items/print-slip scope=all success", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/print-slip?scope=all`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  const contentType = res.headers.get("content-type") || "";
+  assert.ok(contentType.includes("application/pdf"), `Unexpected content-type: ${contentType}`);
+  const idsHeader = (res.headers.get("x-slip-item-ids") || "").trim();
+  assert.ok(idsHeader.length > 0, "Expected X-Slip-Item-Ids header for all scope");
+  testData.allSlipItemIds = idsHeader
+    .split(",")
+    .map((id) => Number(id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  assert.ok(testData.allSlipItemIds.length > 0, "Expected at least one printable item id");
+  const buffer = await res.arrayBuffer();
+  assert.ok(buffer.byteLength > 0, "All-items slip PDF is empty");
+});
+
+addTest("B-038ea","POST /auctions/:auctionId/items/confirm-slip-print success batch", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/confirm-slip-print`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ item_ids: testData.allSlipItemIds })
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && json.updated_count === testData.allSlipItemIds.length, "Expected all batch ids to be updated");
+});
+
+addTest("B-038f","GET /auctions/:auctionId/items/print-slip scope=needs-print no matches", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/print-slip?scope=needs-print`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 400);
+  assert.ok(json && json.error, "Expected error payload for empty needs-print scope");
+});
+
+addTest("B-038g","GET /auctions/:auctionId/items/print-slip scope=all failure unauthenticated", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/print-slip?scope=all`);
+  await expectStatus(res, 403);
+});
+
+addTest("B-038h","GET /auctions/:auctionId/items/print-slip scope=all failure wrong role", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/print-slip?scope=all`, {
+    headers: authHeaders(tokens.cashier)
+  });
+  await expectStatus(res, 403);
+});
+
+addTest("B-038i","GET /auctions/:auctionId/items/print-slip failure invalid scope", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/print-slip?scope=invalid-scope`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 400);
+  assert.ok(json && json.error, "Expected error payload for invalid scope");
+});
+
+addTest("B-038j","POST /auctions/:auctionId/items/confirm-slip-print failure unauthenticated", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/confirm-slip-print`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ item_ids: [testData.itemA] })
+  });
+  await expectStatus(res, 403);
+});
+
+addTest("B-038k","POST /auctions/:auctionId/items/confirm-slip-print failure wrong role", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/confirm-slip-print`, {
+    method: "POST",
+    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ item_ids: [testData.itemA] })
+  });
+  await expectStatus(res, 403);
+});
+
+addTest("B-038l","POST /auctions/:auctionId/items/confirm-slip-print failure invalid payload", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/confirm-slip-print`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ item_ids: [] })
+  });
+  await expectStatus(res, 400);
+  assert.ok(json && json.error, "Expected error payload for invalid confirmation payload");
+});
+
+addTest("B-038m","POST /auctions/:auctionId/items/reset-slip-print success", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/reset-slip-print`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({})
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && Number.isInteger(json.updated_count), "Expected updated_count integer");
+
+  const { res: itemsRes, json: itemsJson } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(itemsRes, 200);
+  const items = Array.isArray(itemsJson?.items) ? itemsJson.items : [];
+  assert.ok(items.length > 0, "Expected auction items to exist");
+  const anyPrinted = items.some((row) => row.last_print != null && String(row.last_print).trim() !== "");
+  assert.equal(anyPrinted, false, "Expected all item last_print values to be cleared");
+});
+
+addTest("B-038n","POST /auctions/:auctionId/items/reset-slip-print failure unauthenticated", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/reset-slip-print`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  await expectStatus(res, 403);
+});
+
+addTest("B-038o","POST /auctions/:auctionId/items/reset-slip-print failure wrong role", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/reset-slip-print`, {
+    method: "POST",
+    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+    body: JSON.stringify({})
+  });
+  await expectStatus(res, 403);
+});
+
+addTest("B-038p","POST /auctions/:auctionId/items/reset-slip-print failure invalid auction id", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/auctions/abc/items/reset-slip-print`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({})
+  });
+  await expectStatus(res, 400);
+  assert.ok(json && json.error, "Expected error payload for invalid auction id");
 });
 
 // /export-csv

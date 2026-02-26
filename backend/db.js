@@ -9,7 +9,7 @@ const Database = require('better-sqlite3');
 const path     = require('path');
 const fs       = require('fs');
 const crypto   = require('crypto');
-const schemaVersion = '2.4';
+const schemaVersion = '2.5';
 const { logLevels, log } = require('./logger');
 const bcrypt = require('bcryptjs');
 const { ROLE_LIST, ROLE_SET, ROOT_USERNAME } = require('./auth-constants');
@@ -26,6 +26,7 @@ const {
 // 2.2  Add payment_intents table and additional payments columns for SumUp integration
 // 2.3  Adds reversals
 // 2.4  Adds username-based users with multi-role permissions
+// 2.5  Adds items.last_print for item slip print tracking, add seconds to timekstamps
 
 let dbPath = path.join(DB_PATH, DB_NAME);
 if (DB_PATH === ".") {
@@ -56,6 +57,14 @@ try {
   existingSchemaVersion = null;
 }
 
+if(existingSchemaVersion > schemaVersion) {
+  log(
+    'General',
+    logLevels.WARN,
+    `Database schema version (${existingSchemaVersion}) is newer than application schema version (${schemaVersion}). This may cause issues.`
+  );
+}
+
 if(existingSchemaVersion !== schemaVersion || isNewDatabase)
 {
   log(
@@ -74,7 +83,7 @@ if(existingSchemaVersion !== schemaVersion || isNewDatabase)
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         short_name TEXT UNIQUE NOT NULL,
         full_name TEXT NOT NULL,
-        created_at TEXT DEFAULT (strftime('%d-%m-%Y %H:%M','now')),
+        created_at TEXT DEFAULT (strftime('%d-%m-%Y %H:%M:%S','now')),
         logo TEXT,
         status TEXT DEFAULT 'setup'
         )`);
@@ -88,6 +97,8 @@ if(existingSchemaVersion !== schemaVersion || isNewDatabase)
         date TEXT,
         notes TEXT,
         mod_date TEXT,
+        last_print TEXT,
+        text_mod_date TEXT,
         item_number INTEGER,
         auction_id INTEGER REFERENCES auctions(id),
         test_item INTEGER,
@@ -114,7 +125,7 @@ if(existingSchemaVersion !== schemaVersion || isNewDatabase)
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         paddle_number INTEGER NOT NULL,
         name          TEXT,
-        created_at    TEXT DEFAULT (strftime('%Y-%m-%d %H:%M', 'now')),
+        created_at    TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now')),
         auction_id INTEGER
       )`);
 
@@ -125,7 +136,7 @@ if(existingSchemaVersion !== schemaVersion || isNewDatabase)
         method      TEXT    NOT NULL DEFAULT 'cash',
         note        TEXT,
         created_by  TEXT,
-        created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M', 'now')),
+        created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now')),
         FOREIGN KEY (bidder_id) REFERENCES bidders(id)
       )`);
 
@@ -196,6 +207,9 @@ if(existingSchemaVersion !== schemaVersion || isNewDatabase)
 
   // 2.0 -> 2.1 Add admin_state_change
   try { db.exec("ALTER TABLE auctions ADD COLUMN admin_can_change_state INTEGER NOT NULL DEFAULT 0; -- 0=false, 1=true"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE items ADD COLUMN last_print TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE items ADD COLUMN text_mod_date TEXT"); } catch (e) { /* already exists */ }
+
 
   // 2.4: Move to username-based accounts with multi-role permissions.
   const isBcryptHash = (value) => typeof value === 'string' && /^\$2[aby]\$\d{2}\$/.test(value);

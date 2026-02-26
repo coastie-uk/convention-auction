@@ -13,6 +13,7 @@ const path = require('path');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const pptxgen = require('pptxgenjs');
+const PDFDocument = require('pdfkit');
 const { Parser } = require('@json2csv/plainjs');
 const bodyParser = require('body-parser');
 var strftime = require('strftime');
@@ -22,6 +23,13 @@ const app = express();
 const fsp = require('fs').promises;
 const { audit, auditTypes } = require('./middleware/audit');
 const { sanitiseText } = require('./middleware/sanitiseText');
+const {
+  validateAndNormalizeSlipConfig,
+  resolveSlipPageSizeMm,
+  resolveSlipItemValue,
+  truncateTextForSlip,
+  mmToPoints
+} = require('./slip-config');
 const {
   ROLE_LIST,
   ROLE_SET,
@@ -593,7 +601,7 @@ app.post('/auctions/:publicId/newitem', checkAuctionState(['setup', 'locked']), 
                         return res.status(500).json({ error: "Database error" });
                     }
 
-                    db.run(`INSERT INTO items (item_number, description, contributor, artist, notes, photo, auction_id, date) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%d-%m-%Y %H:%M', 'now'))`,
+                    db.run(`INSERT INTO items (item_number, description, contributor, artist, notes, photo, auction_id, date) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%d-%m-%Y %H:%M:%S', 'now'))`,
                         [itemNumber, sanitisedDescription, sanitisedContributor, sanitisedArtist, sanitisedNotes, photoPath, auction_id],
                         function (err) {
                             if (err) {
@@ -647,7 +655,9 @@ app.get('/auctions/:auctionId/items', authenticateRole("admin"), (req, res) => {
            i.test_item,
            i.test_bid,
            i.date,
-           i.mod_date
+           i.mod_date,
+           i.text_mod_date,
+           i.last_print
     FROM items   i
     LEFT JOIN bidders b ON b.id = i.winning_bidder_id
     WHERE i.auction_id = ?
@@ -733,7 +743,7 @@ try {
 
 
                 await sharp(req.file.path)
-                    .resize(2000, 2000, { fit: 'inside' })
+                    .resize(2500, 2500, { fit: 'inside' })
                     .jpeg({ quality: 90 })
                     .toFile(resizedPath);
 
@@ -771,13 +781,14 @@ try {
         // Only collect fields that are provided (and not undefined/null)
         const updates = [];
         const params = [];
-
+        let textFieldsChanged = false;
         // For each field, check if it's provided and different from current value. If so, add to updates (minimize DB writes)
         const fields = ["description", "contributor", "artist", "notes"];
         fields.forEach(field => {
             if (req.body[field] !== undefined && req.body[field] !== null && req.body[field] !== row[field]) {
                 updates.push(`${field} = ?`);
                 params.push(req.body[field]);
+                textFieldsChanged = true;
             }
         });
 
@@ -787,13 +798,18 @@ try {
             params.push(photoPath);
         }
 
+        // Always update text_mod_date if any text fields changed
+        if (textFieldsChanged) {
+            updates.push("text_mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now')");
+        }
 
         // For each field, check if it's provided and different from current value. If so, add to updates (minimize DB writes)
         // update mod_date if there are any updates
         if (updates.length > 0) {
-            const updateSummary = JSON.stringify(updates) + " / " + JSON.stringify(params);
-            logFromRequest(req, logLevels.DEBUG, `updates and values: ${updateSummary}, photo: ${req.file ? photoPath : 'no file'}`);
-            updates.push("mod_date = strftime('%d-%m-%Y %H:%M', 'now')");
+            const updateSummaryForLog = updates.map((u, i) => `${u.split('=')[0].trim()}: ${params[i]}`).join(", ");
+            logFromRequest(req, logLevels.DEBUG, `updates and values: ${updateSummaryForLog}, photo: ${req.file ? photoPath : 'no file'}`);
+
+            updates.push("mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now')");
             const sql = `UPDATE items SET ${updates.join(", ")} WHERE id = ?`;
             params.push(id);
 
@@ -804,7 +820,7 @@ try {
                 }
                 res.json({ message: 'Item updated', photo: photoPath });
                 logFromRequest(req, logLevels.INFO, `Update item completed for ${id}`);
-                audit(getAuditActor(req), 'updated', 'item', id, { changes: updateSummary, photo_updated: !!req.file });
+                audit(getAuditActor(req), 'updated', 'item', id, { changes: updateSummaryForLog, photo_updated: !!req.file });
 
             });
         } else {
@@ -883,7 +899,7 @@ app.post('/auctions/:auctionId/items/:id/move-auction/:targetAuctionId', authent
                     return res.status(500).json({ error: err2.message });
                 }
                 const newNumber = result?.next || 1;
-                db.run("UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M', 'now'), auction_id = ?, item_number = ? WHERE id = ?",
+                db.run("UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now'), text_mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now'), auction_id = ?, item_number = ? WHERE id = ?",
                     [newAuctionId, newNumber, id],
                     function (err3) {
                         if (err3) {
@@ -1131,6 +1147,355 @@ app.post('/generate-cards', authenticateRole("admin"), async (req, res) => {
     }
 });
 
+function parseDbDateTimeToTs(value) {
+    if (!value || typeof value !== "string") return null;
+    const match = value.trim().match(/^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (!match) return null;
+    const [, dd, mm, yyyy, hh, min, sec] = match;
+    const parsed = new Date(
+        Number(yyyy),
+        Number(mm) - 1,
+        Number(dd),
+        Number(hh),
+        Number(min),
+        sec ? Number(sec) : 0
+    );
+    const ts = parsed.getTime();
+    return Number.isFinite(ts) ? ts : null;
+}
+
+function getSlipPrintStatus(item) {
+    const lastPrintTs = parseDbDateTimeToTs(item?.last_print);
+    if (!lastPrintTs) return "unprinted";
+
+    const modTs = parseDbDateTimeToTs(item?.text_mod_date);
+    if (!modTs) return "printed";
+    return modTs > lastPrintTs ? "stale" : "printed";
+}
+
+async function loadNormalizedSlipConfig(req) {
+    const configPath = path.join(PPTX_CONFIG_DIR, 'slipConfig.json');
+    const configText = await fsp.readFile(configPath, 'utf-8');
+    const slipConfigRaw = JSON.parse(configText);
+    const { ok, errors, normalizedJson } = validateAndNormalizeSlipConfig(slipConfigRaw);
+
+    if (!ok) {
+        logFromRequest(req, logLevels.ERROR, `Slip config invalid (${errors.length} error(s))`);
+        const error = new Error("Slip configuration is invalid. Update slipConfig.json in Maintenance.");
+        error.statusCode = 500;
+        error.details = errors;
+        throw error;
+    }
+
+    return normalizedJson;
+}
+
+function renderSlipPage(pdf, item, slipConfig) {
+    slipConfig.fields.forEach((field) => {
+        const baseValue = resolveSlipItemValue(item, field.parameter);
+        if (!baseValue && !field.includeIfEmpty) {
+            return;
+        }
+
+        const value = truncateTextForSlip(baseValue, field.truncate);
+        const text = `${field.label || ""}${value}`;
+        const x = mmToPoints(field.xMm);
+        const y = mmToPoints(field.yMm);
+        const textOptions = {
+            width: mmToPoints(field.maxWidthMm),
+            align: field.align,
+            lineBreak: field.multiline !== false,
+            lineGap: field.lineGapPt
+        };
+
+        if (field.maxHeightMm) {
+            textOptions.height = mmToPoints(field.maxHeightMm);
+        }
+
+        pdf.save();
+        pdf.font(field.font);
+        pdf.fontSize(field.fontSizePt);
+        if (field.rotationDeg) {
+            pdf.rotate(field.rotationDeg, { origin: [x, y] });
+        }
+        pdf.text(text, x, y, textOptions);
+        pdf.restore();
+    });
+}
+
+function streamSlipPdf(res, items, slipConfig, filename) {
+    const pageSize = resolveSlipPageSizeMm(slipConfig.paper);
+    const pageDimensions = [mmToPoints(pageSize.widthMm), mmToPoints(pageSize.heightMm)];
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    const itemIdsForHeader = items
+        .map((item) => Number(item?.id))
+        .filter((id) => Number.isInteger(id) && id > 0);
+    if (itemIdsForHeader.length > 0) {
+        res.setHeader('X-Slip-Item-Ids', itemIdsForHeader.join(','));
+    }
+
+    const pdf = new PDFDocument({
+        size: pageDimensions,
+        margin: 0,
+        autoFirstPage: false
+    });
+    pdf.pipe(res);
+
+    items.forEach((item) => {
+        pdf.addPage({ size: pageDimensions, margin: 0 });
+        renderSlipPage(pdf, item, slipConfig);
+    });
+
+    return pdf;
+}
+
+function updateLastPrintForItems(auctionId, itemIds, printStamp) {
+    const ids = Array.from(new Set(
+        (itemIds || [])
+            .map((id) => Number(id))
+            .filter((id) => Number.isInteger(id) && id > 0)
+    ));
+    if (ids.length === 0) return 0;
+
+    const chunkSize = 400;
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += chunkSize) {
+        chunks.push(ids.slice(i, i + chunkSize));
+    }
+
+    const updateTx = db.transaction((idChunks) => {
+        let totalChanges = 0;
+        idChunks.forEach((chunk) => {
+            const placeholders = chunk.map(() => "?").join(",");
+            const info = db.run(
+                `UPDATE items SET last_print = ? WHERE auction_id = ? AND id IN (${placeholders})`,
+                [printStamp, auctionId, ...chunk]
+            );
+            totalChanges += Number(info?.changes || 0);
+        });
+        return totalChanges;
+    });
+
+    return updateTx(chunks);
+}
+
+//--------------------------------------------------------------------------
+// GET /auctions/:auctionId/items/print-slip
+// API to generate a multi-page item slip PDF from slipConfig.json
+// Query: scope=all|needs-print
+//--------------------------------------------------------------------------
+
+app.get('/auctions/:auctionId/items/print-slip', authenticateRole("admin"), checkAuctionState(allowedStatuses), async (req, res) => {
+    const auctionId = Number(req.params.auctionId);
+    const scopeRaw = String(req.query.scope || "all").trim().toLowerCase();
+    const scope = scopeRaw === "needs_print" ? "needs-print" : scopeRaw;
+
+    if (!auctionId) {
+        return res.status(400).json({ error: "Invalid auction id" });
+    }
+    if (!["all", "needs-print"].includes(scope)) {
+        return res.status(400).json({ error: "Invalid scope. Use scope=all or scope=needs-print" });
+    }
+
+    try {
+        const allItems = db.all(
+            `SELECT id, item_number, description, contributor, artist, notes, text_mod_date, last_print
+             FROM items
+             WHERE auction_id = ?
+             ORDER BY item_number ASC`,
+            [auctionId]
+        );
+
+        if (!Array.isArray(allItems) || allItems.length === 0) {
+            return res.status(400).json({ error: "No items found for this auction" });
+        }
+
+        const itemsToPrint = scope === "needs-print"
+            ? allItems.filter((item) => {
+                const status = getSlipPrintStatus(item);
+                return status === "unprinted" || status === "stale";
+            })
+            : allItems;
+
+        if (itemsToPrint.length === 0) {
+            return res.status(400).json({ error: "No unprinted or out-of-date item slips found" });
+        }
+
+        const slipConfig = await loadNormalizedSlipConfig(req);
+        const filename = `auction_${auctionId}_item_slips_${scope === "all" ? "all" : "needs_print"}.pdf`;
+        const pdf = streamSlipPdf(res, itemsToPrint, slipConfig, filename);
+        logFromRequest(req, logLevels.INFO, `Generated batch slip PDF (${scope}) for auction ${auctionId}: ${itemsToPrint.length} item(s)`);
+        pdf.end();
+    } catch (error) {
+        logFromRequest(req, logLevels.ERROR, `Batch slip generation failed for auction ${auctionId}: ${error.message}`);
+        if (!res.headersSent) {
+            return res.status(error.statusCode || 500).json({
+                error: error.statusCode ? error.message : "Failed to generate item slip PDF",
+                ...(error.details ? { details: error.details } : {})
+            });
+        }
+    }
+});
+
+//--------------------------------------------------------------------------
+// GET /auctions/:auctionId/items/:id/print-slip
+// API to generate a single-item print slip PDF from slipConfig.json
+//--------------------------------------------------------------------------
+
+app.get('/auctions/:auctionId/items/:id/print-slip', authenticateRole("admin"), checkAuctionState(allowedStatuses), async (req, res) => {
+    const auctionId = Number(req.params.auctionId);
+    const itemId = Number(req.params.id);
+
+    if (!auctionId || !itemId) {
+        return res.status(400).json({ error: "Invalid auction id or item id" });
+    }
+
+    try {
+        const item = db.get(
+            `SELECT id, item_number, description, contributor, artist, notes
+             FROM items
+             WHERE id = ? AND auction_id = ?`,
+            [itemId, auctionId]
+        );
+
+        if (!item) {
+            return res.status(400).json({ error: "Item not found" });
+        }
+
+        const slipConfig = await loadNormalizedSlipConfig(req);
+        const pdf = streamSlipPdf(
+            res,
+            [item],
+            slipConfig,
+            `item_${item.item_number || item.id}_slip.pdf`
+        );
+        logFromRequest(req, logLevels.INFO, `Generated slip PDF for item ID ${itemId} (number ${item.item_number}) in auction ${auctionId}`);
+        pdf.end();
+    } catch (error) {
+        logFromRequest(req, logLevels.ERROR, `Slip generation failed for item ${itemId}: ${error.message}`);
+        if (!res.headersSent) {
+            return res.status(error.statusCode || 500).json({
+                error: error.statusCode ? error.message : "Failed to generate item slip PDF",
+                ...(error.details ? { details: error.details } : {})
+            });
+        }
+    }
+});
+
+//--------------------------------------------------------------------------
+// POST /auctions/:auctionId/items/confirm-slip-print
+// API to confirm successful slip print and update last_print
+//--------------------------------------------------------------------------
+
+app.post('/auctions/:auctionId/items/confirm-slip-print', authenticateRole("admin"), checkAuctionState(allowedStatuses), async (req, res) => {
+    const auctionId = Number(req.params.auctionId);
+    if (!auctionId) {
+        return res.status(400).json({ error: "Invalid auction id" });
+    }
+
+    const rawIds = Array.isArray(req.body?.item_ids) ? req.body.item_ids : null;
+    if (!rawIds || rawIds.length === 0) {
+        return res.status(400).json({ error: "item_ids must be a non-empty array" });
+    }
+
+    const itemIds = Array.from(new Set(
+        rawIds
+            .map((id) => Number(id))
+            .filter((id) => Number.isInteger(id) && id > 0)
+    ));
+
+    if (itemIds.length === 0) {
+        return res.status(400).json({ error: "item_ids must contain one or more valid item ids" });
+    }
+
+    try {
+        const placeholders = itemIds.map(() => "?").join(",");
+        const foundRows = db.all(
+            `SELECT id
+             FROM items
+             WHERE auction_id = ? AND id IN (${placeholders})`,
+            [auctionId, ...itemIds]
+        );
+        const foundIdSet = new Set((foundRows || []).map((row) => Number(row.id)));
+        const missingIds = itemIds.filter((id) => !foundIdSet.has(id));
+        if (missingIds.length > 0) {
+            return res.status(400).json({
+                error: "One or more item_ids were not found in this auction",
+                missing_item_ids: missingIds
+            });
+        }
+
+        const printStamp = strftime('%d-%m-%Y %H:%M:%S');
+        const updatedCount = updateLastPrintForItems(auctionId, itemIds, printStamp);
+        if (updatedCount !== itemIds.length) {
+            throw new Error(`Unable to store print timestamp for all items (${updatedCount}/${itemIds.length})`);
+        }
+
+        if (itemIds.length === 1) {
+            audit(getAuditActor(req), 'print slip', 'item', itemIds[0], {
+                auction_id: auctionId,
+                printed_at: printStamp,
+                confirmed: true
+            });
+        } else {
+            audit(getAuditActor(req), 'print slip batch', 'auction', auctionId, {
+                auction_id: auctionId,
+                printed_at: printStamp,
+                confirmed: true,
+                item_count: itemIds.length
+            });
+        }
+
+        logFromRequest(req, logLevels.INFO, `Confirmed slip print for ${itemIds.length} item(s) in auction ${auctionId}`);
+        return res.json({
+            message: `Updated print status for ${itemIds.length} item(s)`,
+            updated_count: itemIds.length,
+            printed_at: printStamp
+        });
+    } catch (error) {
+        logFromRequest(req, logLevels.ERROR, `Slip print confirmation failed for auction ${auctionId}: ${error.message}`);
+        return res.status(500).json({ error: "Failed to confirm slip print" });
+    }
+});
+
+//--------------------------------------------------------------------------
+// POST /auctions/:auctionId/items/reset-slip-print
+// API to clear slip print tracking (last_print) for all items in an auction
+//--------------------------------------------------------------------------
+
+app.post('/auctions/:auctionId/items/reset-slip-print', authenticateRole("admin"), checkAuctionState(allowedStatuses), async (req, res) => {
+    const auctionId = Number(req.params.auctionId);
+    if (!auctionId) {
+        return res.status(400).json({ error: "Invalid auction id" });
+    }
+
+    try {
+        const info = db.run(
+            `UPDATE items
+             SET last_print = NULL
+             WHERE auction_id = ?`,
+            [auctionId]
+        );
+        const clearedCount = Number(info?.changes || 0);
+
+        audit(getAuditActor(req), 'reset slip print tracking', 'auction', auctionId, {
+            auction_id: auctionId,
+            cleared_count: clearedCount
+        });
+        logFromRequest(req, logLevels.INFO, `Reset slip print tracking for auction ${auctionId}: ${clearedCount} item(s)`);
+
+        return res.json({
+            message: `Cleared slip print tracking for ${clearedCount} item(s)`,
+            updated_count: clearedCount
+        });
+    } catch (error) {
+        logFromRequest(req, logLevels.ERROR, `Reset slip print tracking failed for auction ${auctionId}: ${error.message}`);
+        return res.status(500).json({ error: "Failed to reset slip print tracking" });
+    }
+});
+
 //--------------------------------------------------------------------------
 // POST /export-csv
 // API to export all items from the selected auction to CSV
@@ -1206,7 +1571,7 @@ app.post('/rotate-photo', authenticateRole("admin"), async (req, res) => {
             fs.renameSync(previewPath + '.tmp', previewPath);
 
             // Update mod_date after rotation
-            db.run(`UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M', 'now') WHERE id = ?`, [id], function (err) {
+            db.run(`UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now') WHERE id = ?`, [id], function (err) {
                 if (err) {
                     logFromRequest(req, logLevels.ERROR, `Rotate: Failed to update mod_date:` + err.message);
 

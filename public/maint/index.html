@@ -188,8 +188,8 @@
       </details>
 
       <details class="group">
-        <summary>Powerpoint Template Editor</summary>
-        <button onclick="showConfigEditor()">Edit PPT Generator Config</button>
+        <summary>Generator Config Editor</summary>
+        <button onclick="showConfigEditor()">Edit Output Generator Config</button>
 
         <section id="config-editor" style="display: none;">
           <h2>Edit Configuration</h2>
@@ -197,6 +197,7 @@
           <select id="config-select" onchange="showConfigEditor()">
             <option value="pptx">Slide Config (pptxConfig.json)</option>
             <option value="card">Card Config (cardConfig.json)</option>
+            <option value="slip">Item Slip Config (slipConfig.json)</option>
           </select>
           <textarea id="config-json" rows="20" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
           <p id="config-error" style="color: red;"></p>

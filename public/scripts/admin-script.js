@@ -16,6 +16,9 @@ document.addEventListener("DOMContentLoaded", function () {
     const exportCSVButton = document.getElementById("export-csv");
     const generatePPTButton = document.getElementById("generate-ppt");
     const generateCardsButton = document.getElementById("generate-cards");
+    const printAllSlipsButton = document.getElementById("print-all-slips");
+    const printNeedsPrintSlipsButton = document.getElementById("print-needs-print-slips");
+    const resetSlipPrintTrackingButton = document.getElementById("reset-slip-print-tracking");
     const addSection = document.getElementById("add-section");
     const addForm = document.getElementById("add-form");
     const cancelAddButton = document.getElementById("cancel-add");
@@ -45,9 +48,314 @@ document.addEventListener("DOMContentLoaded", function () {
     // controls whether to show bidder & amount columns
     const showBidStates = ['live', 'settlement', 'archived'];
 
-    const fmtPrice = v => `${currencySymbol}${Number(v).toFixed(2)}`;
+    const fmtPrice = (a, v) => a ? `${currencySymbol}${Number(v).toFixed(2)}` : '';
 
     const API = "/api"
+
+    function parseDbDateTime(value) {
+        if (!value || typeof value !== "string") return null;
+        const match = value.trim().match(/^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/);
+        if (!match) return null;
+        const [, dd, mm, yyyy, hh, min, sec] = match;
+        const parsed = new Date(
+            Number(yyyy),
+            Number(mm) - 1,
+            Number(dd),
+            Number(hh),
+            Number(min),
+            sec ? Number(sec) : 0
+        );
+        const ts = parsed.getTime();
+        return Number.isFinite(ts) ? ts : null;
+    }
+
+    function getPrintStatus(modDate, lastPrint) {
+        const lastPrintTs = parseDbDateTime(lastPrint);
+        if (!lastPrintTs) return "unprinted";
+
+        const modTs = parseDbDateTime(modDate);
+        if (!modTs) return "printed";
+        return modTs > lastPrintTs ? "stale" : "printed";
+    }
+
+    function renderPrintButton(itemId, printStatus) {
+        const statusClass = printStatus === "printed"
+            ? "print-slip-button--printed"
+            : (printStatus === "stale" ? "print-slip-button--stale" : "");
+        const statusHint = printStatus === "printed"
+            ? "Slip print is up to date"
+            : (printStatus === "stale" ? "Slip may be out of date" : "Not printed yet");
+        return `
+            <button class="print-slip-button ${statusClass}" data-id="${itemId}" title="Print item slip (${statusHint})" aria-label="Print item slip">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M7 3h10v4H7zM7 17h10v4H7zM7 12h10v4H7z"></path>
+                    <path d="M4 8h16a2 2 0 0 1 2 2v5h-3v-3H5v3H2v-5a2 2 0 0 1 2-2z"></path>
+                </svg>
+            </button>
+        `;
+    }
+
+    function openPdfBlobForPrinting(pdfBlob, confirmationPrompt) {
+        return new Promise((resolve) => {
+            const pdfUrl = URL.createObjectURL(pdfBlob);
+            const iframe = document.createElement("iframe");
+            iframe.style.position = "fixed";
+            iframe.style.width = "0";
+            iframe.style.height = "0";
+            iframe.style.border = "0";
+            iframe.style.opacity = "0";
+            iframe.style.pointerEvents = "none";
+
+            let isCleaned = false;
+            let isSettled = false;
+            const finish = (value) => {
+                if (isSettled) return;
+                isSettled = true;
+                resolve(value);
+            };
+            const askForConfirmation = async () => {
+                if (isSettled) return;
+                try {
+                    if (window.DayPilot?.Modal?.confirm) {
+                        const modal = await DayPilot.Modal.confirm(
+                            confirmationPrompt || "Did the print complete successfully?"
+                        );
+                        finish(!modal?.canceled);
+                        return;
+                    }
+                } catch (_) {
+                    // fallback to native confirm
+                }
+                const confirmed = window.confirm(confirmationPrompt || "Did the print complete successfully?");
+                finish(confirmed);
+            };
+            const cleanup = () => {
+                if (isCleaned) return;
+                isCleaned = true;
+                URL.revokeObjectURL(pdfUrl);
+                iframe.remove();
+            };
+
+            iframe.onload = () => {
+                setTimeout(() => {
+                    try {
+                        const frameWindow = iframe.contentWindow;
+                        if (!frameWindow) {
+                            throw new Error("Unable to access print frame");
+                        }
+
+                        let printedOrClosed = false;
+                        const onDialogClosed = () => {
+                            if (printedOrClosed || isSettled) return;
+                            printedOrClosed = true;
+                            removeHandlers();
+                            setTimeout(() => {
+                                void askForConfirmation();
+                            }, 120);
+                        };
+
+                        const removeHandlers = () => {
+                            window.removeEventListener("focus", onDialogClosed);
+                        };
+
+                        window.addEventListener("focus", onDialogClosed, { once: true });
+
+                        frameWindow.focus();
+                        frameWindow.print();
+
+                        // Fallback: if no focus-return signal arrives, ask anyway.
+                        setTimeout(() => {
+                            removeHandlers();
+                            onDialogClosed();
+                        }, 120000);
+                    } catch (err) {
+                        window.open(pdfUrl, "_blank", "noopener,noreferrer");
+                        showMessage("Auto print blocked. Opened the PDF in a new tab. Print status was not updated.", "info");
+                        finish(false);
+                    } finally {
+                        setTimeout(cleanup, 15000);
+                    }
+                }, 150);
+            };
+
+            iframe.src = pdfUrl;
+            document.body.appendChild(iframe);
+            setTimeout(() => {
+                if (!isSettled) {
+                    finish(false);
+                    cleanup();
+                }
+            }, 120000);
+        });
+    }
+
+    async function fetchSlipPdfBlob(url, defaultMessage) {
+        const token = localStorage.getItem("token");
+        if (!token) {
+            logout();
+            throw new Error("Not authenticated");
+        }
+
+        const response = await fetch(url, {
+            headers: { Authorization: token }
+        });
+
+        if (!response.ok) {
+            let message = defaultMessage;
+            try {
+                const data = await response.json();
+                message = data.error || message;
+            } catch (parseErr) {
+                // keep fallback message when response is not JSON
+            }
+            const err = new Error(message);
+            err.status = response.status;
+            throw err;
+        }
+
+        const itemIdsHeader = response.headers.get("x-slip-item-ids") || "";
+        const itemIds = itemIdsHeader
+            .split(",")
+            .map((id) => Number(id))
+            .filter((id) => Number.isInteger(id) && id > 0);
+        const blob = await response.blob();
+        return { blob, itemIds };
+    }
+
+    async function confirmSlipPrinted(itemIds) {
+        const token = localStorage.getItem("token");
+        const auctionId = Number(selectedAuctionId);
+        if (!token || !auctionId) {
+            logout();
+            throw new Error("Not authenticated");
+        }
+
+        if (!Array.isArray(itemIds) || itemIds.length === 0) {
+            throw new Error("No printed item ids returned by server");
+        }
+
+        const response = await fetch(`${API}/auctions/${auctionId}/items/confirm-slip-print`, {
+            method: "POST",
+            headers: {
+                Authorization: token,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ item_ids: itemIds })
+        });
+
+        if (!response.ok) {
+            let message = "Failed to confirm print";
+            try {
+                const data = await response.json();
+                message = data.error || message;
+            } catch (parseErr) {
+                // keep fallback message when response is not JSON
+            }
+            throw new Error(message);
+        }
+    }
+
+    async function printItemSlip(itemId) {
+        const auctionId = Number(selectedAuctionId);
+        if (!auctionId || !itemId) return;
+
+        try {
+            const { blob, itemIds } = await fetchSlipPdfBlob(
+                `${API}/auctions/${auctionId}/items/${itemId}/print-slip`,
+                "Failed to generate slip"
+            );
+            const confirmed = await openPdfBlobForPrinting(
+                blob,
+                "Did the item slip print successfully?"
+            );
+            if (!confirmed) {
+                showMessage("Print not confirmed. Slip print status was not updated.", "info");
+                return;
+            }
+
+            const idsToConfirm = itemIds.length > 0 ? itemIds : [itemId];
+            await confirmSlipPrinted(idsToConfirm);
+            await loadItems();
+        } catch (error) {
+            showMessage("Print failed: " + error.message, "error");
+        }
+    }
+
+    async function printAuctionSlips(scope) {
+        const auctionId = Number(selectedAuctionId);
+        if (!auctionId) {
+            showMessage("Please select an auction first", "error");
+            return;
+        }
+
+        try {
+            const { blob, itemIds } = await fetchSlipPdfBlob(
+                `${API}/auctions/${auctionId}/items/print-slip?scope=${encodeURIComponent(scope)}`,
+                "Failed to generate slips"
+            );
+            const confirmed = await openPdfBlobForPrinting(
+                blob,
+                "Did all item slips print successfully?"
+            );
+            if (!confirmed) {
+                showMessage("Print not confirmed. Slip print status was not updated.", "info");
+                return;
+            }
+
+            await confirmSlipPrinted(itemIds);
+            await loadItems();
+        } catch (error) {
+            const level = error.status === 400 ? "info" : "error";
+            showMessage("Print failed: " + error.message, level);
+        }
+    }
+
+    async function resetSlipPrintTracking() {
+        const auctionId = Number(selectedAuctionId);
+        if (!auctionId) {
+            showMessage("Please select an auction first", "error");
+            return;
+        }
+
+        const token = localStorage.getItem("token");
+        if (!token) return logout();
+
+        try {
+            const modal = await DayPilot.Modal.confirm(
+                "Clear slip print tracking for all items in this auction?"
+            );
+            if (modal?.canceled) {
+                showMessage("Reset cancelled", "info");
+                return;
+            }
+
+            const response = await fetch(`${API}/auctions/${auctionId}/items/reset-slip-print`, {
+                method: "POST",
+                headers: {
+                    Authorization: token,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({})
+            });
+
+            if (!response.ok) {
+                let message = "Failed to reset slip print tracking";
+                try {
+                    const data = await response.json();
+                    message = data.error || message;
+                } catch (parseErr) {
+                    // keep fallback message when response is not JSON
+                }
+                throw new Error(message);
+            }
+
+            const data = await response.json();
+            showMessage(data.message || "Slip print tracking reset", "success");
+            await loadItems();
+        } catch (error) {
+            showMessage("Reset failed: " + error.message, "error");
+        }
+    }
 
     function setAdminUserMenu(username) {
         if (!username) return;
@@ -443,6 +751,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 const contributor = normalizeString(item.contributor);
                 const artist = normalizeString(item.artist);
                 const notes = normalizeString(item.notes);
+                const printStatus = getPrintStatus(item.text_mod_date, item.last_print);
 
                 const escapedDescription = escapeHtml(description);
                 const escapedContributor = escapeHtml(contributor);
@@ -457,6 +766,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     date: item.date,
                     notes,
                     mod_date: item.mod_date,
+                    last_print: item.last_print,
                     item_number: item.item_number,
                     auction_id: item.auction_id
                 });
@@ -465,11 +775,14 @@ document.addEventListener("DOMContentLoaded", function () {
                 const imgSrc = item.photo ? `${API}/uploads/preview_${item.photo}${modToken}` : '';
 
                 const row = document.createElement("tr");
+                const hasBid = item.hammer_price != null || item.paddle_no != null;
 
+            
 
                 /* NEW — dataset hooks for the finalize‑lot add‑on */
                 row.dataset.itemId = item.id;                         // used by add‑on
-                row.dataset.sold = item.hammer_price ? "1" : "0";   // 1 = already sold
+                row.dataset.sold = hasBid ? "1" : "0";               // 1 = already sold/has bid
+                row.dataset.hasBid = hasBid ? "1" : "0";
                 row.dataset.item_number = item.item_number;
                 row.dataset.description = item.description;
                 row.innerHTML = `
@@ -483,12 +796,14 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 ${showBidCols ? `
                     <td>${item.paddle_no ?? ''}</td>
-                    <td>${fmtPrice(item.hammer_price ?? '')}</td>` : ''
+                    <td>${fmtPrice(hasBid, item.hammer_price ?? '')}</td>` : ''
                     }
                 <td>
-                    <button onclick="editItem('${encodedItem}')">Edit</button>
-                    <button onclick="showItemHistory(${item.id})">History</button>
-                    <button class="move-toggle" data-id="${item.id}">Move</button>
+            
+                    ${renderPrintButton(item.id, printStatus)}
+                    <button onclick="showItemHistory(${item.id})" title="Display item history">History</button>
+                    <button onclick="editItem('${encodedItem}')" data-default-title="Edit item" title="${hasBid ? 'Item has bids and cannot be edited' : 'Edit item'}" ${hasBid ? 'disabled' : ''}>Edit</button>
+                    <button class="move-toggle" data-id="${item.id}" data-default-title="Move item within auction or to a different auction" title="${hasBid ? 'Item has bids and cannot be moved' : 'Move item within auction or to a different auction'}" ${hasBid ? 'disabled' : ''} >Move</button>
                     <div class="move-panel" data-id="${item.id}" style="display:none; margin-top: 5px;">
                         <select class="move-auction-select" data-id="${item.id}">
                         <option value="">Move to auction...</option>
@@ -533,6 +848,14 @@ document.addEventListener("DOMContentLoaded", function () {
             button.addEventListener("click", function () {
                 const panel = this.nextElementSibling;
                 panel.style.display = panel.style.display === "none" ? "block" : "none";
+            });
+        });
+
+        document.querySelectorAll(".print-slip-button").forEach((button) => {
+            button.addEventListener("click", async function () {
+                const itemId = parseInt(this.dataset.id, 10);
+                if (!itemId || isNaN(itemId)) return;
+                await printItemSlip(itemId);
             });
         });
 
@@ -865,6 +1188,18 @@ document.addEventListener("DOMContentLoaded", function () {
         } catch (err) {
             showMessage(`Failed to generate cards: ${err}`, "error");
         }
+    });
+
+    printAllSlipsButton.addEventListener("click", async function () {
+        await printAuctionSlips("all");
+    });
+
+    printNeedsPrintSlipsButton.addEventListener("click", async function () {
+        await printAuctionSlips("needs-print");
+    });
+
+    resetSlipPrintTrackingButton.addEventListener("click", async function () {
+        await resetSlipPrintTracking();
     });
 
 

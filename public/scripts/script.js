@@ -229,8 +229,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
     function resizeImage(file, callback) {
         try {
-        const maxWidth = 2000;
-        const maxHeight = 2000;
+        const maxWidth = 2500;
+        const maxHeight = 2500;
         const reader = new FileReader();
         reader.onload = function (event) {
             const img = new Image();

@@ -118,6 +118,10 @@ Core auction + item management (mostly admin-facing):
 - `POST /auctions/:auctionId/items/:id/update` — update item (admin; setup/locked only)
 - `POST /auctions/:auctionId/items/:id/move-auction/:targetAuctionId` — move item to another auction (admin; setup/locked only)
 - `POST /auctions/:auctionId/items/:id/move-after/:after_id` — reorder items (admin; setup/locked only)
+- `GET /auctions/:auctionId/items/:id/print-slip` — generate one-item PDF slip (admin)
+- `GET /auctions/:auctionId/items/print-slip?scope=all|needs-print` — generate batch multi-page slip PDF (admin)
+- `POST /auctions/:auctionId/items/confirm-slip-print` — confirm successful print and update `last_print` (admin)
+- `POST /auctions/:auctionId/items/reset-slip-print` — clear `last_print` for all items in an auction (admin)
 - `DELETE /items/:id` — delete item (admin; setup/locked only)
 - `POST /rotate-photo` — rotate both full + preview image (admin)
 - `POST /generate-pptx` / `POST /generate-cards` / `POST /export-csv` — admin exports
@@ -170,7 +174,7 @@ Primary tables (see `backend/db.js`):
 - `items`
   - `auction_id`, `item_number`
   - `description`, `contributor`, `artist`, `notes`
-  - `photo`, `date`, `mod_date`
+  - `photo`, `date`, `mod_date`, `last_print`
   - `winning_bidder_id`, `hammer_price`
   - `test_item`, `test_bid` (test/training helpers)
 - `bidders`
@@ -506,7 +510,31 @@ Data flows:
 - Reads `items` (and bidder paddle numbers for export).
 - Writes temp files to `OUTPUT_DIR` (`auction_data.csv`, `auction_presentation.pptx`, `auction_cards.pptx`).
 
-#### 2.13 Change auction state (admin)
+#### 2.13 Print item slip (admin, single + batch)
+
+Flow:
+1. Admin clicks the print icon for an item row.
+2. Frontend calls the slip endpoint and receives an inline PDF.
+3. Browser opens the print dialog automatically (hidden iframe print).
+4. After the print dialog closes, frontend asks for operator confirmation (DayPilot modal).
+5. Only if confirmed does frontend call print confirmation endpoint to write `items.last_print`.
+6. Frontend refreshes the table to update print icon colour state.
+
+Backend endpoints:
+- `GET /api/auctions/:auctionId/items/:id/print-slip` (requires admin JWT)
+- `GET /api/auctions/:auctionId/items/print-slip?scope=all|needs-print` (requires admin JWT)
+- `POST /api/auctions/:auctionId/items/confirm-slip-print` (requires admin JWT)
+  - Request: `{ item_ids: [<id>, ...] }`
+- `POST /api/auctions/:auctionId/items/reset-slip-print` (requires admin JWT)
+
+Data flows:
+- Reads one or many `items` rows for the selected auction.
+- Reads and validates `slipConfig.json` from `PPTX_CONFIG_DIR`.
+- Generates a PDF (text-only) using configured paper size, orientation, and field layout.
+- On confirmation call, writes `items.last_print` to current timestamp for confirmed items.
+- Inserts `audit_log` entries for confirmed print actions (`print slip`, `print slip batch`) and reset action (`reset slip print tracking`).
+
+#### 2.14 Change auction state (admin)
 
 Flow:
 1. Admin uses the “State” dropdown.
@@ -522,7 +550,7 @@ Data flows:
 - Writes `auctions.status`.
 - Inserts `audit_log` entry.
 
-#### 2.14 Record bids during live auction (“Record Bid” / “Undo”)
+#### 2.15 Record bids during live auction (“Record Bid” / “Undo”)
 
 Record bid flow:
 1. When auction status is `live` (or `settlement`), the add-on injects “Record Bid” buttons in the table.
@@ -894,7 +922,7 @@ Data flows:
 #### 6.8 PPTX configuration editor + resources management
 
 Flow:
-- Load/edit/save pptx/card JSON templates used by `/generate-pptx` and `/generate-cards`.
+- Load/edit/save pptx/card/slip JSON configs used by `/generate-pptx`, `/generate-cards`, and item slip printing.
 - Upload/list/delete resource files (logos, template assets).
 
 Backend endpoints:
@@ -909,7 +937,10 @@ Data flows:
 - Filesystem:
   - Reads/writes JSON files under `PPTX_CONFIG_DIR`.
   - Reads/writes resource files under `CONFIG_IMG_DIR`.
-- Save endpoint performs JSON path validation and returns structured errors for UI display.
+- Save endpoint performs:
+  - Image path validation for `pptxConfig.json` and `cardConfig.json`
+  - Slip schema validation for `slipConfig.json`
+  - Structured validation errors for UI display.
 
 #### 6.9 Audit log viewer + export
 
@@ -1006,6 +1037,10 @@ Items:
 - `DELETE /api/items/:id` (admin)
 - `POST /api/auctions/:auctionId/items/:id/move-auction/:targetAuctionId` (admin)
 - `POST /api/auctions/:auctionId/items/:id/move-after/:after_id` (admin)
+- `GET /api/auctions/:auctionId/items/:id/print-slip` (admin)
+- `GET /api/auctions/:auctionId/items/print-slip?scope=all|needs-print` (admin)
+- `POST /api/auctions/:auctionId/items/confirm-slip-print` (admin)
+- `POST /api/auctions/:auctionId/items/reset-slip-print` (admin)
 - `POST /api/rotate-photo` (admin)
 
 Exports:
@@ -1042,7 +1077,7 @@ Maintenance (all require maintenance role and are prefixed `/api/maintenance/*`)
 - Integrity & cleanup: `check-integrity`, `photo-report`, `orphan-photos`, `cleanup-orphan-photos`
 - Auctions: `auctions/list`, `auctions/create`, `auctions/delete`, `reset`, `auctions/set-admin-state-permission`
 - Generators: `generate-test-data`, `generate-bids`, `delete-test-bids`
-- Config/resources: `get-pptx-config/:name`, `save-pptx-config/:name`, `pptx-config/reset`, `resources`, `resources/upload`, `resources/delete`
+- Config/resources: `get-pptx-config/:name`, `save-pptx-config/:name`, `pptx-config/reset`, `resources`, `resources/upload`, `resources/delete` (`:name` supports `pptx`, `card`, `slip`)
 - Users: `users`, `users/:username/roles`, `users/:username/password`
 - Ops: `change-password`, `restart`, `logs`
 - Audit export: `audit-log/export`

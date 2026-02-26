@@ -1,6 +1,6 @@
 {
     "name": "convention-auction-backend",
-    "version": "2.1.0",
+    "version": "2.2.0-dev03",
     "description": "Backend for Convention Auction Submission Management",
     "main": "backend.js",
     "scripts": {
@@ -23,6 +23,7 @@
         "multer": "^2.0.1",
         "node-cache": "^5.1.2",
         "path": "^0.12.7",
+        "pdfkit": "^0.15.2",
         "pptxgenjs": "^3.12.0",
         "sharp": "^0.33.2",
         "strftime": "^0.10.0",
