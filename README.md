@@ -41,10 +41,10 @@ This software provides a single platform which automates the process from item s
 
 ## Installation
 
-- For general server setup see docs/installation.md
-- For payment setup see docs/sumup_setup.md
-- For Powerpoint & Item slip template setup see docs/pptx_template_editing.md
+- For general server setup see docs/installation.md or [html version](https://coastie-uk.github.io/convention-auction/installation.html)
+- For payment setup see docs/sumup_setup.md or [html version](https://coastie-uk.github.io/convention-auction/sumup.html)
+- For Powerpoint & Item slip template setup see docs/pptx_template_editing.md or [html version](https://coastie-uk.github.io/convention-auction/pptx_guide.html)
 
 ## Quick-start
 
-see docs/quickstart.md
+see docs/quickstart.md or [html version](https://coastie-uk.github.io/convention-auction/quickstart.html)
