@@ -10,6 +10,22 @@
     #status.stale { color: darkorange; }
     tr[data-paddle] { transition: background 0.2s; }
     tr.unsold-row {   color: #777; }
+    .refresh-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 12px;
+    }
+    #btnRefresh {
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    #refreshCountdown {
+      color: #555;
+      font-size: 0.95rem;
+      white-space: nowrap;
+      min-width: 9ch;
+    }
   </style>
 </head>
 <body>
@@ -23,6 +39,10 @@
     </label>
     <button id="btnApply">Go</button>
     <span id="status" class="ok">Connected</span>
+    <span class="refresh-controls">
+      <button id="btnRefresh" type="button">Refresh now</button>
+      <span id="refreshCountdown" aria-live="polite">Next refresh: --</span>
+    </span>
 
     <label style="margin-left:8px;">
       <input type="checkbox" id="showUnsold" checked>

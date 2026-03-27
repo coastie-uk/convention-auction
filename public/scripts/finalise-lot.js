@@ -19,6 +19,7 @@ const API = "/api"
 
     // states in which the edit controls should be locked out
     const lockEditStates = ['live', 'settlement', 'archived'];
+    const lockNewAdminItemStates = ['settlement', 'archived'];
 
     // states in which we should hide the bid  control buttons
     const hideFinaliseStates = ['setup', 'locked', 'archived'];
@@ -93,6 +94,23 @@ const API = "/api"
     });
   }
 
+  function findNextFinalizeButton(itemId, rowEl) {
+    const currentRow = TABLE_BODY.querySelector(`tr[data-item-id="${itemId}"]`) || rowEl;
+    if (!currentRow?.isConnected) {
+      return null;
+    }
+
+    let nextRow = currentRow.nextElementSibling;
+    while (nextRow) {
+      const nextBtn = nextRow.querySelector('.btn-finalize');
+      if (nextBtn) return nextBtn;
+      nextRow = nextRow.nextElementSibling;
+    }
+
+    // Only wrap if we still have a stable anchor for the current row in the live DOM.
+    return TABLE_BODY.querySelector('.btn-finalize');
+  }
+
   // --------------- modal & finalize --------------------------
   function openFinalizeModal(itemId, itemNo, itemDesc, rowEl) {
 
@@ -155,14 +173,8 @@ const API = "/api"
           showMessage(`All bids recorded - Auction now in settlement mode`, "success");
         } else {
 
-        /* move focus to next Finalize button */
-            let nextRow = rowEl.nextElementSibling;
-            while (nextRow && !nextRow.querySelector('.btn-finalize')) {
-              nextRow = nextRow.nextElementSibling;
-            }
-            const nextBtn = nextRow
-              ? nextRow.querySelector('.btn-finalize')
-              : document.querySelector('.btn-finalize');  // wrap-around if at end
+        /* move focus to the next visible finalize button in the current table DOM */
+            const nextBtn = findNextFinalizeButton(itemId, rowEl);
             nextBtn?.focus();
       }
 
@@ -227,11 +239,11 @@ const API = "/api"
   function lockEditingUI() {
     const addBtn = document.getElementById('add-item');
  //   const isLive = auctionStatus === 'live';
-
+    
     const isLive = lockEditStates.includes(auctionStatus);
 
-    // Toggle main “Create New Item” button
-    if (isLive) {
+    // Toggle main “Create New Item” button - Allow in live but not settlement/archived, per feedback
+    if (lockNewAdminItemStates.includes(auctionStatus)) {
       addBtn?.setAttribute('disabled', '');
       addBtn?.classList.add('disabled');
     } else {
@@ -243,9 +255,10 @@ const API = "/api"
     TABLE_BODY.querySelectorAll('tr').forEach(tr => {
       const editBtn = tr.querySelector('button[onclick^="editItem"]');
       const moveBtn = tr.querySelector('.move-toggle');
+      const copyBtn = tr.querySelector('.duplicate-item-button');
       const printBtn = tr.querySelector('button[onclick^="printItem"]');
       const hasBid = tr.dataset.sold === '1';
-      [editBtn, moveBtn].forEach(btn => {
+      [editBtn, moveBtn, copyBtn].forEach(btn => {
         if (!btn) return;
         const defaultTitle = btn.dataset.defaultTitle || btn.title || '';
         const isMoveBtn = btn.classList.contains('move-toggle');

@@ -3,6 +3,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const loginSection = document.getElementById("login-section");
     const adminSection = document.getElementById("admin-section");
     const editSection = document.getElementById("edit-section");
+    const addSection = document.getElementById("add-section");
+    const exportSection = document.getElementById("export-section");
     const loginButton = document.getElementById("login-button");
     const logoutButton = document.getElementById("logout");
     const changePasswordButton = document.getElementById("change-own-password-admin");
@@ -13,13 +15,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const deleteButton = document.getElementById("delete-item");
     const cancelEditButton = document.getElementById("cancel-edit");
     const editPhotoInput = document.getElementById("edit-photo");
-    const exportCSVButton = document.getElementById("export-csv");
-    const generatePPTButton = document.getElementById("generate-ppt");
-    const generateCardsButton = document.getElementById("generate-cards");
-    const printAllSlipsButton = document.getElementById("print-all-slips");
-    const printNeedsPrintSlipsButton = document.getElementById("print-needs-print-slips");
-    const resetSlipPrintTrackingButton = document.getElementById("reset-slip-print-tracking");
-    const addSection = document.getElementById("add-section");
+    const openExportPanelButton = document.getElementById("open-export-panel");
     const addForm = document.getElementById("add-form");
     const cancelAddButton = document.getElementById("cancel-add");
     const addPhotoInput = document.getElementById("add-photo");
@@ -31,7 +27,25 @@ document.addEventListener("DOMContentLoaded", function () {
     const selectAuctionState = document.getElementById('auctionState');
     const saveEditButton = document.getElementById("save-changes");
     const saveNewButton = document.getElementById("save-new");
+    const closeExportPanelButton = document.getElementById("close-export-panel");
+    const cancelExportPanelButton = document.getElementById("cancel-export-panel");
+    const exportForm = document.getElementById("export-form");
+    const exportPanelAuction = document.getElementById("export-panel-auction");
+    const exportRangeControls = document.getElementById("export-range-controls");
+    const exportItemRangeInput = document.getElementById("export-item-range");
+    const exportNeedsAttentionTitle = document.getElementById("export-needs-attention-title");
+    const exportNeedsAttentionHelp = document.getElementById("export-needs-attention-help");
+    const exportJobStatus = document.getElementById("export-job-status");
+    const exportJobSummary = document.getElementById("export-job-summary");
+    const exportJobDetail = document.getElementById("export-job-detail");
+    const cancelExportJobButton = document.getElementById("cancel-export-job");
+    const downloadExportJobButton = document.getElementById("download-export-job");
+    const runExportButton = document.getElementById("run-export");
+    const resetExportTrackingButton = document.getElementById("reset-export-tracking");
+    const exportTypeInputs = Array.from(document.querySelectorAll('input[name="export-type"]'));
+    const exportSelectionModeInputs = Array.from(document.querySelectorAll('input[name="export-selection-mode"]'));
     const statusOptions = ["setup", "locked", "live", "settlement", "archived"];
+    const managedSections = [loginSection, adminSection, editSection, addSection, exportSection].filter(Boolean);
 
     let currentEditId = null;
     let modifiedImages = {};
@@ -41,6 +55,10 @@ document.addEventListener("DOMContentLoaded", function () {
     let selectedOrder = sessionStorage.getItem("item_sort_order") || "asc";
     let selectedSort = sessionStorage.getItem("item_sort_field") || "item_number";
     let currencySymbol = localStorage.getItem("currencySymbol") || "£";
+    let pptxStatusPollTimer = null;
+    let latestPptxJob = null;
+    let autoDownloadJobId = null;
+    const downloadedPptxJobs = new Set();
 
     document.getElementById("sort-field").value = selectedSort;
     document.getElementById("sort-order").value = selectedOrder;
@@ -50,7 +68,30 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const fmtPrice = (a, v) => a ? `${currencySymbol}${Number(v).toFixed(2)}` : '';
 
-    const API = "/api"
+    const API = "/api";
+
+    function showSection(sectionId) {
+        managedSections.forEach((section) => {
+            if (!section) return;
+            section.style.display = section.id === sectionId ? "block" : "none";
+        });
+    }
+
+    function getTokenOrLogout() {
+        const token = localStorage.getItem("token");
+        if (!token) {
+            logout();
+            return null;
+        }
+        return token;
+    }
+
+    function formatIsoDateTime(value) {
+        if (!value) return "";
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return value;
+        return parsed.toLocaleString();
+    }
 
     function parseDbDateTime(value) {
         if (!value || typeof value !== "string") return null;
@@ -281,7 +322,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }
 
-    async function printAuctionSlips(scope) {
+    async function printAuctionSlips(selectionMode, itemRange = "") {
         const auctionId = Number(selectedAuctionId);
         if (!auctionId) {
             showMessage("Please select an auction first", "error");
@@ -289,8 +330,13 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         try {
+            const params = new URLSearchParams();
+            params.set("selection_mode", selectionMode);
+            if (selectionMode === "range") {
+                params.set("item_range", itemRange);
+            }
             const { blob, itemIds } = await fetchSlipPdfBlob(
-                `${API}/auctions/${auctionId}/items/print-slip?scope=${encodeURIComponent(scope)}`,
+                `${API}/auctions/${auctionId}/items/print-slip?${params.toString()}`,
                 "Failed to generate slips"
             );
             const confirmed = await openPdfBlobForPrinting(
@@ -310,10 +356,29 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }
 
-    async function resetSlipPrintTracking() {
+    function getExportTypeDisplayText(exportType) {
+        switch (exportType) {
+            case "slides":
+                return "slide export";
+            case "cards":
+                return "card export";
+            case "slips":
+                return "slip print";
+            case "csv":
+                return "CSV export";
+            default:
+                return "export";
+        }
+    }
+
+    async function resetExportTracking(exportType) {
         const auctionId = Number(selectedAuctionId);
         if (!auctionId) {
             showMessage("Please select an auction first", "error");
+            return;
+        }
+        if (!["slides", "cards", "slips"].includes(exportType)) {
+            showMessage("Tracking reset is only available for slides, item cards, and item slips", "info");
             return;
         }
 
@@ -321,25 +386,26 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!token) return logout();
 
         try {
+            const exportLabel = getExportTypeDisplayText(exportType);
             const modal = await DayPilot.Modal.confirm(
-                "Clear slip print tracking for all items in this auction?"
+                `Clear ${exportLabel} tracking for all items in this auction?`
             );
             if (modal?.canceled) {
                 showMessage("Reset cancelled", "info");
                 return;
             }
 
-            const response = await fetch(`${API}/auctions/${auctionId}/items/reset-slip-print`, {
+            const response = await fetch(`${API}/auctions/${auctionId}/items/reset-export-tracking`, {
                 method: "POST",
                 headers: {
                     Authorization: token,
                     "Content-Type": "application/json"
                 },
-                body: JSON.stringify({})
+                body: JSON.stringify({ export_type: exportType })
             });
 
             if (!response.ok) {
-                let message = "Failed to reset slip print tracking";
+                let message = `Failed to reset ${exportLabel} tracking`;
                 try {
                     const data = await response.json();
                     message = data.error || message;
@@ -350,11 +416,346 @@ document.addEventListener("DOMContentLoaded", function () {
             }
 
             const data = await response.json();
-            showMessage(data.message || "Slip print tracking reset", "success");
+            showMessage(data.message || `${exportLabel} tracking reset`, "success");
             await loadItems();
         } catch (error) {
             showMessage("Reset failed: " + error.message, "error");
         }
+    }
+
+    function getSelectedAuctionSummary() {
+        const selectedAuction = auctions.find((auction) => auction.id === selectedAuctionId);
+        if (!selectedAuction) return "Select an auction before exporting.";
+        return `${selectedAuction.full_name} (${selectedAuction.status})`;
+    }
+
+    function getSelectedExportType() {
+        return exportTypeInputs.find((input) => input.checked)?.value || "slides";
+    }
+
+    function getSelectedExportSelectionMode() {
+        return exportSelectionModeInputs.find((input) => input.checked)?.value || "all";
+    }
+
+    function updateExportPanelHeader() {
+        exportPanelAuction.textContent = `Auction: ${getSelectedAuctionSummary()}`;
+    }
+
+    function updateExportSelectionUI() {
+        const exportType = getSelectedExportType();
+        let selectionMode = getSelectedExportSelectionMode();
+        const isSlipExport = exportType === "slips";
+        const isCsvExport = exportType === "csv";
+        const activePptxJob = latestPptxJob && ["queued", "running", "cancelling"].includes(latestPptxJob.status)
+            ? latestPptxJob
+            : null;
+
+        if (isCsvExport && selectionMode === "needs-attention") {
+            const allModeInput = exportSelectionModeInputs.find((input) => input.value === "all");
+            if (allModeInput) {
+                allModeInput.checked = true;
+            }
+            selectionMode = "all";
+        }
+        const rangeSelected = selectionMode === "range";
+
+        exportNeedsAttentionTitle.textContent = isSlipExport
+            ? "Unprinted / Out of date items"
+            : "Unexported / Out of date items";
+        exportNeedsAttentionHelp.textContent = isSlipExport
+            ? "Only include slips that have not been printed yet or where the item text changed after the last print."
+            : "Only include items that have not been exported yet or have changed since the last export.";
+
+        const needsAttentionInput = exportSelectionModeInputs.find((input) => input.value === "needs-attention");
+        const needsAttentionChoice = needsAttentionInput?.closest(".export-choice");
+        if (needsAttentionInput) {
+            needsAttentionInput.disabled = isCsvExport;
+        }
+        if (needsAttentionChoice) {
+            needsAttentionChoice.hidden = isCsvExport;
+        }
+
+        exportRangeControls.hidden = !rangeSelected;
+        exportItemRangeInput.disabled = !rangeSelected;
+        if (!rangeSelected) {
+            exportItemRangeInput.value = "";
+        }
+
+        resetExportTrackingButton.hidden = isCsvExport;
+        resetExportTrackingButton.disabled = isCsvExport;
+        resetExportTrackingButton.textContent = `Reset ${getExportTypeDisplayText(exportType)} Tracking`;
+
+        if (activePptxJob && (exportType === "slides" || exportType === "cards")) {
+            runExportButton.disabled = true;
+            runExportButton.textContent = "PPTX Generation In Progress";
+        } else {
+            runExportButton.disabled = false;
+            if (isSlipExport) {
+                runExportButton.textContent = "Generate Slip PDF";
+            } else if (isCsvExport) {
+                runExportButton.textContent = "Download CSV";
+            } else {
+                runExportButton.textContent = "Start Export";
+            }
+        }
+    }
+
+    function renderPptxJobStatus(job) {
+        latestPptxJob = job || null;
+        const hasJob = !!job;
+        exportJobStatus.hidden = !hasJob;
+        if (!hasJob) {
+            updateExportSelectionUI();
+            return;
+        }
+
+        const exportLabel = job.export_type === "cards" ? "Item cards" : "Auction slides";
+        const statusText = job.status || "unknown";
+        const detailParts = [
+            `${exportLabel}`,
+            `${job.item_count || 0} item(s)`,
+            `mode: ${job.selection_mode || "all"}`
+        ];
+        if (job.item_range) {
+            detailParts.push(`range: ${job.item_range}`);
+        }
+        if (job.started_at) {
+            detailParts.push(`started: ${formatIsoDateTime(job.started_at)}`);
+        }
+        if (job.completed_at) {
+            detailParts.push(`finished: ${formatIsoDateTime(job.completed_at)}`);
+        }
+
+        exportJobSummary.textContent = `Latest PPTX job: ${statusText}`;
+        exportJobDetail.textContent = detailParts.join(" | ");
+        cancelExportJobButton.hidden = !["queued", "running", "cancelling"].includes(statusText);
+        downloadExportJobButton.hidden = !(statusText === "completed" && job.download_url);
+        downloadExportJobButton.disabled = !(statusText === "completed" && job.download_url);
+
+        if (job.error) {
+            exportJobSummary.textContent = `Latest PPTX job: ${statusText} (${job.error})`;
+        }
+
+        if (job.status === "completed" && job.download_url && autoDownloadJobId === job.id && !downloadedPptxJobs.has(job.id)) {
+            downloadedPptxJobs.add(job.id);
+            autoDownloadJobId = null;
+            void downloadPptxJob(job, false).catch((error) => {
+                showMessage(`Failed to download export: ${error.message}`, "error");
+            });
+        }
+
+        updateExportSelectionUI();
+    }
+
+    function stopPptxStatusPolling() {
+        if (pptxStatusPollTimer) {
+            clearInterval(pptxStatusPollTimer);
+            pptxStatusPollTimer = null;
+        }
+    }
+
+    async function refreshPptxExportStatus() {
+        const token = getTokenOrLogout();
+        if (!token) return;
+
+        const response = await fetch(`${API}/export-jobs/pptx/status`, {
+            headers: { Authorization: token }
+        });
+
+        if (!response.ok) {
+            throw new Error("Failed to fetch PPTX export status");
+        }
+
+        const data = await response.json();
+        renderPptxJobStatus(data.job || null);
+        if (data.job && ["queued", "running", "cancelling"].includes(data.job.status)) {
+            startPptxStatusPolling();
+        } else {
+            stopPptxStatusPolling();
+        }
+    }
+
+    function startPptxStatusPolling() {
+        if (pptxStatusPollTimer) return;
+        pptxStatusPollTimer = setInterval(() => {
+            void refreshPptxExportStatus().catch((error) => {
+                stopPptxStatusPolling();
+                showMessage(`Failed to refresh export status: ${error.message}`, "error");
+            });
+        }, 2000);
+    }
+
+    async function downloadPptxJob(job, announce = true) {
+        if (!job?.download_url) return;
+        const token = getTokenOrLogout();
+        if (!token) return;
+
+        const response = await fetch(job.download_url, {
+            headers: { Authorization: token }
+        });
+        if (!response.ok) {
+            let message = "Failed to download PPTX export";
+            try {
+                const data = await response.json();
+                message = data.error || message;
+            } catch (parseErr) {
+                // keep fallback message
+            }
+            throw new Error(message);
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = job.filename || (job.export_type === "cards" ? "auction_cards.pptx" : "auction_slides.pptx");
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+
+        if (announce) {
+            showMessage("PPTX export downloaded", "success");
+        }
+    }
+
+    async function cancelPptxExportJob() {
+        const token = getTokenOrLogout();
+        if (!token) return;
+
+        if (!latestPptxJob || !["queued", "running", "cancelling"].includes(latestPptxJob.status)) {
+            showMessage("No PPTX export is currently running", "info");
+            return;
+        }
+
+        const modal = await DayPilot.Modal.confirm("Cancel the current PPTX export?");
+        if (modal?.canceled) {
+            showMessage("Cancel request aborted", "info");
+            return;
+        }
+
+        const response = await fetch(`${API}/export-jobs/pptx/cancel`, {
+            method: "POST",
+            headers: {
+                Authorization: token,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ job_id: latestPptxJob.id })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || "Failed to cancel PPTX export");
+        }
+
+        renderPptxJobStatus(data.job || latestPptxJob);
+        startPptxStatusPolling();
+        showMessage(data.message || "Cancellation requested", "info");
+    }
+
+    function openExportPanel() {
+        if (!selectedAuctionId) {
+            showMessage("Please select an auction first", "error");
+            return;
+        }
+        updateExportPanelHeader();
+        updateExportSelectionUI();
+        showSection("export-section");
+        void refreshPptxExportStatus().catch(() => {
+            renderPptxJobStatus(null);
+        });
+    }
+
+    function closeExportPanel() {
+        stopPptxStatusPolling();
+        showSection("admin-section");
+    }
+
+    function buildExportSelectionPayload() {
+        const selectionMode = getSelectedExportSelectionMode();
+        const itemRange = exportItemRangeInput.value.trim();
+
+        if (selectionMode === "range" && !itemRange) {
+            throw new Error("Enter one or more item numbers or ranges");
+        }
+
+        return {
+            selection_mode: selectionMode,
+            item_range: selectionMode === "range" ? itemRange : undefined
+        };
+    }
+
+    async function startPptxExport(exportType, selectionPayload) {
+        const token = getTokenOrLogout();
+        if (!token) return;
+
+        const endpoint = exportType === "cards" ? "generate-cards" : "generate-pptx";
+        const response = await fetch(`${API}/${endpoint}`, {
+            method: "POST",
+            headers: {
+                Authorization: token,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                auction_id: selectedAuctionId,
+                async: true,
+                ...selectionPayload
+            })
+        });
+
+        const data = await response.json();
+        if (response.status === 409) {
+            renderPptxJobStatus(data.job || latestPptxJob);
+            startPptxStatusPolling();
+            throw new Error(data.error || "A PPTX export is already in progress");
+        }
+        if (!response.ok) {
+            throw new Error(data.error || "Failed to start PPTX export");
+        }
+
+        autoDownloadJobId = data.job?.id || null;
+        renderPptxJobStatus(data.job || null);
+        startPptxStatusPolling();
+        showMessage(data.message || "PPTX export started", "info");
+    }
+
+    async function downloadCsvExport(selectionPayload) {
+        const token = getTokenOrLogout();
+        if (!token) return;
+
+        const response = await fetch(`${API}/export-csv`, {
+            method: "POST",
+            headers: {
+                Authorization: token,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                auction_id: selectedAuctionId,
+                ...selectionPayload
+            })
+        });
+
+        if (!response.ok) {
+            let message = "Failed to export CSV";
+            try {
+                const data = await response.json();
+                message = data.error || message;
+            } catch (parseErr) {
+                // keep fallback message
+            }
+            throw new Error(message);
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `auction_${selectedAuctionId}_items.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+        showMessage("CSV export downloaded", "success");
     }
 
     function setAdminUserMenu(username) {
@@ -457,8 +858,7 @@ document.addEventListener("DOMContentLoaded", function () {
             const data = await response.json();
             if (response.ok) {
                 setAdminUserMenu(data.user?.username || "admin");
-                loginSection.style.display = "none";
-                adminSection.style.display = "block";
+                showSection("admin-section");
                 await loadAuctions();
                 loadItems();
                 startAutoRefresh();
@@ -471,6 +871,8 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     checkToken();
+    updateExportPanelHeader();
+    updateExportSelectionUI();
 
     const auctionSelect = document.getElementById("auction-select");
     const orderSelect = document.getElementById("sort-order");
@@ -514,6 +916,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
         selectedAuctionId = parseInt(auctionSelect.value, 10);
         sessionStorage.setItem("auction_id", selectedAuctionId);
+        updateExportPanelHeader();
 
         if (window.refreshAuctionStatus) {        // get status first
             await window.refreshAuctionStatus();
@@ -562,6 +965,7 @@ document.addEventListener("DOMContentLoaded", function () {
     auctionSelect.addEventListener("change", async () => {
         selectedAuctionId = parseInt(auctionSelect.value, 10);
         sessionStorage.setItem("auction_id", selectedAuctionId);
+        updateExportPanelHeader();
         await window.refreshAuctionStatus();
         checkStatusChange(); //update the auction state control
         loadItems();
@@ -602,8 +1006,7 @@ document.addEventListener("DOMContentLoaded", function () {
             currencySymbol = data.currency || "£";
             localStorage.setItem("currencySymbol", currencySymbol);
             setAdminUserMenu(data.user?.username || username);
-            loginSection.style.display = "none";
-            adminSection.style.display = "block";
+            showSection("admin-section");
 
             loadAuctions();
             loadItems();
@@ -651,8 +1054,78 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
     addItemButton.addEventListener("click", function () {
-        addSection.style.display = "block";
-        adminSection.style.display = "none";
+        showSection("add-section");
+    });
+
+    openExportPanelButton.addEventListener("click", function () {
+        openExportPanel();
+    });
+
+    closeExportPanelButton.addEventListener("click", function () {
+        closeExportPanel();
+    });
+
+    cancelExportPanelButton.addEventListener("click", function () {
+        closeExportPanel();
+    });
+
+    exportTypeInputs.forEach((input) => {
+        input.addEventListener("change", updateExportSelectionUI);
+    });
+
+    exportSelectionModeInputs.forEach((input) => {
+        input.addEventListener("change", updateExportSelectionUI);
+    });
+
+    cancelExportJobButton.addEventListener("click", async function () {
+        try {
+            await cancelPptxExportJob();
+        } catch (error) {
+            showMessage(`Failed to cancel export: ${error.message}`, "error");
+        }
+    });
+
+    downloadExportJobButton.addEventListener("click", async function () {
+        try {
+            await downloadPptxJob(latestPptxJob);
+        } catch (error) {
+            showMessage(`Failed to download export: ${error.message}`, "error");
+        }
+    });
+
+    resetExportTrackingButton.addEventListener("click", async function () {
+        try {
+            await resetExportTracking(getSelectedExportType());
+        } catch (error) {
+            showMessage(`Failed to reset tracking: ${error.message}`, "error");
+        }
+    });
+
+    exportForm.addEventListener("submit", async function (event) {
+        event.preventDefault();
+
+        if (!selectedAuctionId) {
+            showMessage("Please select an auction first", "error");
+            return;
+        }
+
+        try {
+            const exportType = getSelectedExportType();
+            const selectionPayload = buildExportSelectionPayload();
+
+            if (exportType === "slips") {
+                await printAuctionSlips(selectionPayload.selection_mode, selectionPayload.item_range || "");
+                return;
+            }
+            if (exportType === "csv") {
+                await downloadCsvExport(selectionPayload);
+                return;
+            }
+
+            await startPptxExport(exportType, selectionPayload);
+        } catch (error) {
+            showMessage(error.message || "Export failed", "error");
+        }
     });
 
     refreshButton.addEventListener("click", function () {
@@ -699,10 +1172,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
     function logout() {
         localStorage.removeItem("token");
-        loginSection.style.display = "block";
-        adminSection.style.display = "none";
-        editSection.style.display = "none";
-        addSection.style.display = "none";
+        stopPptxStatusPolling();
+        latestPptxJob = null;
+        autoDownloadJobId = null;
+        showSection("login-section");
     }
 
 
@@ -803,6 +1276,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     ${renderPrintButton(item.id, printStatus)}
                     <button onclick="showItemHistory(${item.id})" title="Display item history">History</button>
                     <button onclick="editItem('${encodedItem}')" data-default-title="Edit item" title="${hasBid ? 'Item has bids and cannot be edited' : 'Edit item'}" ${hasBid ? 'disabled' : ''}>Edit</button>
+                    <button class="duplicate-item-button" data-id="${item.id}" title="Duplicate this item immediately after itself">Duplicate</button>
                     <button class="move-toggle" data-id="${item.id}" data-default-title="Move item within auction or to a different auction" title="${hasBid ? 'Item has bids and cannot be moved' : 'Move item within auction or to a different auction'}" ${hasBid ? 'disabled' : ''} >Move</button>
                     <div class="move-panel" data-id="${item.id}" style="display:none; margin-top: 5px;">
                         <select class="move-auction-select" data-id="${item.id}">
@@ -950,14 +1424,54 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
 
+    document.getElementById("items-table-body").addEventListener("click", async function (e) {
+        const duplicateButton = e.target.closest(".duplicate-item-button");
+        if (!duplicateButton) return;
+
+        const id = parseInt(duplicateButton.dataset.id, 10);
+        if (!id || isNaN(id)) return;
+
+        duplicateButton.disabled = true;
+        showMessage(`Duplicating item....`, "info");
+
+        try {
+            const res = await fetch(`${API}/auctions/${selectedAuctionId}/items/${id}/move-after/${id}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": localStorage.getItem("token")
+                },
+                body: JSON.stringify({
+                    id,
+                    after_id: id,
+                    auction_id: selectedAuctionId,
+                    copy: true
+                })
+            });
+
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || "Failed to duplicate item");
+            }
+
+            showMessage(data.message ||`Item duplicated`, "success");
+            loadItems();
+        } catch (err) {
+            duplicateButton.disabled = false;
+            showMessage(err.message || "Failed to duplicate item", "error");
+        }
+    });
+
+
     document.getElementById("items-table-body").addEventListener("change", async function (e) {
         if (e.target.classList.contains("move-after-dropdown")) {
-            const id = parseInt(e.target.dataset.id, 10);
-            const after_id = e.target.value ? parseInt(e.target.value, 10) : null;
+            const dropdown = e.target;
+            const id = parseInt(dropdown.dataset.id, 10);
+            const after_id = dropdown.value ? parseInt(dropdown.value, 10) : null;
             showMessage(`Moving item....`, "info");
 
-            this.disabled = true;
-            const moveButton = this.previousElementSibling;
+            dropdown.disabled = true;
+            const moveButton = dropdown.closest(".move-panel")?.previousElementSibling;
             if (moveButton) moveButton.disabled = true;
 
             const res = await fetch(`${API}/auctions/${selectedAuctionId}/items/${id}/move-after/${after_id}`, {
@@ -979,6 +1493,8 @@ document.addEventListener("DOMContentLoaded", function () {
                 showMessage(`Item moved`, "success");
                 loadItems();
             } else {
+                dropdown.disabled = false;
+                if (moveButton) moveButton.disabled = false;
                 showMessage(data.error || "Failed to move item", "error");
             }
         }
@@ -1053,8 +1569,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 document.getElementById("add-photo").value = "";
                 document.getElementById("add-notes").value = "";
 
-                addSection.style.display = "none";
-                adminSection.style.display = "block";
+                showSection("admin-section");
             })
             .catch(error => {
                 showMessage("Error adding item: " + error, "error");
@@ -1062,8 +1577,7 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     cancelAddButton.addEventListener("click", function () {
-        addSection.style.display = "none";
-        adminSection.style.display = "block";
+        showSection("admin-section");
     });
 
     function startAutoRefresh() {
@@ -1075,133 +1589,6 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         }, 30000);
     }
-
-    exportCSVButton.addEventListener("click", async function () {
-        if (!selectedAuctionId) {
-            showMessage("Please select an auction first", "error");
-            return;
-        }
-
-        var token = localStorage.getItem("token");
-        if (!token) return logout();
-
-        try {
-            const res = await fetch(`${API}/export-csv`, {
-                method: "POST",
-                headers: {
-                    "Authorization": token,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ auction_id: selectedAuctionId })
-            });
-
-            if (!res.ok) {
-                const errorData = await res.json();
-                throw new Error(errorData.error || "Export failed");
-            }
-
-            const blob = await res.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement("a");
-
-            a.href = url;
-            a.download = `auction_${selectedAuctionId}_items.csv`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            window.URL.revokeObjectURL(url);
-        } catch (err) {
-            showMessage("Failed to export CSV", "error");
-        }
-    });
-
-    generatePPTButton.addEventListener("click", async function () {
-        if (!selectedAuctionId) {
-            showMessage("Please select an auction first", "error");
-            return;
-        }
-
-        var token = localStorage.getItem("token");
-        if (!token) return logout();
-
-        try {
-            const res = await fetch(`${API}/generate-pptx`, {
-                method: "POST",
-                headers: {
-                    "Authorization": token,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ auction_id: selectedAuctionId })
-            });
-
-            if (!res.ok) {
-                const errorData = await res.json();
-                throw new Error(errorData.error || "Slide generation failed");
-            }
-
-            const blob = await res.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `auction_${selectedAuctionId}_slides.pptx`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            window.URL.revokeObjectURL(url);
-        } catch (err) {
-            showMessage(`Failed to generate slides: ${err}`, "error");
-        }
-    });
-
-    generateCardsButton.addEventListener("click", async function () {
-        if (!selectedAuctionId) {
-            showMessage("Please select an auction first", "error");
-            return;
-        }
-        var token = localStorage.getItem("token");
-        if (!token) return logout();
-
-        try {
-            const res = await fetch(`${API}/generate-cards`, {
-                method: "POST",
-                headers: {
-                    "Authorization": token,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ auction_id: selectedAuctionId })
-            });
-
-            if (!res.ok) {
-                const errorData = await res.json();
-                throw new Error(errorData.error || "Card generation failed");
-            }
-
-            const blob = await res.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `auction_${selectedAuctionId}_cards.pptx`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            window.URL.revokeObjectURL(url);
-        } catch (err) {
-            showMessage(`Failed to generate cards: ${err}`, "error");
-        }
-    });
-
-    printAllSlipsButton.addEventListener("click", async function () {
-        await printAuctionSlips("all");
-    });
-
-    printNeedsPrintSlipsButton.addEventListener("click", async function () {
-        await printAuctionSlips("needs-print");
-    });
-
-    resetSlipPrintTrackingButton.addEventListener("click", async function () {
-        await resetSlipPrintTracking();
-    });
-
 
     // Open the editor and get data
     window.editItem = function editItem(encodedData) {
@@ -1236,8 +1623,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
         }
 
-        editSection.style.display = "block";
-        adminSection.style.display = "none";
+        showSection("edit-section");
         currentEditId = item.id;
         
 // // TODO why doesn't this work???
@@ -1293,8 +1679,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     modifiedImages = {};
                 }, 3000); // clear it after a short while
 
-                editSection.style.display = "none";
-                adminSection.style.display = "block";
+                showSection("admin-section");
             })
             .catch(error => {
                 showMessage("Error updating item: " + error, "error");
@@ -1323,8 +1708,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
                     showMessage(data.message || "Item deleted successfully", "success");
                     loadItems();
-                    editSection.style.display = "none";
-                    adminSection.style.display = "block";
+                    showSection("admin-section");
                 })
                 .catch(error => {
                     showMessage("Error deleting item: " + error, "error");
@@ -1334,8 +1718,7 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     cancelEditButton.addEventListener("click", function () {
-        editSection.style.display = "none";
-        adminSection.style.display = "block";
+        showSection("admin-section");
     });
 
     const rotateLeftButton = document.getElementById("rotate-left");
@@ -1475,6 +1858,11 @@ document.addEventListener("DOMContentLoaded", function () {
     document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
             loadItems();
+            if (exportSection.style.display === "block") {
+                void refreshPptxExportStatus().catch(() => {
+                    renderPptxJobStatus(null);
+                });
+            }
         }
 
     });
@@ -1536,6 +1924,10 @@ document.addEventListener("DOMContentLoaded", function () {
         else if (e.key === 's' && e.ctrlKey && addSection.style.display === 'block') {
             e.preventDefault();
             saveNewButton.click();
+        }
+        else if (e.key === 'Escape' && exportSection.style.display === 'block') {
+            e.preventDefault();
+            closeExportPanel();
         }
 
  

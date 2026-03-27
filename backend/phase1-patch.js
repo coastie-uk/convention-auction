@@ -422,6 +422,9 @@ logFromRequest(req, logLevels.DEBUG, `Reversal inserted with id=${info.lastInser
   sales.post('/:itemid/finalize', authenticateRole('admin'), checkAuctionState(['live', 'settlement']), (req, res) => {
     const itemId = Number(req.params.itemid);
     const { paddle, price, auctionId } = req.body;
+    if (!Number.isInteger(itemId) || itemId <= 0) return res.status(400).json({ error: 'Invalid item id' });
+    if (!Number.isInteger(Number(paddle)) || Number(paddle) <= 0) return res.status(400).json({ error: 'Invalid paddle' });
+    if (!/^\d+(\.\d{1,2})?$/.test(String(price)) || Number(price) <= 0) return res.status(400).json({ error: 'Invalid price' });
     if (!paddle || !price || !auctionId) return res.status(400).json({ error: 'Missing paddle or price or auction id' });
 
 // Get the bidder ID if they exist, otherwise create a new entry for them

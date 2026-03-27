@@ -31,9 +31,17 @@ const API_ROOT = "/api"
   const statusEl = document.getElementById('status');
   const chkUnsold = document.getElementById('showUnsold');
   const applyFilter = document.getElementById('btnApply');
+  const refreshButton = document.getElementById('btnRefresh');
+  const countdownEl = document.getElementById('refreshCountdown');
+  const filterInput = document.getElementById('filter');
 
   // ---------- state -----------------------------------------------------------
   const rowsMap = new Map(); // rowid -> <tr>
+  let staleTimer = null;
+  let refreshTimer = null;
+  let countdownTimer = null;
+  let nextRefreshAt = null;
+  let pollInFlight = false;
 
   // ---------- helpers ---------------------------------------------------------
   const money = v => `${currencySymbol}${Number(v).toFixed(2)}`;
@@ -41,6 +49,38 @@ const API_ROOT = "/api"
   const setStatus = ok => {
     statusEl.textContent = ok ? 'Updated' : 'Stale';
     statusEl.className   = ok ? 'ok' : 'stale';
+  };
+  const formatCountdown = ms => {
+    const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return minutes > 0
+      ? `${minutes}:${String(seconds).padStart(2, '0')}`
+      : `${seconds}s`;
+  };
+  const updateCountdown = () => {
+    if (!countdownEl) return;
+    if (!nextRefreshAt) {
+      countdownEl.textContent = 'Next refresh: --';
+      return;
+    }
+    const msRemaining = nextRefreshAt - Date.now();
+    countdownEl.textContent = msRemaining <= 0
+      ? 'Refreshing...'
+      : `Next refresh: ${formatCountdown(msRemaining)}`;
+  };
+  const setNextRefresh = delayMs => {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    nextRefreshAt = Date.now() + delayMs;
+    updateCountdown();
+    refreshTimer = setTimeout(() => {
+      void poll({ reschedule: true });
+    }, delayMs);
+  };
+  const startCountdown = () => {
+    if (countdownTimer) clearInterval(countdownTimer);
+    countdownTimer = setInterval(updateCountdown, 1000);
+    updateCountdown();
   };
 
   function makeRow(r){
@@ -120,10 +160,26 @@ if (!token) {
 }
 
 
-    applyFilter.addEventListener("click", function () { clearTable(); poll(); })
+    applyFilter.addEventListener("click", function () {
+      clearTable();
+      void poll({ reschedule: true });
+    });
+
+    refreshButton?.addEventListener("click", function () {
+      void poll({ force: true, reschedule: true });
+    });
 
 
-  chkUnsold.onchange = () => { clearTable(); poll() }; // re-poll will rebuild
+  chkUnsold.onchange = () => {
+    clearTable();
+    void poll({ reschedule: true });
+  }; // re-poll will rebuild
+  filterInput?.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      clearTable();
+      void poll({ reschedule: true });
+    }
+  });
   if (typeof initPhotoHoverPopup === 'function') {
     initPhotoHoverPopup({
       container: tbody,
@@ -133,7 +189,17 @@ if (!token) {
     });
   }
 
-  async function poll(){
+  async function poll({ force = false, reschedule = false } = {}){
+    if (pollInFlight) {
+      if (force) setNextRefresh(1000);
+      return;
+    }
+
+    pollInFlight = true;
+    if (refreshButton) refreshButton.disabled = true;
+    nextRefreshAt = null;
+    updateCountdown();
+
     try{
       const res = await fetch(`${API}/${AUCTION_ID}?unsold=${chkUnsold.checked}`, {
         headers:{ 'Content-Type':'application/json', Authorization: token }
@@ -166,31 +232,42 @@ if (!token) {
       });
       setStatus(true);
       resetStale();
-    }catch{ setStatus(false);}  }
+    }catch{
+      setStatus(false);
+    } finally {
+      pollInFlight = false;
+      if (refreshButton) refreshButton.disabled = false;
+      if (reschedule && document.visibilityState === 'visible') {
+        setNextRefresh(REFRESH_MS);
+      } else if (document.visibilityState !== 'visible') {
+        nextRefreshAt = null;
+        updateCountdown();
+      }
+    }
+  }
 
-  let staleTimer=null;
   function resetStale(){
     clearTimeout(staleTimer);
     staleTimer=setTimeout(()=>setStatus(false),REFRESH_MS*1.5);
   }
 
-    function startAutoRefresh() {
-        setInterval(() => {
-            if (document.visibilityState === "visible") {
-                poll();
-                            } else {
-            }
-        }, REFRESH_MS);
-    }
+  function startAutoRefresh() {
+    startCountdown();
+  }
 
   // initial draw & polling loop ----------------------------------------------
-  poll();
+  void poll({ reschedule: true });
   startAutoRefresh();
 
-    document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") {
-  poll();
-        }
-      })
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      void poll({ reschedule: true });
+      return;
+    }
+
+    if (refreshTimer) clearTimeout(refreshTimer);
+    nextRefreshAt = null;
+    updateCountdown();
+  });
  
 })();

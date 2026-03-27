@@ -101,6 +101,7 @@ const testData = {
   itemB: null,
   deleteItem: null,
   photoItem: null,
+  duplicatedPhotoItem: null,
   allSlipItemIds: []
 };
 
@@ -108,6 +109,30 @@ const testData = {
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
+
+async function fetchPptxJobStatus() {
+  return fetchJson(`${baseUrl}/export-jobs/pptx/status`, {
+    headers: authHeaders(tokens.admin)
+  });
+}
+
+async function waitForPptxJob(jobId, expectedStatuses, timeoutMs = 15000, intervalMs = 150) {
+  const acceptedStatuses = new Set(expectedStatuses);
+  const deadline = Date.now() + timeoutMs;
+  let lastJob = null;
+
+  while (Date.now() < deadline) {
+    const { res, json } = await fetchPptxJobStatus();
+    await expectStatus(res, 200);
+    lastJob = json?.job || null;
+    if (lastJob && lastJob.id === jobId && acceptedStatuses.has(lastJob.status)) {
+      return lastJob;
+    }
+    await sleep(intervalMs);
+  }
+
+  throw new Error(`Timed out waiting for PPTX job ${jobId}. Last status: ${lastJob ? JSON.stringify(lastJob) : "<none>"}`);
+}
 
 async function waitForAuctionStatus(expected, timeoutMs = 15000, intervalMs = 250) {
   const deadline = Date.now() + timeoutMs;
@@ -738,7 +763,11 @@ addTest("B-031","POST /generate-pptx success", async () => {
   const res = await fetch(`${baseUrl}/generate-pptx`, {
     method: "POST",
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ auction_id: testData.auctionId })
+    body: JSON.stringify({
+      auction_id: testData.auctionId,
+      selection_mode: "range",
+      item_range: "1-2"
+    })
   });
   await expectStatus(res, 200);
   await res.arrayBuffer();
@@ -776,7 +805,10 @@ addTest("B-035","POST /generate-cards success", async () => {
   const res = await fetch(`${baseUrl}/generate-cards`, {
     method: "POST",
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ auction_id: testData.auctionId })
+    body: JSON.stringify({
+      auction_id: testData.auctionId,
+      selection_mode: "needs-attention"
+    })
   });
   await expectStatus(res, 200);
   await res.arrayBuffer();
@@ -807,6 +839,73 @@ addTest("B-038","POST /generate-cards failure invalid token", async () => {
     body: JSON.stringify({ auction_id: testData.auctionId })
   });
   await expectStatus(res, 403);
+});
+
+addTest("B-0380","POST /generate-pptx async job flow success", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/generate-pptx`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      auction_id: testData.auctionId,
+      async: true,
+      selection_mode: "range",
+      item_range: "1-2"
+    })
+  });
+  await expectStatus(res, 202);
+  assert.ok(json?.job?.id, "Expected async PPTX job id");
+
+  const startedJobId = json.job.id;
+
+  const { res: lockRes, json: lockJson } = await fetchJson(`${baseUrl}/generate-cards`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      auction_id: testData.auctionId,
+      async: true,
+      selection_mode: "all"
+    })
+  });
+  await expectStatus(lockRes, 409);
+  assert.ok(lockJson?.job?.id === startedJobId, "Expected lock response to reference active PPTX job");
+
+  const finishedJob = await waitForPptxJob(startedJobId, ["completed"]);
+  assert.ok(finishedJob.download_url, "Expected completed PPTX job download URL");
+
+  const downloadRes = await fetch(`${baseUrl}${finishedJob.download_url.replace("/api", "")}`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(downloadRes, 200);
+  const downloadBuffer = await downloadRes.arrayBuffer();
+  assert.ok(downloadBuffer.byteLength > 0, "Expected PPTX download to contain data");
+});
+
+addTest("B-0380a","POST /generate-cards async job cancel", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/generate-cards`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      auction_id: testData.auctionId,
+      async: true,
+      selection_mode: "range",
+      item_range: "1-3"
+    })
+  });
+  await expectStatus(res, 202);
+  assert.ok(json?.job?.id, "Expected async card job id");
+
+  const startedJobId = json.job.id;
+
+  const { res: cancelRes, json: cancelJson } = await fetchJson(`${baseUrl}/export-jobs/pptx/cancel`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ job_id: startedJobId })
+  });
+  await expectStatus(cancelRes, 200);
+  assert.ok(cancelJson?.job?.status === "cancelling" || cancelJson?.job?.status === "queued" || cancelJson?.job?.status === "running", "Expected cancellation acknowledgement");
+
+  const cancelledJob = await waitForPptxJob(startedJobId, ["cancelled"]);
+  assert.equal(cancelledJob.status, "cancelled");
 });
 
 // /auctions/:auctionId/items/:id/print-slip
@@ -879,6 +978,21 @@ addTest("B-038d","GET /auctions/:auctionId/items/print-slip scope=needs-print su
   assert.ok(buffer.byteLength > 0, "Needs-print PDF is empty");
 });
 
+addTest("B-038dd","GET /auctions/:auctionId/items/print-slip range success", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/print-slip?selection_mode=range&item_range=1,3`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  const idsHeader = (res.headers.get("x-slip-item-ids") || "").trim();
+  const ids = idsHeader
+    .split(",")
+    .map((id) => Number(id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  assert.ok(ids.length === 2, `Expected exactly two ids in range export, got ${idsHeader}`);
+  const buffer = await res.arrayBuffer();
+  assert.ok(buffer.byteLength > 0, "Range slip PDF is empty");
+});
+
 addTest("B-038e","GET /auctions/:auctionId/items/print-slip scope=all success", async () => {
   const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/print-slip?scope=all`, {
     headers: authHeaders(context.token)
@@ -933,6 +1047,14 @@ addTest("B-038i","GET /auctions/:auctionId/items/print-slip failure invalid scop
   });
   await expectStatus(res, 400);
   assert.ok(json && json.error, "Expected error payload for invalid scope");
+});
+
+addTest("B-038ia","GET /auctions/:auctionId/items/print-slip failure invalid range", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/print-slip?selection_mode=range&item_range=1-`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 400);
+  assert.ok(json && json.error, "Expected error payload for invalid range");
 });
 
 addTest("B-038j","POST /auctions/:auctionId/items/confirm-slip-print failure unauthenticated", async () => {
@@ -1010,12 +1132,46 @@ addTest("B-038p","POST /auctions/:auctionId/items/reset-slip-print failure inval
   assert.ok(json && json.error, "Expected error payload for invalid auction id");
 });
 
+addTest("B-038pa","POST /auctions/:auctionId/items/reset-export-tracking success slides", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/reset-export-tracking`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ export_type: "slides" })
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && json.export_type === "slides", "Expected slide reset payload");
+});
+
+addTest("B-038pb","POST /auctions/:auctionId/items/reset-export-tracking success cards", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/reset-export-tracking`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ export_type: "cards" })
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && json.export_type === "cards", "Expected card reset payload");
+});
+
+addTest("B-038pc","POST /auctions/:auctionId/items/reset-export-tracking failure invalid type", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/reset-export-tracking`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ export_type: "csv" })
+  });
+  await expectStatus(res, 400);
+  assert.ok(json && json.error, "Expected invalid export_type error");
+});
+
 // /export-csv
 addTest("B-039","POST /export-csv success", async () => {
   const res = await fetch(`${baseUrl}/export-csv`, {
     method: "POST",
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ auction_id: testData.auctionId })
+    body: JSON.stringify({
+      auction_id: testData.auctionId,
+      selection_mode: "range",
+      item_range: "1-2"
+    })
   });
   await expectStatus(res, 200);
   await res.arrayBuffer();
@@ -1270,6 +1426,41 @@ addTest("B-066","POST /auctions/:auctionId/items/:id/move-after/:after_id succes
   });
   await expectStatus(res, 200);
   assert.ok(json && json.message, "Missing move response");
+});
+
+addTest("B-066a","POST /auctions/:auctionId/items/:id/move-after/:after_id copy success", async () => {
+  await setAuctionStatus("setup");
+  const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/${testData.photoItem}/move-after/${testData.photoItem}`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ copy: true })
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && json.id, "Missing duplicate item id");
+  testData.duplicatedPhotoItem = json.id;
+
+  const { res: itemsRes, json: itemsJson } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(itemsRes, 200);
+
+  const items = Array.isArray(itemsJson) ? itemsJson : itemsJson?.items;
+  assert.ok(Array.isArray(items), "Expected items array");
+
+  const sourceIndex = items.findIndex((row) => Number(row.id) === Number(testData.photoItem));
+  const duplicateIndex = items.findIndex((row) => Number(row.id) === Number(testData.duplicatedPhotoItem));
+
+  assert.ok(sourceIndex >= 0, "Source item not found");
+  assert.equal(duplicateIndex, sourceIndex + 1, "Duplicate item should be inserted immediately after source");
+
+  const sourceItem = items[sourceIndex];
+  const duplicateItem = items[duplicateIndex];
+  assert.equal(duplicateItem.description, `${sourceItem.description} (copy)`);
+  assert.equal(duplicateItem.contributor, sourceItem.contributor);
+  assert.equal(duplicateItem.artist, sourceItem.artist);
+  assert.equal(duplicateItem.notes, sourceItem.notes);
+  assert.ok(duplicateItem.photo, "Expected duplicate to retain a photo");
+  assert.notEqual(duplicateItem.photo, sourceItem.photo, "Duplicate should use its own photo filename");
 });
 
 addTest("B-067","POST /auctions/:auctionId/items/:id/move-after/:after_id failure unauthenticated", async () => {

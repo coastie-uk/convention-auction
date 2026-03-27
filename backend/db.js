@@ -9,7 +9,7 @@ const Database = require('better-sqlite3');
 const path     = require('path');
 const fs       = require('fs');
 const crypto   = require('crypto');
-const schemaVersion = '2.5';
+const schemaVersion = '2.6';
 const { logLevels, log } = require('./logger');
 const bcrypt = require('bcryptjs');
 const { ROLE_LIST, ROLE_SET, ROOT_USERNAME } = require('./auth-constants');
@@ -27,6 +27,7 @@ const {
 // 2.3  Adds reversals
 // 2.4  Adds username-based users with multi-role permissions
 // 2.5  Adds items.last_print for item slip print tracking, add seconds to timekstamps
+// 2.6  Adds items.last_slide_export and items.last_card_export for export tracking
 
 let dbPath = path.join(DB_PATH, DB_NAME);
 if (DB_PATH === ".") {
@@ -98,6 +99,8 @@ if(existingSchemaVersion !== schemaVersion || isNewDatabase)
         notes TEXT,
         mod_date TEXT,
         last_print TEXT,
+        last_slide_export TEXT,
+        last_card_export TEXT,
         text_mod_date TEXT,
         item_number INTEGER,
         auction_id INTEGER REFERENCES auctions(id),
@@ -208,6 +211,8 @@ if(existingSchemaVersion !== schemaVersion || isNewDatabase)
   // 2.0 -> 2.1 Add admin_state_change
   try { db.exec("ALTER TABLE auctions ADD COLUMN admin_can_change_state INTEGER NOT NULL DEFAULT 0; -- 0=false, 1=true"); } catch (e) { /* already exists */ }
   try { db.exec("ALTER TABLE items ADD COLUMN last_print TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE items ADD COLUMN last_slide_export TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE items ADD COLUMN last_card_export TEXT"); } catch (e) { /* already exists */ }
   try { db.exec("ALTER TABLE items ADD COLUMN text_mod_date TEXT"); } catch (e) { /* already exists */ }
 
 

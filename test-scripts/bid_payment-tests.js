@@ -419,6 +419,46 @@ addTest("P-016","POST /lots/:itemid/finalize failure missing params", async () =
   await expectStatus(res, 400);
 });
 
+addTest("P-016a","POST /lots/:itemid/finalize failure invalid item id", async () => {
+  await setAuctionStatusFor(testData.auctionId, "live");
+  const { res } = await fetchJson(`${baseUrl}/lots/0/finalize`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ paddle: 101, price: 50, auctionId: testData.auctionId })
+  });
+  await expectStatus(res, 400);
+});
+
+addTest("P-016b","POST /lots/:itemid/finalize failure invalid paddle", async () => {
+  await setAuctionStatusFor(testData.auctionId, "live");
+  const { res } = await fetchJson(`${baseUrl}/lots/${testData.item2}/finalize`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ paddle: 101.5, price: 50, auctionId: testData.auctionId })
+  });
+  await expectStatus(res, 400);
+});
+
+addTest("P-016c","POST /lots/:itemid/finalize failure non-positive price", async () => {
+  await setAuctionStatusFor(testData.auctionId, "live");
+  const { res } = await fetchJson(`${baseUrl}/lots/${testData.item2}/finalize`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ paddle: 102, price: 0, auctionId: testData.auctionId })
+  });
+  await expectStatus(res, 400);
+});
+
+addTest("P-016d","POST /lots/:itemid/finalize failure price with more than 2dp", async () => {
+  await setAuctionStatusFor(testData.auctionId, "live");
+  const { res } = await fetchJson(`${baseUrl}/lots/${testData.item2}/finalize`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ paddle: 102, price: 50.123, auctionId: testData.auctionId })
+  });
+  await expectStatus(res, 400);
+});
+
 addTest("P-017","POST /lots/:itemid/finalize success", async () => {
   await setAuctionStatusFor(testData.auctionId, "live");
   const { res, json } = await fetchJson(`${baseUrl}/lots/${testData.item1}/finalize`, {

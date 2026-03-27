@@ -74,12 +74,7 @@
                     <div class="dropdown">
                         <button>Export</button>
                         <div class="dropdown-content">
-                            <button id="export-csv">Export Data (CSV)</button>
-                            <button id="generate-ppt">Generate Auction Slides (PPTX)</button>
-                            <button id="generate-cards">Generate Item Cards (PPTX)</button>
-                            <button id="print-all-slips">Print All Item Slips (PDF)</button>
-                            <button id="print-needs-print-slips">Print Unprinted/Out-of-date Slips (PDF)</button>
-                            <button id="reset-slip-print-tracking">Reset Slip Print Tracking</button>
+                            <button id="open-export-panel">Open Export Panel</button>
                         </div>
                     </div>
 
@@ -227,6 +222,99 @@
                 <button type="submit" id="save-new">Add Item (Ctrl-s)</button>
                 <button type="button" id="cancel-add">Cancel (esc)</button>
             </form>
+        </section>
+
+        <section id="export-section" style="display: none;">
+            <div class="export-panel-shell">
+                <div class="export-panel-header">
+                    <div>
+                        <h2>Export Panel</h2>
+                        <p id="export-panel-auction">Select what to export for the current auction.</p>
+                    </div>
+                    <button type="button" id="close-export-panel">Back to Items</button>
+                </div>
+
+                <form id="export-form" class="export-form">
+                    <fieldset class="export-fieldset">
+                        <legend>Export Type</legend>
+                        <label class="export-choice">
+                            <input type="radio" name="export-type" value="slides" checked>
+                            <span>
+                                <strong>Auction Slides</strong>
+                                <small>Generate a PPTX slideshow deck.</small>
+                            </span>
+                        </label>
+                        <label class="export-choice">
+                            <input type="radio" name="export-type" value="cards">
+                            <span>
+                                <strong>Item Cards</strong>
+                                <small>Generate PPTX item cards.</small>
+                            </span>
+                        </label>
+                        <label class="export-choice">
+                            <input type="radio" name="export-type" value="slips">
+                            <span>
+                                <strong>Item Slips</strong>
+                                <small>Generate the slip PDF and open the print flow.</small>
+                            </span>
+                        </label>
+                        <label class="export-choice">
+                            <input type="radio" name="export-type" value="csv">
+                            <span>
+                                <strong>CSV Export</strong>
+                                <small>Download auction data as CSV.</small>
+                            </span>
+                        </label>
+                    </fieldset>
+
+                    <fieldset class="export-fieldset">
+                        <legend>Items to Include</legend>
+                        <label class="export-choice">
+                            <input type="radio" name="export-selection-mode" value="all" checked>
+                            <span>
+                                <strong>All items</strong>
+                                <small>Include every item in the auction.</small>
+                            </span>
+                        </label>
+                        <label class="export-choice">
+                            <input type="radio" name="export-selection-mode" value="needs-attention">
+                            <span>
+                                <strong id="export-needs-attention-title">Unexported / Out of date items</strong>
+                                <small id="export-needs-attention-help">Only include items that have not been exported yet or have changed since the last export.</small>
+                            </span>
+                        </label>
+                        <label class="export-choice">
+                            <input type="radio" name="export-selection-mode" value="range">
+                            <span>
+                                <strong>Item number range</strong>
+                                <small>Use a print-style range such as 1,3,4-9.</small>
+                            </span>
+                        </label>
+
+                        <div id="export-range-controls" class="export-range-controls" hidden>
+                            <label for="export-item-range">Item numbers</label>
+                            <input type="text" id="export-item-range" placeholder="1,3,4-9" autocomplete="off">
+                            <p class="export-help-text">Numbers refer to item numbers, not database IDs.</p>
+                        </div>
+                    </fieldset>
+
+                    <div id="export-job-status" class="export-job-status" hidden>
+                        <h3>PPTX Export Status</h3>
+                        <p id="export-job-summary">No PPTX export is running.</p>
+                        <p id="export-job-detail"></p>
+                        <div class="export-job-actions">
+                            <button type="button" id="cancel-export-job" hidden>Cancel PPTX Export</button>
+                            <button type="button" id="download-export-job" hidden>Download Latest PPTX</button>
+                        </div>
+                    </div>
+
+                    <div class="form-actions export-actions">
+                        <button type="submit" id="run-export">Start Export</button>
+                        <button type="button" id="reset-export-tracking">Reset Tracking</button>
+                        <button type="button" id="cancel-export-panel">Cancel</button>
+                    </div>
+                </form>
+            </div>
         </section>
 
         <div id="history-modal"

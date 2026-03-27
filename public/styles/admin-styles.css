@@ -186,6 +186,132 @@ form button:hover {
     background-color: #0056b3;
 }
 
+.export-panel-shell {
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    margin-top: 20px;
+    padding: 24px;
+}
+
+.export-panel-header {
+    align-items: center;
+    display: flex;
+    gap: 16px;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+
+.export-panel-header p {
+    color: #555;
+    margin: 6px 0 0;
+}
+
+.export-form {
+    display: grid;
+    gap: 18px;
+}
+
+.export-form > .export-fieldset:nth-of-type(1) {
+    grid-column: 1;
+}
+
+.export-form > .export-fieldset:nth-of-type(2) {
+    grid-column: 2;
+}
+
+.export-form > .export-job-status,
+.export-form > .export-actions {
+    grid-column: 1 / -1;
+}
+
+.export-fieldset {
+    border: 1px solid #d7deea;
+    border-radius: 10px;
+    display: grid;
+    gap: 12px;
+    margin: 0;
+    padding: 16px;
+}
+
+.export-fieldset legend {
+    color: #24436b;
+    font-weight: 700;
+    padding: 0 6px;
+}
+
+.export-choice {
+    align-items: flex-start;
+    background: #f7faff;
+    border: 1px solid #dbe6f5;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    gap: 12px;
+    padding: 12px 14px;
+}
+
+.export-choice input {
+    margin-top: 3px;
+}
+
+.export-choice span {
+    display: grid;
+    gap: 4px;
+}
+
+.export-choice small,
+.export-help-text,
+#export-job-detail {
+    color: #5c6a79;
+}
+
+.export-range-controls {
+    background: #f2f6fc;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.export-range-controls input[type="text"] {
+    margin-bottom: 6px;
+}
+
+.export-help-text {
+    margin: 0;
+}
+
+.export-job-status {
+    background: #eef5ff;
+    border: 1px solid #c8daf7;
+    border-radius: 10px;
+    padding: 16px;
+}
+
+.export-job-status h3 {
+    margin-top: 0;
+}
+
+.export-job-status p {
+    margin: 6px 0;
+}
+
+.export-job-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.export-actions {
+    margin-top: 4px;
+}
+
+@media (min-width: 900px) {
+    .export-form {
+        align-items: start;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+}
+
 
 /* Message Banner Styles */
 .message-banner {
@@ -255,6 +381,19 @@ form button:hover {
     .button-group-left > *,
     .button-group-right > * {
         width: 100%;
+    }
+
+    .export-panel-header,
+    .export-job-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .export-form > .export-fieldset:nth-of-type(1),
+    .export-form > .export-fieldset:nth-of-type(2),
+    .export-form > .export-job-status,
+    .export-form > .export-actions {
+        grid-column: 1;
     }
 
     .dropdown,
