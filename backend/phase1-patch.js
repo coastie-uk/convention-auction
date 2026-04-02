@@ -79,13 +79,14 @@ module.exports = function phase1Patch (app) {
              b.paddle_number AS bidder,
              i.hammer_price  AS price,
              i.ROWID         AS rowid,
+             i.last_bid_update,
              i.test_item,
              i.test_bid,
              i.photo
         FROM items i
         LEFT JOIN bidders b ON b.id = i.winning_bidder_id
        WHERE i.auction_id = ? AND i.hammer_price IS NOT NULL
-       ORDER BY b.paddle_number DESC, i.item_number DESC`, [id]);
+       ORDER BY i.last_bid_update DESC, i.ROWID DESC`, [id]);
   
     // optionally unsold
     const unsold = include_unsold
@@ -96,6 +97,7 @@ module.exports = function phase1Patch (app) {
                  NULL            AS paddle,
                  NULL            AS price,
                  i.ROWID         AS rowid,
+                 NULL            AS last_bid_update,
                  1               AS unsold
             FROM items i
            WHERE i.auction_id = ? AND i.hammer_price IS NULL
@@ -438,7 +440,9 @@ try {
 
 const stmt = db.prepare(`
   UPDATE items
-     SET winning_bidder_id = ?, hammer_price = ?
+     SET winning_bidder_id = ?,
+         hammer_price = ?,
+         last_bid_update = strftime('%Y-%m-%d %H:%M:%S', 'now')
    WHERE id = ?
      AND hammer_price IS NULL          -- ← only if not finalised yet
 `);
@@ -528,7 +532,13 @@ if (info.changes === 0) {
         }
       }
 
-      db.run(`UPDATE items SET winning_bidder_id = NULL, hammer_price = NULL WHERE id = ?`, [itemId]);
+      db.run(`
+        UPDATE items
+           SET winning_bidder_id = NULL,
+               hammer_price = NULL,
+               last_bid_update = strftime('%Y-%m-%d %H:%M:%S', 'now')
+         WHERE id = ?
+      `, [itemId]);
       if (paid) {
         logFromRequest(req, logLevels.INFO, `Bid retracted for item ${itemId} by bidder ${row.winning_bidder_id} but payment exists`);
         audit(getAuditActor(req), 'undo-bid', 'item', itemId, { item: itemId, bidder: row.winning_bidder_id, note: 'Payment exists for bidder' });

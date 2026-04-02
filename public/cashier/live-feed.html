@@ -5,19 +5,37 @@
   <title>Live Feed – Auction</title>
   <link rel="stylesheet" href="/styles/admin-styles.css" />
   <style>
-    /* tiny inline additions */
     #status.ok    { color: green; }
     #status.stale { color: darkorange; }
-    tr[data-paddle] { transition: background 0.2s; }
     tr.unsold-row {   color: #777; }
+    body {
+      background: #f5f7fb;
+    }
+    .page-shell {
+      padding: 12px;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 10px;
+      margin-bottom: 12px;
+    }
+    .toolbar label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .toolbar input[type="number"] {
+      width: 84px;
+    }
     .refresh-controls {
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      margin-left: 12px;
     }
     #btnRefresh {
-      padding: 6px 10px;
+      padding: 5px 9px;
       cursor: pointer;
     }
     #refreshCountdown {
@@ -26,36 +44,290 @@
       white-space: nowrap;
       min-width: 9ch;
     }
+    .live-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+    }
+    .panel {
+      background: #fff;
+      border: 1px solid #d8dee6;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(10, 30, 60, 0.08);
+      overflow: hidden;
+    }
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 12px;
+      background: #fbfcfe;
+      border-bottom: 1px solid #d8dee6;
+    }
+    .panel-head h2 {
+      margin: 0;
+      font-size: 1.05rem;
+    }
+    .panel-subtle {
+      color: #5f6b7a;
+      font-size: 0.92rem;
+    }
+    .panel-body {
+      padding: 10px 12px 12px;
+    }
+    .stacked-panels {
+      display: grid;
+      gap: 12px;
+    }
+    .compact-table th,
+    .compact-table td {
+      padding: 8px 10px;
+    }
+    .compact-table tbody tr:first-child td {
+      border-top: 0;
+    }
+    .empty-cell,
+    .empty-state {
+      color: #5f6b7a;
+      font-style: italic;
+      padding: 12px 0;
+    }
+    .bidder-groups {
+      display: grid;
+      gap: 10px;
+    }
+    .bidder-group {
+      border: 1px solid #d8dee6;
+      border-left: 6px solid #8ea0b8;
+      border-radius: 10px;
+      padding: 10px;
+      background: #fff;
+    }
+    .bidder-group.is-ready {
+      border-left-color: #1f8f4e;
+      background: #f5fff8;
+    }
+    .bidder-group.is-invalidated {
+      border-left-color: #d14343;
+      background: #fff7f7;
+      box-shadow: 0 0 0 2px rgba(209, 67, 67, 0.12);
+    }
+    .bidder-group.has-recent-activity {
+      border-left-color: #0f62fe;
+    }
+    .bidder-group.has-added-change {
+      background: #f3fbf2;
+      box-shadow: 0 0 0 2px rgba(226, 237, 73, 0.658);
+    }
+    .bidder-group.has-retracted-change {
+      background: #fff6e8;
+      box-shadow: 0 0 0 2px rgba(196, 124, 18, 0.12);
+    }
+    .bidder-group-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .bidder-group-title h3 {
+      margin: 0 0 2px;
+      font-size: 1rem;
+    }
+    .bidder-group-meta {
+      color: #5f6b7a;
+      font-size: 0.92rem;
+    }
+    .bidder-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: flex-end;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    .badge-ready {
+      background: #ddf7e6;
+      color: #1f6b3c;
+    }
+    .badge-invalid {
+      background: #ffe0e0;
+      color: #a12828;
+    }
+    .badge-recent {
+      background: #dbe8ff;
+      color: #184ea8;
+    }
+    .badge-added {
+      background: #dff5df;
+      color: #21693a;
+    }
+    .badge-retracted {
+      background: #ffebcf;
+      color: #8d5a00;
+    }
+    .ready-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .ready-toggle input {
+      width: 18px;
+      height: 18px;
+    }
+    .bidder-alert {
+      margin: 0 0 8px;
+      padding: 8px 10px;
+      border: 1px solid #f0b3b3;
+      border-radius: 8px;
+      background: #fff0f0;
+      color: #8d2020;
+      font-weight: 600;
+    }
+    .bidder-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    .bidder-table th,
+    .bidder-table td {
+      padding: 7px 10px;
+      text-align: left;
+      border-top: 1px solid #e7ebf0;
+    }
+    .bidder-table th:first-child,
+    .bidder-table td:first-child {
+      width: 72px;
+    }
+    .bidder-table th:last-child,
+    .bidder-table td:last-child {
+      width: 108px;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .bidder-table th {
+      color: #5f6b7a;
+      font-size: 0.84rem;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+    .recent-sale-row {
+      background: #f8fbff;
+    }
+    .item-row-added td {
+      background: #094e07;
+      color: #dff5df;
+    }
+    .item-row-retracted td {
+      background: #fff3df;
+      color: #8a5b10;
+      text-decoration: line-through;
+      font-style: italic;
+    }
+    @media (max-width: 980px) {
+      .live-grid {
+        grid-template-columns: 1fr;
+      }
+      .bidder-group-header {
+        grid-template-columns: 1fr;
+      }
+      .bidder-badges {
+        justify-content: flex-start;
+      }
+    }
   </style>
 </head>
 <body>
-  <header>
-    <h1></h1>
-</header>
+  <div class="page-shell">
 
-  <div class="toolbar">
-    <label>Filter Paddle #:
-      <input id="filter" type="number" min="1" max="999" />
-    </label>
-    <button id="btnApply">Go</button>
-    <span id="status" class="ok">Connected</span>
-    <span class="refresh-controls">
-      <button id="btnRefresh" type="button">Refresh now</button>
-      <span id="refreshCountdown" aria-live="polite">Next refresh: --</span>
-    </span>
 
-    <label style="margin-left:8px;">
-      <input type="checkbox" id="showUnsold" checked>
-      Show unsold
-    </label>
+    <div class="toolbar">
+      <label>Filter Paddle #:
+        <input id="filter" type="number" min="1" max="999" />
+      </label>
+      <button id="btnApply" type="button">Go</button>
+      <span id="status" class="ok">Connected</span>
+      <span class="refresh-controls">
+        <button id="btnRefresh" type="button">Refresh now</button>
+        <!-- <span id="refreshCountdown" aria-live="polite">Next refresh: --</span> -->
+      </span>
+      <label>
+        Change cue (s):
+        <input id="changePersistSeconds" type="number" min="1" step="1" value="60" />
+      </label>
+      <label>
+        Bucket sort:
+        <select id="bucketSortOrder">
+          <option value="last_update" selected>Last update</option>
+          <option value="ready_state">Ready state</option>
+          <option value="paddle">Paddle number</option>
+        </select>
+      </label>
+      <label>
+        <input type="checkbox" id="showMultiItemBucketsOnly" />
+        2+ items only
+      </label>
+      <label>
+        <input type="checkbox" id="showUnsold" checked>
+        Show unsold
+      </label>
+    </div>
+
+    <div class="live-grid">
+      <div class="stacked-panels">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Recent Bids</h2>
+            <span class="panel-subtle"></span>
+          </div>
+          <div class="panel-body">
+            <table id="recentFeed" class="datatable compact-table">
+              <thead>
+                <tr><th>Paddle #</th><th>Lot</th><th>Title</th><th>Price</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="unsoldSection" class="panel">
+          <div class="panel-head">
+            <h2>Unsold Lots</h2>
+            <span class="panel-subtle"></span>
+          </div>
+          <div class="panel-body">
+            <table id="unsoldFeed" class="datatable compact-table">
+              <thead>
+                <tr><th>Lot</th><th>Title</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div id="unsoldEmpty" class="empty-state" hidden>No unsold lots are currently shown.</div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Collection Buckets</h2>
+          <span id="bidderSummary" class="panel-subtle">Loading…</span>
+        </div>
+        <div class="panel-body">
+          <div id="bidderGroups" class="bidder-groups"></div>
+        </div>
+      </section>
+    </div>
   </div>
-
-  <table id="feed" class="datatable">
-    <thead>
-      <tr><th>Paddle #</th><th>Lot</th><th>Title (hover to preview)</th><th>Price</th></tr>
-    </thead>
-    <tbody></tbody>
-  </table>
 
   <script src="/scripts/hover-photo.js"></script>
   <script src="/scripts/live-feed.js"></script>
@@ -65,4 +337,3 @@
 </footer>
 </body>
 </html>
-

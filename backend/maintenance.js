@@ -1765,8 +1765,14 @@ router.post("/generate-bids", checkAuctionState(['live', 'settlement']), (req, r
       const price = Math.floor(Math.random() * 200) + 10;
       const testBid = 1;
 
-      db.prepare('UPDATE items SET winning_bidder_id = ?, hammer_price = ?, test_bid = ? WHERE id = ?')
-        .run(selected.id, price, testBid, itemId);
+      db.prepare(`
+        UPDATE items
+           SET winning_bidder_id = ?,
+               hammer_price = ?,
+               test_bid = ?,
+               last_bid_update = strftime('%Y-%m-%d %H:%M:%S', 'now')
+         WHERE id = ?
+      `).run(selected.id, price, testBid, itemId);
 
       logLines.push(`Item ${itemId} → Paddle ${selected.paddle} → £${price}`);
       audit(getAuditActor(req), 'finalize (test)', 'item', itemId, {  bidder: selected.paddle, price, description: items.find(i => i.id === itemId)?.description || ''  });
@@ -1797,7 +1803,8 @@ router.post("/delete-test-bids", checkAuctionState(['live', 'settlement']), (req
       UPDATE items
       SET winning_bidder_id = NULL,
           hammer_price = NULL,
-          test_bid = NULL
+          test_bid = NULL,
+          last_bid_update = strftime('%Y-%m-%d %H:%M:%S', 'now')
       WHERE auction_id = ? AND test_bid = 1
     `).run(auction_id);
 
