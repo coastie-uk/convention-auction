@@ -29,6 +29,11 @@
     .toolbar input[type="number"] {
       width: 84px;
     }
+    .toolbar select,
+    .toolbar button,
+    .toolbar input[type="number"] {
+      font: inherit;
+    }
     .refresh-controls {
       display: inline-flex;
       align-items: center;
@@ -158,6 +163,22 @@
       background: #ddf7e6;
       color: #1f6b3c;
     }
+    .badge-paid {
+      background: #ddf7e6;
+      color: #1f6b3c;
+    }
+    .badge-part-paid {
+      background: #fff0cc;
+      color: #8b5a00;
+    }
+    .badge-not-paid {
+      background: #f1f3f5;
+      color: #5f6b7a;
+    }
+    .badge-collected {
+      background: #e0f4ff;
+      color: #145b86;
+    }
     .badge-invalid {
       background: #ffe0e0;
       color: #a12828;
@@ -180,6 +201,25 @@
       gap: 8px;
       font-weight: 600;
       white-space: nowrap;
+    }
+    .bucket-actions {
+      display: inline-flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 6px;
+      align-items: center;
+    }
+    .action-btn {
+      border: 1px solid #cbd5df;
+      background: #fff;
+      color: #1b2430;
+      border-radius: 8px;
+      padding: 5px 8px;
+      cursor: pointer;
+    }
+    .action-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
     }
     .ready-toggle input {
       width: 18px;
@@ -209,10 +249,16 @@
     .bidder-table td:first-child {
       width: 72px;
     }
-    .bidder-table th:last-child,
-    .bidder-table td:last-child {
+    .bidder-table th:nth-child(3),
+    .bidder-table td:nth-child(3) {
       width: 108px;
       text-align: right;
+      white-space: nowrap;
+    }
+    .bidder-table th:last-child,
+    .bidder-table td:last-child {
+      width: 72px;
+      text-align: center;
       white-space: nowrap;
     }
     .bidder-table th {
@@ -233,6 +279,17 @@
       color: #8a5b10;
       text-decoration: line-through;
       font-style: italic;
+    }
+    .item-row-collected td {
+      background: #eef8f1;
+      color: #486256;
+    }
+    .pickup-cell {
+      text-align: center;
+    }
+    .pickup-toggle {
+      width: 16px;
+      height: 16px;
     }
     @media (max-width: 980px) {
       .live-grid {
@@ -261,6 +318,7 @@
         <button id="btnRefresh" type="button">Refresh now</button>
         <!-- <span id="refreshCountdown" aria-live="polite">Next refresh: --</span> -->
       </span>
+      <button id="btnUncollectedCsv" class="action-btn" type="button">Uncollected CSV</button>
       <label>
         Change cue (s):
         <input id="changePersistSeconds" type="number" min="1" step="1" value="60" />
@@ -269,6 +327,7 @@
         Bucket sort:
         <select id="bucketSortOrder">
           <option value="last_update" selected>Last update</option>
+          <option value="last_paid">Last paid</option>
           <option value="ready_state">Ready state</option>
           <option value="paddle">Paddle number</option>
         </select>

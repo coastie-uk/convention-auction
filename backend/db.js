@@ -27,7 +27,7 @@ const {
 // 2.3  Adds reversals
 // 2.4  Adds username-based users with multi-role permissions
 // 2.5  Adds items.last_print for item slip print tracking, add seconds to timekstamps
-// 2.6  Adds items.last_slide_export and items.last_card_export for export tracking, Adds items.last_bid_update for authoritative bid/retract ordering
+// 2.6  Adds items.last_slide_export and items.last_card_export for export tracking, Adds items.last_bid_update for authoritative bid/retract ordering. Adds bidder ready state/fingerprint and item collection tracking for live feed
  
 
 let dbPath = path.join(DB_PATH, DB_NAME);
@@ -67,7 +67,7 @@ if(existingSchemaVersion > schemaVersion) {
   );
 }
 
-if(existingSchemaVersion !== schemaVersion || isNewDatabase)
+if(existingSchemaVersion < schemaVersion || isNewDatabase)
 {
   log(
     'General',
@@ -103,6 +103,7 @@ if(existingSchemaVersion !== schemaVersion || isNewDatabase)
         last_slide_export TEXT,
         last_card_export TEXT,
         last_bid_update TEXT,
+        collected_at TEXT,
         text_mod_date TEXT,
         item_number INTEGER,
         auction_id INTEGER REFERENCES auctions(id),
@@ -130,6 +131,9 @@ if(existingSchemaVersion !== schemaVersion || isNewDatabase)
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         paddle_number INTEGER NOT NULL,
         name          TEXT,
+        ready_for_collection INTEGER NOT NULL DEFAULT 0,
+        ready_fingerprint TEXT,
+        ready_updated_at TEXT,
         created_at    TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now')),
         auction_id INTEGER
       )`);
@@ -216,7 +220,11 @@ if(existingSchemaVersion !== schemaVersion || isNewDatabase)
   try { db.exec("ALTER TABLE items ADD COLUMN last_slide_export TEXT"); } catch (e) { /* already exists */ }
   try { db.exec("ALTER TABLE items ADD COLUMN last_card_export TEXT"); } catch (e) { /* already exists */ }
   try { db.exec("ALTER TABLE items ADD COLUMN last_bid_update TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE items ADD COLUMN collected_at TEXT"); } catch (e) { /* already exists */ }
   try { db.exec("ALTER TABLE items ADD COLUMN text_mod_date TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE bidders ADD COLUMN ready_for_collection INTEGER NOT NULL DEFAULT 0"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE bidders ADD COLUMN ready_fingerprint TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE bidders ADD COLUMN ready_updated_at TEXT"); } catch (e) { /* already exists */ }
 
 
   // 2.4: Move to username-based accounts with multi-role permissions.

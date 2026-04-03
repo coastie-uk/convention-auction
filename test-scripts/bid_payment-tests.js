@@ -251,6 +251,16 @@ async function getBidderSummary(auctionId, bidderId) {
   return json;
 }
 
+async function getLiveFeed(auctionId, options = {}) {
+  const includeUnsold = options.includeUnsold === true;
+  const token = options.token || context.token;
+  const suffix = includeUnsold ? "?unsold=true" : "";
+  const { res, json, text } = await fetchJson(`${baseUrl}/cashier/live/${auctionId}${suffix}`, {
+    headers: authHeaders(token)
+  });
+  return { res, json, text };
+}
+
 async function createItem(auctionPublicId, description) {
   const form = new FormData();
   form.append("description", description);
@@ -315,11 +325,13 @@ addTest("P-002","setup: create auction and items", async () => {
 
 // /cashier/live/:auctionId
 addTest("P-003","GET /cashier/live/:auctionId success", async () => {
-  const { res, json } = await fetchJson(`${baseUrl}/cashier/live/${testData.auctionId}?unsold=true`, {
-    headers: authHeaders(context.token)
-  });
+  const { res, json } = await getLiveFeed(testData.auctionId, { includeUnsold: true });
   await expectStatus(res, 200);
-  assert.ok(Array.isArray(json), "Expected array");
+  assert.equal(json?.auction_id, testData.auctionId);
+  assert.ok(typeof json?.auction_status === "string", "Expected auction_status");
+  assert.ok(Array.isArray(json?.sold), "Expected sold array");
+  assert.ok(Array.isArray(json?.unsold), "Expected unsold array");
+  assert.ok(Array.isArray(json?.bidders), "Expected bidders array");
 });
 
 addTest("P-004","GET /cashier/live/:auctionId failure unauthenticated", async () => {
@@ -795,6 +807,131 @@ addTest("P-029","GET /settlement/bidders/:bidderid success", async () => {
     testData.paymentId = latestPayment.id;
   }
   assert.ok(testData.paymentId, "Missing payment id from bidder data");
+});
+
+addTest("P-029a","GET /cashier/live/:auctionId returns bidder payment and ready fields", async () => {
+  const { res, json } = await getLiveFeed(testData.auctionId, { includeUnsold: true });
+  await expectStatus(res, 200);
+  assert.equal(json?.auction_status, "settlement");
+
+  const soldItem = json.sold.find((row) => Number(row.id) === Number(testData.item1));
+  assert.ok(soldItem, "Expected finalized item in sold list");
+  assert.equal(Number(soldItem.bidder_id), Number(testData.bidderId));
+  assert.equal(soldItem.collected_at, null);
+  assert.ok(soldItem.last_bid_update, "Expected last_bid_update on sold item");
+
+  const bidder = json.bidders.find((row) => Number(row.bidder_id) === Number(testData.bidderId));
+  assert.ok(bidder, "Expected bidder summary in live feed");
+  assert.equal(bidder.payment_status, "part_paid");
+  assert.equal(Number(bidder.payments_total), 10);
+  assert.equal(bidder.ready_for_collection, false);
+  assert.equal(bidder.can_collect, true);
+  assert.ok(typeof bidder.current_fingerprint === "string" && bidder.current_fingerprint.length > 0, "Expected bidder fingerprint");
+  assert.ok(bidder.last_paid_at, "Expected last_paid_at after payment");
+});
+
+addTest("P-029b","POST /cashier/live/:auctionId/bidders/:bidderId/ready success", async () => {
+  const firstFeed = await getLiveFeed(testData.auctionId);
+  await expectStatus(firstFeed.res, 200);
+  const bidder = firstFeed.json.bidders.find((row) => Number(row.bidder_id) === Number(testData.bidderId));
+  assert.ok(bidder, "Expected bidder in live feed");
+
+  const { res, json } = await fetchJson(`${baseUrl}/cashier/live/${testData.auctionId}/bidders/${testData.bidderId}/ready`, {
+    method: "POST",
+    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ ready: true, fingerprint: bidder.current_fingerprint })
+  });
+  await expectStatus(res, 200);
+  assert.equal(json?.ready_for_collection, true);
+  assert.equal(json?.ready_fingerprint, bidder.current_fingerprint);
+
+  const after = await getLiveFeed(testData.auctionId);
+  await expectStatus(after.res, 200);
+  const updated = after.json.bidders.find((row) => Number(row.bidder_id) === Number(testData.bidderId));
+  assert.equal(updated?.ready_for_collection, true);
+  assert.equal(updated?.ready_fingerprint, bidder.current_fingerprint);
+  assert.ok(updated?.ready_updated_at, "Expected ready_updated_at after ready set");
+});
+
+addTest("P-029c","POST /cashier/live/:auctionId/items/:itemId/collection fails outside settlement", async () => {
+  await setAuctionStatusFor(testData.auctionId, "live");
+  const { res, json, text } = await fetchJson(`${baseUrl}/cashier/live/${testData.auctionId}/items/${testData.item1}/collection`, {
+    method: "POST",
+    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ collected: true })
+  });
+  await expectStatus(res, 400);
+  assert.ok((json?.error || text || "").includes("settlement"), "Expected settlement gating error");
+  await setAuctionStatusFor(testData.auctionId, "settlement");
+});
+
+addTest("P-029d","POST /cashier/live/:auctionId/items/:itemId/collection success auto-marks bidder ready", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/cashier/live/${testData.auctionId}/items/${testData.item1}/collection`, {
+    method: "POST",
+    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ collected: true })
+  });
+  await expectStatus(res, 200);
+  assert.equal(json?.ok, true);
+  assert.equal(json?.item_id, testData.item1);
+  assert.equal(json?.collected, true);
+
+  const feed = await getLiveFeed(testData.auctionId);
+  await expectStatus(feed.res, 200);
+  const soldItem = feed.json.sold.find((row) => Number(row.id) === Number(testData.item1));
+  const bidder = feed.json.bidders.find((row) => Number(row.bidder_id) === Number(testData.bidderId));
+  assert.ok(soldItem?.collected_at, "Expected collected_at after collection");
+  assert.equal(bidder?.ready_for_collection, true);
+  assert.equal(bidder?.all_collected, true);
+  assert.equal(Number(bidder?.collected_count), 1);
+  assert.equal(bidder?.ready_fingerprint, bidder?.current_fingerprint);
+});
+
+addTest("P-029e","GET /cashier/live/:auctionId/uncollected.csv excludes collected items", async () => {
+  const res = await fetch(`${baseUrl}/cashier/live/${testData.auctionId}/uncollected.csv`, {
+    headers: authHeaders(tokens.cashier)
+  });
+  await expectStatus(res, 200);
+  const body = await res.text();
+  assert.match(body, /paddle_number,lot,description,price,payments_total,payment_status/);
+  assert.ok(!body.includes("Phase1 Item 1"), "Collected item should not appear in uncollected CSV");
+});
+
+addTest("P-029f","POST /cashier/live/:auctionId/bidders/:bidderId/collect-all success", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/cashier/live/${testData.auctionId}/bidders/${testData.bidderId}/collect-all`, {
+    method: "POST",
+    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+    body: JSON.stringify({})
+  });
+  await expectStatus(res, 200);
+  assert.equal(json?.ok, true);
+  assert.equal(json?.bidder_id, testData.bidderId);
+});
+
+addTest("P-029g","POST /cashier/live/:auctionId/items/:itemId/collection can uncollect and keep later tests stable", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/cashier/live/${testData.auctionId}/items/${testData.item1}/collection`, {
+    method: "POST",
+    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ collected: false })
+  });
+  await expectStatus(res, 200);
+  assert.equal(json?.collected, false);
+
+  const readyClear = await fetchJson(`${baseUrl}/cashier/live/${testData.auctionId}/bidders/${testData.bidderId}/ready`, {
+    method: "POST",
+    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ ready: false })
+  });
+  await expectStatus(readyClear.res, 200);
+
+  const feed = await getLiveFeed(testData.auctionId);
+  await expectStatus(feed.res, 200);
+  const soldItem = feed.json.sold.find((row) => Number(row.id) === Number(testData.item1));
+  const bidder = feed.json.bidders.find((row) => Number(row.bidder_id) === Number(testData.bidderId));
+  assert.equal(soldItem?.collected_at, null);
+  assert.equal(bidder?.ready_for_collection, false);
+  assert.equal(bidder?.all_collected, false);
+  assert.equal(Number(bidder?.collected_count), 0);
 });
 
 addTest("P-030","GET /settlement/bidders/:bidderid failure unauthenticated", async () => {

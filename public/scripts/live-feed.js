@@ -11,10 +11,8 @@
   const VALIDATE = `${API_ROOT}/validate`;
   const params = new URLSearchParams(location.search);
   const AUCTION_ID = Number(params.get('auctionId'));
-  const AUCTION_STATUS = (params.get('auctionStatus') || '').toLowerCase();
   const currencySymbol = localStorage.getItem('currencySymbol') || '£';
-  const REFRESH_MS = AUCTION_STATUS === 'live' ? 5000 : 60000;
-  const READY_STORAGE_KEY = `live-feed-ready:${AUCTION_ID}`;
+  const REFRESH_MS = 5000;
   const RECENT_ACTIVITY_LIMIT = 12;
 
   if (!Number.isInteger(AUCTION_ID) || AUCTION_ID <= 0) {
@@ -26,6 +24,7 @@
   const chkUnsold = document.getElementById('showUnsold');
   const applyFilter = document.getElementById('btnApply');
   const refreshButton = document.getElementById('btnRefresh');
+  const uncollectedCsvButton = document.getElementById('btnUncollectedCsv');
   const countdownEl = document.getElementById('refreshCountdown');
   const filterInput = document.getElementById('filter');
   const changePersistInput = document.getElementById('changePersistSeconds');
@@ -47,7 +46,8 @@
   let soldSnapshotReady = false;
   let lastSoldRowsById = new Map();
   let itemEffects = new Map();
-  let readyState = loadReadyState();
+  let invalidatedChangesByBidder = new Map();
+  let lastPayload = { sold: [], unsold: [], bidders: [], auction_status: '' };
   let changePersistMs = loadChangePersistMs();
   let bucketSortOrder = loadBucketSortOrder();
   let showMultiItemBucketsOnly = loadShowMultiItemBucketsOnly();
@@ -60,30 +60,33 @@
       .replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;')
       .replaceAll("'", '&#39;');
+  function parseDurationInput(value) {
+    const seconds = Number(value);
+    return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 15000;
+  }
+
   const setStatus = ok => {
     statusEl.textContent = ok ? 'Updated' : 'Stale';
     statusEl.className = ok ? 'ok' : 'stale';
   };
+
   const formatCountdown = ms => {
     const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
-    return minutes > 0
-      ? `${minutes}:${String(seconds).padStart(2, '0')}`
-      : `${seconds}s`;
+    return minutes > 0 ? `${minutes}:${String(seconds).padStart(2, '0')}` : `${seconds}s`;
   };
+
   const updateCountdown = () => {
     if (!countdownEl) return;
     if (!nextRefreshAt) {
-  //    countdownEl.textContent = 'Next refresh: --';
+      countdownEl.textContent = '';
       return;
     }
+    const msRemaining = nextRefreshAt - Date.now();
+    countdownEl.textContent = msRemaining <= 0 ? 'Refreshing...' : `Next refresh: ${formatCountdown(msRemaining)}`;
+  };
 
-  //  const msRemaining = nextRefreshAt - Date.now();
-  //  countdownEl.textContent = msRemaining <= 0
-  //    ? 'Refreshing...'
-  //    : `Next refresh: ${formatCountdown(msRemaining)}`;
-   };
   const setNextRefresh = delayMs => {
     if (refreshTimer) clearTimeout(refreshTimer);
     nextRefreshAt = Date.now() + delayMs;
@@ -92,29 +95,12 @@
       void poll({ reschedule: true });
     }, delayMs);
   };
+
   const startCountdown = () => {
     if (countdownTimer) clearInterval(countdownTimer);
     countdownTimer = setInterval(updateCountdown, 1000);
     updateCountdown();
   };
-  function parseDurationInput(value) {
-    const seconds = Number(value);
-    return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 15000;
-  }
-
-  function loadReadyState() {
-    try {
-      const raw = localStorage.getItem(READY_STORAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : {};
-      return parsed && typeof parsed === 'object' ? parsed : {};
-    } catch {
-      return {};
-    }
-  }
-
-  function saveReadyState() {
-    localStorage.setItem(READY_STORAGE_KEY, JSON.stringify(readyState));
-  }
 
   function loadChangePersistMs() {
     const raw = localStorage.getItem('live-feed-change-persist-seconds');
@@ -123,7 +109,7 @@
 
   function loadBucketSortOrder() {
     const raw = localStorage.getItem('live-feed-bucket-sort-order');
-    if (raw === 'paddle' || raw === 'ready_state' || raw === 'last_update') return raw;
+    if (['paddle', 'ready_state', 'last_update', 'last_paid'].includes(raw)) return raw;
     return 'last_update';
   }
 
@@ -143,59 +129,10 @@
     localStorage.setItem('live-feed-show-multi-item-buckets-only', String(showMultiItemBucketsOnly));
   }
 
-  function syncChangePersistInput() {
-    if (changePersistInput) {
-      changePersistInput.value = String(Math.round(changePersistMs / 1000));
-    }
-  }
-
-  function syncBucketSortOrderInput() {
-    if (bucketSortOrderInput) {
-      bucketSortOrderInput.value = bucketSortOrder;
-    }
-  }
-
-  function syncShowMultiItemBucketsOnlyInput() {
-    if (showMultiItemBucketsOnlyInput) {
-      showMultiItemBucketsOnlyInput.checked = showMultiItemBucketsOnly;
-    }
-  }
-
-  function getActiveItemEffects() {
-    const now = Date.now();
-    for (const [rowid, effect] of itemEffects.entries()) {
-      if (effect.expiresAt <= now) itemEffects.delete(rowid);
-    }
-    return itemEffects;
-  }
-
-  function scheduleEffectRefresh() {
-    if (effectTimer) clearTimeout(effectTimer);
-    const activeEffects = getActiveItemEffects();
-    let nextExpiry = null;
-
-    for (const effect of activeEffects.values()) {
-      if (nextExpiry == null || effect.expiresAt < nextExpiry) nextExpiry = effect.expiresAt;
-    }
-
-    if (nextExpiry == null) return;
-
-    effectTimer = setTimeout(() => {
-      getActiveItemEffects();
-      renderCollation(lastRows);
-      scheduleEffectRefresh();
-    }, Math.max(0, nextExpiry - Date.now()) + 20);
-  }
-
-  function retimeActiveEffects() {
-    const now = Date.now();
-    for (const effect of itemEffects.values()) {
-      effect.expiresAt = effect.startedAt + changePersistMs;
-      if (effect.expiresAt <= now) {
-        itemEffects.delete(effect.rowid);
-      }
-    }
-    scheduleEffectRefresh();
+  function syncInputs() {
+    if (changePersistInput) changePersistInput.value = String(Math.round(changePersistMs / 1000));
+    if (bucketSortOrderInput) bucketSortOrderInput.value = bucketSortOrder;
+    if (showMultiItemBucketsOnlyInput) showMultiItemBucketsOnlyInput.checked = showMultiItemBucketsOnly;
   }
 
   function resetStale() {
@@ -236,105 +173,59 @@
     throw new Error('no valid token');
   }
 
-  applyFilter.addEventListener('click', () => {
-    void poll({ reschedule: true });
-  });
-
-  refreshButton?.addEventListener('click', () => {
-    void poll({ force: true, reschedule: true });
-  });
-
-  chkUnsold.onchange = () => {
-    void poll({ reschedule: true });
-  };
-
-  changePersistInput?.addEventListener('change', () => {
-    changePersistMs = parseDurationInput(changePersistInput.value);
-    saveChangePersistMs();
-    syncChangePersistInput();
-    retimeActiveEffects();
-    renderCollation(lastRows);
-  });
-
-  bucketSortOrderInput?.addEventListener('change', () => {
-    bucketSortOrder = bucketSortOrderInput.value;
-    saveBucketSortOrder();
-    syncBucketSortOrderInput();
-    renderCollation(lastRows);
-  });
-
-  showMultiItemBucketsOnlyInput?.addEventListener('change', () => {
-    showMultiItemBucketsOnly = Boolean(showMultiItemBucketsOnlyInput.checked);
-    saveShowMultiItemBucketsOnly();
-    syncShowMultiItemBucketsOnlyInput();
-    renderCollation(lastRows);
-  });
-
-  syncChangePersistInput();
-  syncBucketSortOrderInput();
-  syncShowMultiItemBucketsOnlyInput();
-
-  filterInput?.addEventListener('keydown', event => {
-    if (event.key === 'Enter') {
-      void poll({ reschedule: true });
+  function getActiveItemEffects() {
+    const now = Date.now();
+    for (const [rowid, effect] of itemEffects.entries()) {
+      if (effect.expiresAt <= now) itemEffects.delete(rowid);
     }
-  });
+    return itemEffects;
+  }
 
-  if (typeof initPhotoHoverPopup === 'function') {
-    initPhotoHoverPopup({
-      container: document.body,
-      delayMs: 1000,
-      maxSize: 220,
-      getUrl: tr => tr.dataset.photoUrl ? `${API_ROOT}/uploads/preview_${tr.dataset.photoUrl}` : null
+  function scheduleEffectRefresh() {
+    if (effectTimer) clearTimeout(effectTimer);
+    const activeEffects = getActiveItemEffects();
+    let nextExpiry = null;
+
+    for (const effect of activeEffects.values()) {
+      if (nextExpiry == null || effect.expiresAt < nextExpiry) nextExpiry = effect.expiresAt;
+    }
+    if (nextExpiry == null) return;
+
+    effectTimer = setTimeout(() => {
+      getActiveItemEffects();
+      render();
+      scheduleEffectRefresh();
+    }, Math.max(0, nextExpiry - Date.now()) + 20);
+  }
+
+  function retimeActiveEffects() {
+    const now = Date.now();
+    for (const effect of itemEffects.values()) {
+      effect.expiresAt = effect.startedAt + changePersistMs;
+      if (effect.expiresAt <= now) itemEffects.delete(effect.rowid);
+    }
+    scheduleEffectRefresh();
+  }
+
+  function mergeInvalidatedChanges(existing = {}, incoming = {}) {
+    const addedRowIds = new Set([
+      ...(existing.addedRowIds || []).map(String),
+      ...(incoming.addedRowIds || []).map(String)
+    ]);
+    const retractedRows = new Map();
+
+    [...(existing.retractedRows || []), ...(incoming.retractedRows || [])].forEach(row => {
+      if (!row?.rowid) return;
+      retractedRows.set(String(row.rowid), row);
     });
+
+    return {
+      addedRowIds: Array.from(addedRowIds),
+      retractedRows: Array.from(retractedRows.values())
+    };
   }
 
-  function createRow(item) {
-    const tr = document.createElement('tr');
-    const price = item.price != null ? money(item.price) : '';
-    const description = item.test_item != null ? `${item.description} [T]` : item.description;
-    const priceText = item.test_bid != null && price ? `${price} [T]` : price;
-
-    tr.dataset.rowid = String(item.rowid);
-    if (item.photo) tr.dataset.photoUrl = item.photo;
-
-    const paddleCell = document.createElement('td');
-    paddleCell.textContent = item.bidder ?? '';
-
-    const lotCell = document.createElement('td');
-    lotCell.textContent = item.lot ?? '';
-
-    const descCell = document.createElement('td');
-    descCell.textContent = description;
-
-    const priceCell = document.createElement('td');
-    priceCell.textContent = priceText;
-
-    tr.append(paddleCell, lotCell, descCell, priceCell);
-    return tr;
-  }
-
-  function createRecentRow(item) {
-    const tr = createRow(item);
-    tr.className = 'recent-sale-row';
-    return tr;
-  }
-
-  function getRecentSales(rows, filterValue = '') {
-    return rows
-      .filter(row => !row.unsold && row.bidder != null)
-      .filter(row => !filterValue || Number(filterValue) === Number(row.bidder))
-      .sort((a, b) => {
-        const timeA = a.last_bid_update || '';
-        const timeB = b.last_bid_update || '';
-        if (timeA === timeB) return Number(b.rowid) - Number(a.rowid);
-        return timeA < timeB ? 1 : -1;
-      })
-      .slice(0, RECENT_ACTIVITY_LIMIT);
-  }
-
-  function updateItemEffects(rows) {
-    const soldRows = rows.filter(row => !row.unsold && row.bidder != null);
+  function updateItemEffects(soldRows) {
     const currentSoldById = new Map(soldRows.map(row => [String(row.rowid), row]));
     if (!soldSnapshotReady) {
       soldSnapshotReady = true;
@@ -343,7 +234,6 @@
     }
 
     const now = Date.now();
-
     for (const [rowid, row] of currentSoldById.entries()) {
       if (!lastSoldRowsById.has(rowid)) {
         itemEffects.set(rowid, {
@@ -380,7 +270,7 @@
     scheduleEffectRefresh();
   }
 
-  function getBidderFingerprint(items) {
+  function buildBidderFingerprint(items) {
     return items
       .slice()
       .sort((a, b) => Number(a.rowid) - Number(b.rowid))
@@ -388,113 +278,28 @@
       .join('|');
   }
 
-  function renderRecentActivity(rows, filterValue) {
-    recentBody.innerHTML = '';
-
-    const visibleItems = getRecentSales(rows, filterValue);
-    if (visibleItems.length === 0) {
-      const tr = document.createElement('tr');
-      const td = document.createElement('td');
-      td.colSpan = 4;
-      td.className = 'empty-cell';
-      td.textContent = 'No sold items found for the current filter.';
-      tr.appendChild(td);
-      recentBody.appendChild(tr);
-      return;
-    }
-
-    visibleItems.forEach(item => {
-      recentBody.appendChild(createRecentRow(item));
-    });
+  function getRecentSales(rows, filterValue = '') {
+    return rows
+      .filter(row => !filterValue || Number(filterValue) === Number(row.bidder))
+      .sort((a, b) => {
+        const timeA = a.last_bid_update || '';
+        const timeB = b.last_bid_update || '';
+        if (timeA === timeB) return Number(b.rowid) - Number(a.rowid);
+        return timeA < timeB ? 1 : -1;
+      })
+      .slice(0, RECENT_ACTIVITY_LIMIT);
   }
 
-  function mergeInvalidatedChanges(existing = {}, incoming = {}) {
-    const addedRowIds = new Set([
-      ...(existing.addedRowIds || []).map(String),
-      ...(incoming.addedRowIds || []).map(String)
-    ]);
-    const retractedRows = new Map();
-
-    [...(existing.retractedRows || []), ...(incoming.retractedRows || [])].forEach(row => {
-      if (!row?.rowid) return;
-      retractedRows.set(String(row.rowid), row);
-    });
-
-    return {
-      addedRowIds: Array.from(addedRowIds),
-      retractedRows: Array.from(retractedRows.values())
-    };
+  function paymentStatusLabel(summary) {
+    if (summary.payment_status === 'paid_in_full') return `Paid in full ${money(summary.payments_total)}`;
+    if (summary.payment_status === 'part_paid') return `Part paid ${money(summary.payments_total)} / ${money(summary.lots_total)}`;
+    return 'Not paid';
   }
 
-  function updateReadyStateForBidder(bidder, fingerprint, changeSet = { addedRowIds: [], retractedRows: [] }) {
-    const state = readyState[bidder];
-    if (!state) return { ready: false, invalidated: false };
-
-    if (state.ready && state.fingerprint !== fingerprint) {
-      readyState[bidder] = {
-        ready: false,
-        fingerprint,
-        invalidatedAt: new Date().toISOString(),
-        invalidatedReason: 'This bidder changed after being marked ready.',
-        invalidatedChanges: mergeInvalidatedChanges({}, changeSet)
-      };
-      saveReadyState();
-      return {
-        ready: false,
-        invalidated: true,
-        invalidatedChanges: readyState[bidder].invalidatedChanges
-      };
-    }
-
-    if (state.invalidatedAt) {
-      const mergedChanges = mergeInvalidatedChanges(state.invalidatedChanges, changeSet);
-      const mergedChanged =
-        JSON.stringify(mergedChanges.addedRowIds) !== JSON.stringify((state.invalidatedChanges?.addedRowIds || [])) ||
-        JSON.stringify(mergedChanges.retractedRows.map(row => String(row.rowid))) !==
-          JSON.stringify((state.invalidatedChanges?.retractedRows || []).map(row => String(row.rowid)));
-
-      if (mergedChanged) {
-        readyState[bidder] = {
-          ...state,
-          fingerprint,
-          invalidatedChanges: mergedChanges
-        };
-        saveReadyState();
-      }
-
-      return {
-        ready: false,
-        invalidated: true,
-        invalidatedChanges: readyState[bidder].invalidatedChanges || mergedChanges
-      };
-    }
-
-    return {
-      ready: Boolean(state.ready),
-      invalidated: Boolean(state.invalidatedAt),
-      invalidatedChanges: state.invalidatedChanges || { addedRowIds: [], retractedRows: [] }
-    };
-  }
-
-  function setBidderReadyState(bidder, fingerprint, ready) {
-    readyState[bidder] = ready
-      ? {
-          ready: true,
-          fingerprint,
-          invalidatedAt: null,
-          invalidatedReason: null,
-          invalidatedChanges: { addedRowIds: [], retractedRows: [] },
-          updatedAt: new Date().toISOString()
-        }
-      : {
-          ready: false,
-          fingerprint,
-          invalidatedAt: null,
-          invalidatedReason: null,
-          invalidatedChanges: { addedRowIds: [], retractedRows: [] },
-          updatedAt: new Date().toISOString()
-        };
-    saveReadyState();
+  function paymentStatusClass(summary) {
+    if (summary.payment_status === 'paid_in_full') return 'badge-paid';
+    if (summary.payment_status === 'part_paid') return 'badge-part-paid';
+    return 'badge-not-paid';
   }
 
   function getBidderLastUpdate(items, extraRows = []) {
@@ -516,16 +321,129 @@
       return { primary: readyRank, secondary: recentRank };
     }
 
-    const timeValue = meta.lastUpdate || '';
-    return { primary: timeValue, secondary: Number(bidder) };
+    if (bucketSortOrder === 'last_paid') {
+      return { primary: meta.lastPaidAt || '', secondary: Number(bidder) };
+    }
+
+    return { primary: meta.lastUpdate || '', secondary: Number(bidder) };
   }
 
-  function createBidderGroup(bidder, items, isRecentBidder, fingerprint, readyMeta, bucketEffects) {
+  async function apiPost(url, body) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: token
+      },
+      body: JSON.stringify(body || {})
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      throw new Error(payload.error || `Request failed (${res.status})`);
+    }
+    return res.json().catch(() => ({}));
+  }
+
+  async function downloadUncollectedCsv() {
+    const res = await fetch(`${API}/${AUCTION_ID}/uncollected.csv`, {
+      headers: { Authorization: token }
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      throw new Error(payload.error || 'CSV fetch failed');
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `uncollected-auction-${AUCTION_ID}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function setBidderReady(summary, ready, fingerprint) {
+    await apiPost(`${API}/${AUCTION_ID}/bidders/${summary.bidder_id}/ready`, {
+      ready,
+      fingerprint
+    });
+    if (ready) invalidatedChangesByBidder.delete(String(summary.bidder_id));
+    void poll({ force: true, reschedule: true });
+  }
+
+  async function setItemCollected(item, collected) {
+    await apiPost(`${API}/${AUCTION_ID}/items/${item.id}/collection`, { collected });
+    void poll({ force: true, reschedule: true });
+  }
+
+  async function collectAll(summary) {
+    await apiPost(`${API}/${AUCTION_ID}/bidders/${summary.bidder_id}/collect-all`, {});
+    invalidatedChangesByBidder.delete(String(summary.bidder_id));
+    void poll({ force: true, reschedule: true });
+  }
+
+  function renderRecentActivity(soldRows, filterValue) {
+    recentBody.innerHTML = '';
+    const visibleItems = getRecentSales(soldRows, filterValue);
+    if (visibleItems.length === 0) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 4;
+      td.className = 'empty-cell';
+      td.textContent = 'No sold items found for the current filter.';
+      tr.appendChild(td);
+      recentBody.appendChild(tr);
+      return;
+    }
+
+    visibleItems.forEach(item => {
+      const tr = document.createElement('tr');
+      tr.className = 'recent-sale-row';
+      if (item.photo) tr.dataset.photoUrl = item.photo;
+
+      const description = item.test_item ? `${item.description} [T]` : item.description;
+      const price = item.test_bid ? `${money(item.price)} [T]` : money(item.price);
+
+      [item.bidder ?? '', item.lot ?? '', description, price].forEach(value => {
+        const td = document.createElement('td');
+        td.textContent = value;
+        tr.appendChild(td);
+      });
+      recentBody.appendChild(tr);
+    });
+  }
+
+  function renderUnsold(rows) {
+    unsoldBody.innerHTML = '';
+    const visible = rows.slice().sort((a, b) => Number(a.lot) - Number(b.lot));
+
+    unsoldSectionEl.hidden = !chkUnsold.checked;
+    unsoldEmptyEl.hidden = visible.length > 0;
+    if (!chkUnsold.checked) return;
+
+    visible.forEach(item => {
+      const tr = document.createElement('tr');
+      tr.className = 'unsold-row';
+      if (item.photo) tr.dataset.photoUrl = item.photo;
+
+      const lotCell = document.createElement('td');
+      lotCell.textContent = item.lot ?? '';
+
+      const descCell = document.createElement('td');
+      descCell.textContent = item.description ?? '';
+
+      tr.append(lotCell, descCell);
+      unsoldBody.appendChild(tr);
+    });
+  }
+
+  function createBidderGroup(summary, items, readyMeta, bucketEffects) {
     const group = document.createElement('section');
     group.className = 'bidder-group';
     if (readyMeta.ready) group.classList.add('is-ready');
     if (readyMeta.invalidated) group.classList.add('is-invalidated');
-    if (isRecentBidder) group.classList.add('has-recent-activity');
+    if (bucketEffects.hasTimedChange) group.classList.add('has-recent-activity');
     if (bucketEffects.hasAdded) group.classList.add('has-added-change');
     if (bucketEffects.hasRetracted) group.classList.add('has-retracted-change');
 
@@ -540,7 +458,7 @@
     titleWrap.className = 'bidder-group-title';
 
     const heading = document.createElement('h3');
-    heading.textContent = `Paddle ${bidder}`;
+    heading.textContent = `Paddle ${summary.bidder}`;
 
     const meta = document.createElement('div');
     meta.className = 'bidder-group-meta';
@@ -553,7 +471,19 @@
     const badges = document.createElement('div');
     badges.className = 'bidder-badges';
 
-    if (isRecentBidder) {
+    const paymentBadge = document.createElement('span');
+    paymentBadge.className = `badge ${paymentStatusClass(summary)}`;
+    paymentBadge.textContent = paymentStatusLabel(summary);
+    badges.appendChild(paymentBadge);
+
+    if (summary.collected_count > 0) {
+      const collectedBadge = document.createElement('span');
+      collectedBadge.className = 'badge badge-collected';
+      collectedBadge.textContent = `${summary.collected_count}/${summary.item_count} collected`;
+      badges.appendChild(collectedBadge);
+    }
+
+    if (bucketEffects.hasTimedChange) {
       const newBadge = document.createElement('span');
       newBadge.className = 'badge badge-recent';
       newBadge.textContent = 'New activity';
@@ -588,36 +518,60 @@
       badges.appendChild(invalidBadge);
     }
 
-    const actions = document.createElement('label');
-    actions.className = 'ready-toggle';
+    const actionWrap = document.createElement('div');
+    actionWrap.className = 'bucket-actions';
 
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.checked = readyMeta.ready;
-    checkbox.addEventListener('change', () => {
-      setBidderReadyState(bidder, fingerprint, checkbox.checked);
-      renderCollation(lastRows);
+    const readyLabel = document.createElement('label');
+    readyLabel.className = 'ready-toggle';
+
+    const readyCheckbox = document.createElement('input');
+    readyCheckbox.type = 'checkbox';
+    readyCheckbox.checked = readyMeta.ready;
+    readyCheckbox.addEventListener('change', () => {
+      const nextReady = readyCheckbox.checked;
+      readyCheckbox.disabled = true;
+      void setBidderReady(summary, nextReady, summary.current_fingerprint).catch(error => {
+        alert(error.message);
+        readyCheckbox.checked = !nextReady;
+        readyCheckbox.disabled = false;
+      });
     });
 
-    const actionText = document.createElement('span');
-    actionText.textContent = 'Ready for collection';
-    actions.append(checkbox, actionText);
+    const readyText = document.createElement('span');
+    readyText.textContent = 'Ready';
+    readyLabel.append(readyCheckbox, readyText);
 
-    header.append(titleWrap, badges, actions);
+    const collectAllButton = document.createElement('button');
+    collectAllButton.type = 'button';
+    collectAllButton.className = 'action-btn';
+    collectAllButton.textContent = summary.all_collected ? 'All collected' : 'Collect all';
+    collectAllButton.disabled = !summary.can_collect || summary.all_collected;
+    collectAllButton.title = summary.can_collect
+      ? 'Mark every item in this bucket as collected'
+      : 'Collection requires settlement mode and a nonzero payment';
+    collectAllButton.addEventListener('click', () => {
+      collectAllButton.disabled = true;
+      void collectAll(summary).catch(error => {
+        alert(error.message);
+        collectAllButton.disabled = false;
+      });
+    });
+
+    actionWrap.append(readyLabel, collectAllButton);
+    header.append(titleWrap, badges, actionWrap);
     group.appendChild(header);
 
     if (readyMeta.invalidated) {
       const alert = document.createElement('div');
       alert.className = 'bidder-alert';
-      alert.textContent = 'This bucket changed after being marked ready';
+      alert.textContent = 'This bucket changed after being marked ready.';
       group.appendChild(alert);
     }
 
     const table = document.createElement('table');
     table.className = 'datatable bidder-table';
-
     const thead = document.createElement('thead');
-    thead.innerHTML = '<tr><th>Lot</th><th>Title</th><th>Price</th></tr>';
+    thead.innerHTML = '<tr><th>Lot</th><th>Title</th><th>Price</th><th>Pickup</th></tr>';
 
     const tbody = document.createElement('tbody');
     items
@@ -633,178 +587,184 @@
         if (item.photo) tr.dataset.photoUrl = item.photo;
         if (item.changeType === 'added') tr.classList.add('item-row-added');
         if (item.changeType === 'retracted') tr.classList.add('item-row-retracted');
+        if (item.collected_at) tr.classList.add('item-row-collected');
 
         const lotCell = document.createElement('td');
         lotCell.textContent = item.lot ?? '';
 
         const descCell = document.createElement('td');
-        descCell.textContent = item.test_item != null ? `${item.description} [T]` : item.description;
+        descCell.textContent = item.test_item ? `${item.description} [T]` : item.description;
 
         const priceCell = document.createElement('td');
-        priceCell.textContent = item.test_bid != null ? `${money(item.price)} [T]` : money(item.price);
+        priceCell.textContent = item.test_bid ? `${money(item.price)} [T]` : money(item.price);
 
-        tr.append(lotCell, descCell, priceCell);
+        const pickupCell = document.createElement('td');
+        pickupCell.className = 'pickup-cell';
+        if (item.changeType === 'retracted') {
+          pickupCell.textContent = '';
+        } else {
+          const pickupToggle = document.createElement('input');
+          pickupToggle.type = 'checkbox';
+          pickupToggle.className = 'pickup-toggle';
+          pickupToggle.checked = Boolean(item.collected_at);
+          pickupToggle.disabled = !summary.can_collect;
+          pickupToggle.title = summary.can_collect
+            ? 'Mark this item as collected'
+            : 'Collection requires settlement mode and a nonzero payment';
+          pickupToggle.addEventListener('change', () => {
+            const nextCollected = pickupToggle.checked;
+            pickupToggle.disabled = true;
+            void setItemCollected(item, nextCollected).catch(error => {
+              alert(error.message);
+              pickupToggle.checked = !nextCollected;
+              pickupToggle.disabled = false;
+            });
+          });
+          pickupCell.appendChild(pickupToggle);
+        }
+
+        tr.append(lotCell, descCell, priceCell, pickupCell);
         tbody.appendChild(tr);
       });
 
     table.append(thead, tbody);
     group.appendChild(table);
-
     return group;
   }
 
-  function renderUnsold(rows) {
-    unsoldBody.innerHTML = '';
-    const visible = rows.slice().sort((a, b) => Number(a.lot) - Number(b.lot));
-
-    unsoldSectionEl.hidden = !chkUnsold.checked;
-    unsoldEmptyEl.hidden = visible.length > 0;
-
-    if (!chkUnsold.checked) return;
-
-    visible.forEach(item => {
-      const tr = document.createElement('tr');
-      tr.className = 'unsold-row';
-      tr.dataset.rowid = String(item.rowid);
-      if (item.photo) tr.dataset.photoUrl = item.photo;
-
-      const lotCell = document.createElement('td');
-      lotCell.textContent = item.lot ?? '';
-
-      const descCell = document.createElement('td');
-      descCell.textContent = item.description ?? '';
-
-      tr.append(lotCell, descCell);
-      unsoldBody.appendChild(tr);
-    });
-  }
-
-  function renderCollation(rows) {
+  function buildViewModel() {
     const filterValue = filterInput?.value.trim() || '';
-    const soldRows = rows.filter(row => !row.unsold && row.bidder != null);
-    const unsoldRows = rows.filter(row => row.unsold);
+    const soldRows = lastPayload.sold || [];
+    const unsoldRows = lastPayload.unsold || [];
+    const bidderSummaryMap = new Map((lastPayload.bidders || []).map(summary => [Number(summary.bidder_id), summary]));
     const allBidderMap = new Map();
-    const bidderMap = new Map();
+    soldRows.forEach(row => {
+      const bidderId = Number(row.bidder_id);
+      if (!Number.isFinite(bidderId)) return;
+      if (!allBidderMap.has(bidderId)) allBidderMap.set(bidderId, []);
+      allBidderMap.get(bidderId).push(row);
+    });
+
     const activeEffects = Array.from(getActiveItemEffects().values());
     const timedChangesByBidder = new Map();
-
     activeEffects.forEach(effect => {
-      const bidder = Number(effect.snapshot?.bidder);
-      if (!Number.isFinite(bidder)) return;
-      if (!timedChangesByBidder.has(bidder)) {
-        timedChangesByBidder.set(bidder, { addedRowIds: [], retractedRows: [] });
+      const bidderId = Number(effect.snapshot?.bidder_id);
+      if (!Number.isFinite(bidderId)) return;
+      if (!timedChangesByBidder.has(bidderId)) {
+        timedChangesByBidder.set(bidderId, { addedRowIds: [], retractedRows: [] });
       }
-      if (effect.type === 'added') {
-        timedChangesByBidder.get(bidder).addedRowIds.push(String(effect.rowid));
-      }
-      if (effect.type === 'retracted') {
-        timedChangesByBidder.get(bidder).retractedRows.push({ ...effect.snapshot, changeType: 'retracted' });
-      }
+      if (effect.type === 'added') timedChangesByBidder.get(bidderId).addedRowIds.push(String(effect.rowid));
+      if (effect.type === 'retracted') timedChangesByBidder.get(bidderId).retractedRows.push({ ...effect.snapshot, changeType: 'retracted' });
     });
 
-    const bucketEffectsByBidder = new Map();
-
-    soldRows.forEach(row => {
-      const bidder = Number(row.bidder);
-      if (!allBidderMap.has(bidder)) allBidderMap.set(bidder, []);
-      allBidderMap.get(bidder).push(row);
-    });
     const bidderMeta = new Map();
-    const allBidders = new Set([
+    const allBidderIds = new Set([
       ...allBidderMap.keys(),
       ...timedChangesByBidder.keys(),
-      ...Object.keys(readyState).map(Number).filter(Number.isFinite)
+      ...bidderSummaryMap.keys()
     ]);
 
-    allBidders.forEach(bidder => {
-      const items = allBidderMap.get(bidder) || [];
-      const fingerprint = getBidderFingerprint(items);
-      const timedChanges = timedChangesByBidder.get(bidder) || { addedRowIds: [], retractedRows: [] };
-      const readyMeta = updateReadyStateForBidder(bidder, fingerprint, timedChanges);
-      const persistentChanges = readyMeta.invalidated
-        ? mergeInvalidatedChanges({}, readyMeta.invalidatedChanges)
-        : { addedRowIds: [], retractedRows: [] };
+    allBidderIds.forEach(bidderId => {
+      const summary = bidderSummaryMap.get(bidderId);
+      if (!summary) return;
+      const items = allBidderMap.get(bidderId) || [];
+      const fingerprint = summary.current_fingerprint || buildBidderFingerprint(items);
+      const timedChanges = timedChangesByBidder.get(bidderId) || { addedRowIds: [], retractedRows: [] };
+      const backendReady = Boolean(summary.ready_for_collection);
+      const invalidated = backendReady && summary.ready_fingerprint && summary.ready_fingerprint !== fingerprint;
 
-      bidderMeta.set(bidder, {
-        fingerprint,
-        readyMeta,
-        timedChanges,
-        persistentChanges
-      });
-    });
+      let persistentInvalidation = invalidatedChangesByBidder.get(String(bidderId)) || { addedRowIds: [], retractedRows: [] };
+      if (invalidated) {
+        persistentInvalidation = mergeInvalidatedChanges(persistentInvalidation, timedChanges);
+        invalidatedChangesByBidder.set(String(bidderId), persistentInvalidation);
+      } else {
+        invalidatedChangesByBidder.delete(String(bidderId));
+        persistentInvalidation = { addedRowIds: [], retractedRows: [] };
+      }
 
-    bidderMeta.forEach((meta, bidder) => {
-      const combinedChanges = meta.readyMeta.invalidated
-        ? mergeInvalidatedChanges(meta.timedChanges, meta.persistentChanges)
-        : meta.timedChanges;
-      const timedAdded = new Set((meta.timedChanges.addedRowIds || []).map(String));
+      const combinedChanges = invalidated
+        ? mergeInvalidatedChanges(timedChanges, persistentInvalidation)
+        : timedChanges;
       const combinedAdded = new Set((combinedChanges.addedRowIds || []).map(String));
+      const timedAdded = new Set((timedChanges.addedRowIds || []).map(String));
       const retractedRows = new Map();
-
-      [...(combinedChanges.retractedRows || [])].forEach(row => {
+      (combinedChanges.retractedRows || []).forEach(row => {
         if (!row?.rowid) return;
         retractedRows.set(String(row.rowid), { ...row, changeType: 'retracted' });
       });
 
-      const bucketEffects = {
-        hasAdded: combinedAdded.size > 0,
-        hasRetracted: retractedRows.size > 0,
-        hasTimedChange: timedAdded.size > 0 || (meta.timedChanges.retractedRows || []).length > 0
-      };
-      bucketEffectsByBidder.set(bidder, bucketEffects);
-      meta.bucketEffects = bucketEffects;
-      meta.lastUpdate = getBidderLastUpdate(allBidderMap.get(bidder) || [], [...retractedRows.values()]);
-
-      const visibleByFilter = !filterValue || bidder === Number(filterValue);
-      if (!visibleByFilter) return;
-
-      const liveCount = (allBidderMap.get(bidder) || []).length;
-      if (showMultiItemBucketsOnly && liveCount <= 1) return;
-
-      const displayRows = (allBidderMap.get(bidder) || []).map(row => ({
+      const displayRows = items.map(row => ({
         ...row,
         changeType: combinedAdded.has(String(row.rowid)) ? 'added' : null
       }));
+      retractedRows.forEach(row => displayRows.push(row));
 
-      retractedRows.forEach(row => {
-        displayRows.push(row);
+      const liveCount = items.length;
+      const visibleByFilter = !filterValue || summary.bidder === Number(filterValue);
+      const visibleByCount = !showMultiItemBucketsOnly || liveCount > 1;
+      const bucketEffects = {
+        hasAdded: combinedAdded.size > 0,
+        hasRetracted: retractedRows.size > 0,
+        hasTimedChange: timedAdded.size > 0 || (timedChanges.retractedRows || []).length > 0
+      };
+
+      bidderMeta.set(bidderId, {
+        summary,
+        fingerprint,
+        readyMeta: {
+          ready: backendReady && !invalidated,
+          invalidated
+        },
+        bucketEffects,
+        displayRows,
+        visible: visibleByFilter && visibleByCount && displayRows.length > 0,
+        lastUpdate: getBidderLastUpdate(items, [...retractedRows.values()]),
+        lastPaidAt: summary.last_paid_at || ''
       });
-
-      if (displayRows.length > 0) bidderMap.set(bidder, displayRows);
     });
 
+    return {
+      filterValue,
+      soldRows,
+      unsoldRows,
+      bidderMeta
+    };
+  }
+
+  function render() {
+    const { filterValue, soldRows, unsoldRows, bidderMeta } = buildViewModel();
+    const visibleBidderIds = Array.from(bidderMeta.keys()).filter(bidderId => bidderMeta.get(bidderId).visible);
     const recentBidderSet = new Set(
-      Array.from(bucketEffectsByBidder.entries())
-        .filter(([, effects]) => effects.hasTimedChange)
-        .map(([bidder]) => bidder)
+      Array.from(bidderMeta.entries())
+        .filter(([, meta]) => meta.bucketEffects.hasTimedChange)
+        .map(([bidderId]) => bidderId)
     );
-    const bidderNumbers = Array.from(bidderMap.keys()).sort((a, b) => {
+
+    visibleBidderIds.sort((a, b) => {
       const metaA = bidderMeta.get(a);
       const metaB = bidderMeta.get(b);
-      const rankA = getBidderSortRank(metaA, a);
-      const rankB = getBidderSortRank(metaB, b);
+      const rankA = getBidderSortRank(metaA, metaA.summary.bidder);
+      const rankB = getBidderSortRank(metaB, metaB.summary.bidder);
 
-      if (bucketSortOrder === 'paddle') {
-        return rankA.primary - rankB.primary;
-      }
+      if (bucketSortOrder === 'paddle') return rankA.primary - rankB.primary;
 
       if (bucketSortOrder === 'ready_state') {
         if (rankA.primary !== rankB.primary) return rankA.primary - rankB.primary;
         if (rankA.secondary !== rankB.secondary) return rankA.secondary - rankB.secondary;
-        const timeA = metaA?.lastUpdate || '';
-        const timeB = metaB?.lastUpdate || '';
+        const timeA = metaA.lastUpdate || '';
+        const timeB = metaB.lastUpdate || '';
         if (timeA !== timeB) return timeA < timeB ? 1 : -1;
-        return a - b;
+        return metaA.summary.bidder - metaB.summary.bidder;
       }
 
       if (rankA.primary !== rankB.primary) return rankA.primary < rankB.primary ? 1 : -1;
-      return a - b;
+      return metaA.summary.bidder - metaB.summary.bidder;
     });
 
     bidderGroupsEl.innerHTML = '';
-    bidderSummaryEl.textContent = `${bidderNumbers.length} bidder group${bidderNumbers.length === 1 ? '' : 's'} shown`;
+    bidderSummaryEl.textContent = `${visibleBidderIds.length} bidder group${visibleBidderIds.length === 1 ? '' : 's'} shown • ${lastPayload.auction_status || 'unknown'}`;
 
-    if (bidderNumbers.length === 0) {
+    if (visibleBidderIds.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'empty-state';
       if (filterValue) {
@@ -816,16 +776,14 @@
       }
       bidderGroupsEl.appendChild(empty);
     } else {
-      bidderNumbers.forEach(bidder => {
-        const meta = bidderMeta.get(bidder);
+      visibleBidderIds.forEach(bidderId => {
+        const meta = bidderMeta.get(bidderId);
         bidderGroupsEl.appendChild(
           createBidderGroup(
-            bidder,
-            bidderMap.get(bidder),
-            recentBidderSet.has(bidder),
-            meta.fingerprint,
+            meta.summary,
+            meta.displayRows,
             meta.readyMeta,
-            bucketEffectsByBidder.get(bidder) || { hasAdded: false, hasRetracted: false }
+            meta.bucketEffects
           )
         );
       });
@@ -835,8 +793,6 @@
     renderUnsold(filterValue ? unsoldRows.filter(row => Number(filterValue) === Number(row.bidder)) : unsoldRows);
   }
 
-  let lastRows = [];
-
   async function poll({ force = false, reschedule = false } = {}) {
     if (pollInFlight) {
       if (force) setNextRefresh(1000);
@@ -845,6 +801,7 @@
 
     pollInFlight = true;
     if (refreshButton) refreshButton.disabled = true;
+    if (uncollectedCsvButton) uncollectedCsvButton.disabled = true;
     nextRefreshAt = null;
     updateCountdown();
 
@@ -854,10 +811,15 @@
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      const rows = await res.json();
-      lastRows = Array.isArray(rows) ? rows : [];
-      updateItemEffects(lastRows);
-      renderCollation(lastRows);
+      const payload = await res.json();
+      lastPayload = {
+        sold: Array.isArray(payload?.sold) ? payload.sold : [],
+        unsold: Array.isArray(payload?.unsold) ? payload.unsold : [],
+        bidders: Array.isArray(payload?.bidders) ? payload.bidders : [],
+        auction_status: payload?.auction_status || ''
+      };
+      updateItemEffects(lastPayload.sold);
+      render();
       setStatus(true);
       resetStale();
     } catch {
@@ -865,6 +827,7 @@
     } finally {
       pollInFlight = false;
       if (refreshButton) refreshButton.disabled = false;
+      if (uncollectedCsvButton) uncollectedCsvButton.disabled = false;
       if (reschedule && document.visibilityState === 'visible') {
         setNextRefresh(REFRESH_MS);
       } else if (document.visibilityState !== 'visible') {
@@ -874,19 +837,72 @@
     }
   }
 
-  function startAutoRefresh() {
-    startCountdown();
+  applyFilter.addEventListener('click', () => {
+    render();
+    void poll({ reschedule: true });
+  });
+
+  refreshButton?.addEventListener('click', () => {
+    void poll({ force: true, reschedule: true });
+  });
+
+  uncollectedCsvButton?.addEventListener('click', () => {
+    void downloadUncollectedCsv().catch(error => alert(error.message));
+  });
+
+  chkUnsold.onchange = () => {
+    render();
+    void poll({ reschedule: true });
+  };
+
+  changePersistInput?.addEventListener('change', () => {
+    changePersistMs = parseDurationInput(changePersistInput.value);
+    saveChangePersistMs();
+    syncInputs();
+    retimeActiveEffects();
+    render();
+  });
+
+  bucketSortOrderInput?.addEventListener('change', () => {
+    bucketSortOrder = bucketSortOrderInput.value;
+    saveBucketSortOrder();
+    syncInputs();
+    render();
+  });
+
+  showMultiItemBucketsOnlyInput?.addEventListener('change', () => {
+    showMultiItemBucketsOnly = Boolean(showMultiItemBucketsOnlyInput.checked);
+    saveShowMultiItemBucketsOnly();
+    syncInputs();
+    render();
+  });
+
+  filterInput?.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      render();
+      void poll({ reschedule: true });
+    }
+  });
+
+  syncInputs();
+
+  if (typeof initPhotoHoverPopup === 'function') {
+    initPhotoHoverPopup({
+      container: document.body,
+      delayMs: 1000,
+      maxSize: 220,
+      getUrl: tr => tr.dataset.photoUrl ? `${API_ROOT}/uploads/preview_${tr.dataset.photoUrl}` : null
+    });
   }
 
+  startCountdown();
   void poll({ reschedule: true });
-  startAutoRefresh();
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       void poll({ reschedule: true });
       return;
     }
-
     if (refreshTimer) clearTimeout(refreshTimer);
     nextRefreshAt = null;
     updateCountdown();

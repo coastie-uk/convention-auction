@@ -62,53 +62,356 @@ module.exports = function phase1Patch (app) {
   //--------------------------------------------------------------------------
   const liveFeed = express.Router();
 
-   liveFeed.get('/live/:auctionId', authenticateRole(["admin", "cashier"]), (req, res) => {
-   const id   = Number(req.params.auctionId);
- const include_unsold  = req.query.unsold === 'true';
+  const derivePaymentStatus = (lotsTotal, paymentsTotal) => {
+    const lots = Number(lotsTotal || 0);
+    const paid = Number(paymentsTotal || 0);
+    if (paid <= 0) return 'not_paid';
+    if (paid >= lots && lots > 0) return 'paid_in_full';
+    return 'part_paid';
+  };
 
-  // liveFeed.post('/live', authenticateRole(["admin", "cashier"]), (req, res) => {
-  //   const { auction_id: id, include_unsold } = req.body || {};
-    if (!Number.isInteger(id) || id <= 0) {
-      return res.status(400).json({ error: 'auction_id required' });
+  const buildBidderFingerprint = (items) => items
+    .slice()
+    .sort((a, b) => Number(a.rowid) - Number(b.rowid))
+    .map(item => `${item.rowid}:${item.lot}:${item.price ?? ''}`)
+    .join('|');
+
+  const getAuctionStatus = (auctionId) => {
+    const row = db.get('SELECT status FROM auctions WHERE id = ?', [auctionId]);
+    return row?.status || null;
+  };
+
+  const getLiveFeedPayload = (auctionId, includeUnsold) => {
+    const auctionStatus = getAuctionStatus(auctionId);
+    if (!auctionStatus) {
+      const error = new Error('Auction not found');
+      error.statusCode = 404;
+      throw error;
     }
-  try {
-    // sold lots
+
     const sold = db.all(`
-      SELECT i.item_number AS lot,
+      SELECT i.id,
+             i.item_number AS lot,
              i.description,
+             i.winning_bidder_id AS bidder_id,
              b.paddle_number AS bidder,
              i.hammer_price  AS price,
              i.ROWID         AS rowid,
              i.last_bid_update,
+             i.collected_at,
              i.test_item,
              i.test_bid,
              i.photo
         FROM items i
         LEFT JOIN bidders b ON b.id = i.winning_bidder_id
        WHERE i.auction_id = ? AND i.hammer_price IS NOT NULL
-       ORDER BY i.last_bid_update DESC, i.ROWID DESC`, [id]);
-  
-    // optionally unsold
-    const unsold = include_unsold
+       ORDER BY i.last_bid_update DESC, i.ROWID DESC
+    `, [auctionId]);
+
+    const unsold = includeUnsold
       ? db.all(`
-          SELECT i.item_number AS lot,
+          SELECT i.id,
+                 i.item_number AS lot,
                  i.description,
                  i.photo,
-                 NULL            AS paddle,
+                 NULL            AS bidder_id,
+                 NULL            AS bidder,
                  NULL            AS price,
                  i.ROWID         AS rowid,
                  NULL            AS last_bid_update,
+                 NULL            AS collected_at,
                  1               AS unsold
             FROM items i
            WHERE i.auction_id = ? AND i.hammer_price IS NULL
-           ORDER BY i.item_number`, [id])
+           ORDER BY i.item_number
+        `, [auctionId])
       : [];
-  
-    res.json([...sold, ...unsold]);          // sold first, unsold after
+
+    const bidderRows = db.all(`
+      SELECT b.id AS bidder_id,
+             b.paddle_number AS bidder,
+             IFNULL(b.name, '') AS name,
+             b.ready_for_collection,
+             b.ready_fingerprint,
+             b.ready_updated_at,
+             IFNULL(SUM(i.hammer_price), 0) AS lots_total,
+             IFNULL(SUM(CASE WHEN i.collected_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS collected_count,
+             IFNULL(COUNT(i.id), 0) AS item_count,
+             IFNULL(p.payments_total, 0) AS payments_total,
+             p.last_paid_at
+        FROM bidders b
+        LEFT JOIN items i
+               ON i.winning_bidder_id = b.id
+              AND i.auction_id = b.auction_id
+              AND i.hammer_price IS NOT NULL
+        LEFT JOIN (
+          SELECT bidder_id,
+                 SUM(amount) AS payments_total,
+                 MAX(created_at) AS last_paid_at
+            FROM payments
+           GROUP BY bidder_id
+        ) p ON p.bidder_id = b.id
+       WHERE b.auction_id = ?
+       GROUP BY b.id
+       HAVING COUNT(i.id) > 0 OR IFNULL(p.payments_total, 0) > 0
+       ORDER BY b.paddle_number
+    `, [auctionId]);
+
+    const soldByBidder = new Map();
+    sold.forEach(item => {
+      const bidderId = Number(item.bidder_id);
+      if (!Number.isFinite(bidderId)) return;
+      if (!soldByBidder.has(bidderId)) soldByBidder.set(bidderId, []);
+      soldByBidder.get(bidderId).push(item);
+    });
+
+    const bidders = bidderRows.map(row => {
+      const items = soldByBidder.get(Number(row.bidder_id)) || [];
+      const fingerprint = buildBidderFingerprint(items);
+      const lotsTotal = Number(row.lots_total || 0);
+      const paymentsTotal = Number(row.payments_total || 0);
+      return {
+        bidder_id: row.bidder_id,
+        bidder: row.bidder,
+        name: row.name,
+        ready_for_collection: Boolean(row.ready_for_collection),
+        ready_fingerprint: row.ready_fingerprint || '',
+        ready_updated_at: row.ready_updated_at || null,
+        lots_total: lotsTotal,
+        payments_total: paymentsTotal,
+        payment_status: derivePaymentStatus(lotsTotal, paymentsTotal),
+        last_paid_at: row.last_paid_at || null,
+        item_count: Number(row.item_count || 0),
+        collected_count: Number(row.collected_count || 0),
+        all_collected: Number(row.item_count || 0) > 0 && Number(row.collected_count || 0) === Number(row.item_count || 0),
+        can_collect: auctionStatus === 'settlement' && paymentsTotal > 0,
+        current_fingerprint: fingerprint
+      };
+    });
+
+    return {
+      auction_id: auctionId,
+      auction_status: auctionStatus,
+      sold,
+      unsold,
+      bidders
+    };
+  };
+
+   liveFeed.get('/live/:auctionId', authenticateRole(["admin", "cashier"]), (req, res) => {
+   const id   = Number(req.params.auctionId);
+ const include_unsold  = req.query.unsold === 'true';
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'auction_id required' });
+    }
+  try {
+    res.json(getLiveFeedPayload(id, include_unsold));
   } catch (error) {
     logFromRequest(req, logLevels.ERROR, `Failed to fetch live feed for auction ${id}: ${error.message}`);
-    res.status(500).json({ error: `Failed to fetch live feed for auction ${id}: ${error.message}` });
+    res.status(error.statusCode || 500).json({ error: `Failed to fetch live feed for auction ${id}: ${error.message}` });
   }
+  });
+
+  liveFeed.post('/live/:auctionId/bidders/:bidderId/ready', authenticateRole(["admin", "cashier"]), (req, res) => {
+    const auctionId = Number(req.params.auctionId);
+    const bidderId = Number(req.params.bidderId);
+    const ready = Boolean(req.body?.ready);
+    const fingerprint = ready ? String(req.body?.fingerprint || '') : null;
+
+    if (!Number.isInteger(auctionId) || auctionId <= 0 || !Number.isInteger(bidderId) || bidderId <= 0) {
+      return res.status(400).json({ error: 'auctionId and bidderId required' });
+    }
+
+    const bidder = db.get('SELECT id FROM bidders WHERE id = ? AND auction_id = ?', [bidderId, auctionId]);
+    if (!bidder) return res.status(404).json({ error: 'Bidder not found for this auction' });
+
+    db.run(`
+      UPDATE bidders
+         SET ready_for_collection = ?,
+             ready_fingerprint = ?,
+             ready_updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
+       WHERE id = ? AND auction_id = ?
+    `, [ready ? 1 : 0, fingerprint, bidderId, auctionId]);
+
+    audit(getAuditActor(req), ready ? 'ready_for_collection' : 'ready_cleared', 'bidder', bidderId, {
+      auction_id: auctionId,
+      ready,
+      fingerprint: fingerprint || ''
+    });
+
+    logFromRequest(req, logLevels.INFO, `Bidder ${bidderId} marked as ${ready ? 'ready for collection' : 'not ready'} for auction ${auctionId}`);
+
+    res.json({
+      ok: true,
+      bidder_id: bidderId,
+      ready_for_collection: ready,
+      ready_fingerprint: fingerprint || ''
+    });
+  });
+
+  liveFeed.post('/live/:auctionId/items/:itemId/collection', authenticateRole(["admin", "cashier"]), (req, res) => {
+    const auctionId = Number(req.params.auctionId);
+    const itemId = Number(req.params.itemId);
+    const collected = Boolean(req.body?.collected);
+
+    if (!Number.isInteger(auctionId) || auctionId <= 0 || !Number.isInteger(itemId) || itemId <= 0) {
+      return res.status(400).json({ error: 'auctionId and itemId required' });
+    }
+
+    const auctionStatus = getAuctionStatus(auctionId);
+    if (!auctionStatus) return res.status(404).json({ error: 'Auction not found' });
+
+    const item = db.get(`
+      SELECT i.id, i.item_number, i.winning_bidder_id AS bidder_id, b.paddle_number AS bidder
+        FROM items i
+        LEFT JOIN bidders b ON b.id = i.winning_bidder_id
+       WHERE i.id = ? AND i.auction_id = ? AND i.hammer_price IS NOT NULL
+    `, [itemId, auctionId]);
+    if (!item) return res.status(404).json({ error: 'Sold item not found for this auction' });
+
+    const paymentSummary = db.get(`
+      SELECT IFNULL(SUM(amount), 0) AS payments_total
+        FROM payments
+       WHERE bidder_id = ?
+    `, [item.bidder_id]) || { payments_total: 0 };
+
+    if (auctionStatus !== 'settlement' || Number(paymentSummary.payments_total || 0) <= 0) {
+      return res.status(400).json({ error: 'Collection can only be updated in settlement after payment has been recorded' });
+    }
+
+    db.run(`
+      UPDATE items
+         SET collected_at = CASE WHEN ? = 1 THEN strftime('%Y-%m-%d %H:%M:%S', 'now') ELSE NULL END
+       WHERE id = ? AND auction_id = ?
+    `, [collected ? 1 : 0, itemId, auctionId]);
+
+    if (collected) {
+      const payload = getLiveFeedPayload(auctionId, false);
+      const bidderSummary = payload.bidders.find(row => Number(row.bidder_id) === Number(item.bidder_id));
+      db.run(`
+        UPDATE bidders
+           SET ready_for_collection = 1,
+               ready_fingerprint = ?,
+               ready_updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
+         WHERE id = ? AND auction_id = ?
+      `, [bidderSummary?.current_fingerprint || '', item.bidder_id, auctionId]);
+    }
+
+    audit(getAuditActor(req), collected ? 'item_collected' : 'item_uncollected', 'item', itemId, {
+      auction_id: auctionId,
+      bidder: item.bidder,
+      bidder_id: item.bidder_id
+    });
+
+    logFromRequest(req, logLevels.INFO, `Item collection updated for auction ${auctionId}, item ${itemId}, collected=${collected}`);
+
+    res.json({ ok: true, item_id: itemId, collected });
+  });
+
+  liveFeed.post('/live/:auctionId/bidders/:bidderId/collect-all', authenticateRole(["admin", "cashier"]), (req, res) => {
+    const auctionId = Number(req.params.auctionId);
+    const bidderId = Number(req.params.bidderId);
+
+    if (!Number.isInteger(auctionId) || auctionId <= 0 || !Number.isInteger(bidderId) || bidderId <= 0) {
+      return res.status(400).json({ error: 'auctionId and bidderId required' });
+    }
+
+    const auctionStatus = getAuctionStatus(auctionId);
+    if (!auctionStatus) return res.status(404).json({ error: 'Auction not found' });
+
+    const bidder = db.get('SELECT paddle_number FROM bidders WHERE id = ? AND auction_id = ?', [bidderId, auctionId]);
+    if (!bidder) return res.status(404).json({ error: 'Bidder not found for this auction' });
+
+    const paymentSummary = db.get(`
+      SELECT IFNULL(SUM(amount), 0) AS payments_total
+        FROM payments
+       WHERE bidder_id = ?
+    `, [bidderId]) || { payments_total: 0 };
+
+    if (auctionStatus !== 'settlement' || Number(paymentSummary.payments_total || 0) <= 0) {
+      return res.status(400).json({ error: 'Collection can only be updated in settlement after payment has been recorded' });
+    }
+
+    db.run(`
+      UPDATE items
+         SET collected_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
+       WHERE auction_id = ? AND winning_bidder_id = ? AND hammer_price IS NOT NULL
+    `, [auctionId, bidderId]);
+
+    const payload = getLiveFeedPayload(auctionId, false);
+    const bidderSummary = payload.bidders.find(row => Number(row.bidder_id) === Number(bidderId));
+    db.run(`
+      UPDATE bidders
+         SET ready_for_collection = 1,
+             ready_fingerprint = ?,
+             ready_updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
+       WHERE id = ? AND auction_id = ?
+    `, [bidderSummary?.current_fingerprint || '', bidderId, auctionId]);
+
+    audit(getAuditActor(req), 'bidder_collected_all', 'bidder', bidderId, {
+      auction_id: auctionId,
+      bidder: bidder.paddle_number
+    });
+
+    logFromRequest(req, logLevels.INFO, `All items marked collected for auction ${auctionId}, bidder ${bidder.paddle_number} (${bidderId})`);
+
+    res.json({ ok: true, bidder_id: bidderId });
+  });
+
+  liveFeed.get('/live/:auctionId/uncollected.csv', authenticateRole(["admin", "cashier"]), (req, res) => {
+    const auctionId = Number(req.params.auctionId);
+    if (!Number.isInteger(auctionId) || auctionId <= 0) {
+      return res.status(400).json({ error: 'auctionId required' });
+    }
+
+    try {
+      const rows = db.all(`
+        SELECT b.paddle_number AS paddle_number,
+               i.item_number AS lot,
+               REPLACE(IFNULL(i.description, ''), ',', ' ') AS description,
+               IFNULL(i.hammer_price, 0) AS price,
+               IFNULL(p.payments_total, 0) AS payments_total,
+               CASE
+                 WHEN IFNULL(p.payments_total, 0) <= 0 THEN 'not_paid'
+                 WHEN IFNULL(p.payments_total, 0) >= IFNULL(l.lots_total, 0) AND IFNULL(l.lots_total, 0) > 0 THEN 'paid_in_full'
+                 ELSE 'part_paid'
+               END AS payment_status
+          FROM items i
+          JOIN bidders b ON b.id = i.winning_bidder_id
+          LEFT JOIN (
+            SELECT winning_bidder_id AS bidder_id, SUM(hammer_price) AS lots_total
+              FROM items
+             WHERE auction_id = ? AND hammer_price IS NOT NULL
+             GROUP BY winning_bidder_id
+          ) l ON l.bidder_id = b.id
+          LEFT JOIN (
+            SELECT bidder_id, SUM(amount) AS payments_total
+              FROM payments
+             GROUP BY bidder_id
+          ) p ON p.bidder_id = b.id
+         WHERE i.auction_id = ?
+           AND i.hammer_price IS NOT NULL
+           AND i.collected_at IS NULL
+         ORDER BY b.paddle_number, i.item_number
+      `, [auctionId, auctionId]);
+
+      const header = 'paddle_number,lot,description,price,payments_total,payment_status\n';
+      const csv = header + rows.map(row => [
+        row.paddle_number,
+        row.lot,
+        row.description,
+        row.price,
+        row.payments_total,
+        row.payment_status
+      ].join(',')).join('\n');
+
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="uncollected_auction_${auctionId}.csv"`);
+      res.end('\uFEFF' + csv);
+    } catch (error) {
+      logFromRequest(req, logLevels.ERROR, `Failed to export uncollected CSV for auction ${auctionId}: ${error.message}`);
+      res.status(500).json({ error: `Failed to export uncollected CSV for auction ${auctionId}: ${error.message}` });
+    }
   });
   
 
