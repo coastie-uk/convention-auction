@@ -62,8 +62,10 @@
   <div style="position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;justify-content:center;align-items:center;z-index:9999;">
     <div style="background:#fff;padding:20px 24px;border-radius:8px;width:280px;">
       <h3 id="modalTitle">Add payment</h3>
-      <label>Amount £</label>
+      <label>Payment amount £</label>
       <input id="amt" type="number" min="0" step="0.01" style="width:100%" autofocus>
+      <label style="margin-top:6px;display:block;">Donation £</label>
+      <input id="donation" type="number" min="0" step="0.01" style="width:100%" value="0.00">
       <label style="margin-top:6px;display:block;">Note</label>
       <input id="note" type="text" style="width:100%" maxlength="100" placeholder="Optional note">
       <div style="display:flex;justify-content:flex-end;margin-top:10px;gap:8px;">

@@ -33,7 +33,8 @@ const {
 const toPounds = (minor) => (minor / 100).toFixed(2);
 const {audit, recomputeBalanceAndAudit } = require('./middleware/audit');
 const { channel } = require('node:diagnostics_channel');
-
+const { getBidderPaymentTotals } = require('./payment-utils');
+const { getAuditActor } = require('./users');
 const api = express.Router();
 api.use(express.json());
 
@@ -46,10 +47,14 @@ const posInt = (x) => Number.isInteger(x) && x > 0;
 api.post('/payments/intents', authenticateRole("cashier"), checkAuctionState(['settlement']), async (req, res) => {
   try {
    expireStaleIntents();
-    const { bidder_id, amount_minor, currency, channel, note } = req.body || {};
-    if (!posInt(bidder_id) || !posInt(amount_minor)) return res.status(400).json({ error: 'invalid parameters' });
+    const { bidder_id, amount_minor, donation_minor = 0, currency, channel, note } = req.body || {};
+    if (!posInt(bidder_id) || !Number.isInteger(amount_minor) || amount_minor < 0 || !Number.isInteger(donation_minor) || donation_minor < 0) {
+      return res.status(400).json({ error: 'invalid parameters' });
+    }
+    if (amount_minor <= 0 && donation_minor <= 0) return res.status(400).json({ error: 'invalid parameters' });
     const sanitisedNote = sanitiseText(note, 100);
     const requestAuctionId = Number(req.auction?.id);
+    const auditActor = getAuditActor(req);
 
     // Bidder must belong to the same auction as the request auction_id.
     const bidderInAuction = db.prepare(`
@@ -62,17 +67,19 @@ api.post('/payments/intents', authenticateRole("cashier"), checkAuctionState(['s
       return res.status(400).json({ error: 'Bidder not found for this auction' });
     }
     
-    // Check that the requested amount does not exceed the bidder's outstanding balance
-    const sums = db.prepare(`
-      SELECT
-        IFNULL((SELECT SUM(hammer_price) FROM items WHERE winning_bidder_id = ?), 0) AS lots_total,
-        IFNULL((SELECT SUM(amount) FROM payments WHERE bidder_id = ?), 0) AS payments_total
-    `).get(bidder_id, bidder_id);
-    const outstanding_minor = Math.max(0, Math.round((sums.lots_total - sums.payments_total) * 100));
-    logFromRequest(req, logLevels.DEBUG, `Bidder ${bidder_id} outstanding amount=${outstanding_minor}, amount requested=${amount_minor}`);
+    const totals = getBidderPaymentTotals(db, bidder_id, requestAuctionId);
+    const outstanding_minor = Math.max(0, Math.round((totals.balance || 0) * 100));
+    const gross_minor = amount_minor + donation_minor;
+    logFromRequest(req, logLevels.DEBUG, `Bidder ${bidder_id} outstanding amount=${outstanding_minor}, payment requested=${amount_minor}, donation requested=${donation_minor}, gross requested=${gross_minor}`);
     if (amount_minor > outstanding_minor) {
       logFromRequest(req, logLevels.WARN, `Intent amount exceeds outstanding: bidder=${bidder_id} amount_minor=${amount_minor} outstanding_minor=${outstanding_minor}`);
       return res.status(400).json({ error: 'Amount requested exceeds outstanding', outstanding_minor });
+    }
+    if (outstanding_minor <= 0 && amount_minor > 0) {
+      return res.status(400).json({ error: 'No payment is due for this bidder' });
+    }
+    if (donation_minor > 0 && outstanding_minor > 0 && amount_minor !== outstanding_minor) {
+      return res.status(400).json({ error: 'Donation requires the full outstanding balance to be paid' });
     }
 
     const intentId = uuidv4();
@@ -91,21 +98,21 @@ if (channel !== 'hosted' && channel !== 'app') {
 
   //  TODO
     db.prepare(`
-      INSERT INTO payment_intents (intent_id, bidder_id, amount_minor, currency, status, channel, expires_at, note)
-      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
-    `).run(intentId, bidder_id, amount_minor, CURRENCY, channel, expiresAt, sanitisedNote);
+      INSERT INTO payment_intents (intent_id, bidder_id, amount_minor, donation_minor, created_by, currency, status, channel, expires_at, note)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+    `).run(intentId, bidder_id, gross_minor, donation_minor, auditActor, CURRENCY, channel, expiresAt, sanitisedNote);
 
-    const payload = { intent_id: intentId, amount_minor, currency: CURRENCY };
+    const payload = { intent_id: intentId, amount_minor: gross_minor, donation_minor, currency: CURRENCY };
 
     if (channel === 'app') {
       const title = getPaymentLabelForBidder(bidder_id);
       payload.deep_link = buildDeepLink({
-        amount_minor, currency: CURRENCY, title, external_reference: intentId
+        amount_minor: gross_minor, currency: CURRENCY, title, external_reference: intentId
       });
     } else {
       const description = getPaymentLabelForBidder(bidder_id);
       const hc = await createHostedCheckout({
-        amount_minor, currency: CURRENCY, checkout_reference: intentId, description
+        amount_minor: gross_minor, currency: CURRENCY, checkout_reference: intentId, description
       });
       if (hc) {
         db.prepare('UPDATE payment_intents SET sumup_checkout_id=? WHERE intent_id=?')
@@ -114,7 +121,7 @@ if (channel !== 'hosted' && channel !== 'app') {
       }
     }
 
-    logFromRequest(req, logLevels.INFO, `Intent created ${intentId} bidder=${bidder_id} amount_minor=${amount_minor} channel=${channel}`);
+    logFromRequest(req, logLevels.INFO, `Intent created ${intentId} bidder=${bidder_id} gross_minor=${gross_minor} donation_minor=${donation_minor} channel=${channel}`);
     res.status(201).json(payload);
   } catch (err) {
     logFromRequest(req, logLevels.ERROR, `intent_create_error ${err.message}`);
@@ -126,7 +133,7 @@ if (channel !== 'hosted' && channel !== 'app') {
 api.get('/payments/intents/:id', authenticateRole("cashier"), (req, res) => {
   try {
     const row = db.prepare(`
-      SELECT intent_id, bidder_id, amount_minor, currency, status, channel, sumup_checkout_id, expires_at
+      SELECT intent_id, bidder_id, amount_minor, donation_minor, currency, status, channel, sumup_checkout_id, expires_at
       FROM payment_intents WHERE intent_id=?`).get(req.params.id);
     if (!row) return res.status(400).json({ error: 'not_found' });
     res.json(row);
@@ -423,6 +430,7 @@ function readFailureInfo(query) {
 async function verifyAndFinalizeIntent(intentId, { raw = null, source = 'manual' } = {}) {
   const intent = db.prepare('SELECT * FROM payment_intents WHERE intent_id=?').get(intentId);
   if (!intent || intent.status !== 'pending') return;
+  const auditUser = intent.created_by || (source === 'webhook' ? 'sumup-web' : 'sumup-app');
 
   // Expiry guard
   if (intent.expires_at && new Date(intent.expires_at) < new Date()) {
@@ -437,7 +445,7 @@ async function verifyAndFinalizeIntent(intentId, { raw = null, source = 'manual'
     const list = await getCheckoutsByReference(intent.intent_id);
     latest = Array.isArray(list) ? list.slice(-1)[0] : null;
     if (!latest) {
-      logFromRequest(req, logLevels.WARN, `No SumUp checkout found for intent=${intentId}`);
+      log("Payment", logLevels.WARN, `No SumUp checkout found for intent=${intentId}`);
       return;
     }
     if (latest.status === 'PENDING') return; // keep waiting
@@ -450,7 +458,8 @@ async function verifyAndFinalizeIntent(intentId, { raw = null, source = 'manual'
 
   // If we're here, we're marking success.
   const amount = Number(toPounds(intent.amount_minor));
-  const createdBy = (source === 'webhook') ? 'sumup-web' : 'sumup-app';
+  const donationAmount = Number(toPounds(intent.donation_minor || 0));
+  const createdBy = auditUser;
   const providerTxn = latest?.transactions?.[0]?.id || crypto.randomUUID();
   const t = db.transaction(() => {
 
@@ -470,9 +479,9 @@ async function verifyAndFinalizeIntent(intentId, { raw = null, source = 'manual'
 
 // Create payment record
     const r = db.prepare(`
-      INSERT INTO payments (bidder_id, amount, method, note, created_by, provider, provider_txn_id, intent_id, raw_payload, currency)
-      VALUES (?, ?, ? , ?, 'cashier', 'sumup', ?, ?, ?, ?)
-    `).run(intent.bidder_id, amount, createdBy, intent.note, providerTxn, intent.intent_id, raw ? JSON.stringify(raw) : (latest ? JSON.stringify(latest) : null), CURRENCY);
+      INSERT INTO payments (bidder_id, amount, donation_amount, method, note, created_by, provider, provider_txn_id, intent_id, raw_payload, currency)
+      VALUES (?, ?, ?, ? , ?, ?, 'sumup', ?, ?, ?, ?)
+    `).run(intent.bidder_id, amount, donationAmount, createdBy, intent.note, auditUser, providerTxn, intent.intent_id, raw ? JSON.stringify(raw) : (latest ? JSON.stringify(latest) : null), CURRENCY);
 
     // Mark intent done
     db.prepare(`UPDATE payment_intents SET status = 'succeeded' WHERE intent_id=?`).run(intent.intent_id);
@@ -481,7 +490,14 @@ async function verifyAndFinalizeIntent(intentId, { raw = null, source = 'manual'
 
     const bidderRow = db.get(`SELECT paddle_number FROM bidders WHERE id = ?`, [intent.bidder_id]);
 
-    audit('cashier', 'payment', 'bidder', intent.bidder_id, { amount, createdBy, paddle: bidderRow.paddle_number, intent: intent.intent_id });
+    audit(auditUser, 'payment', 'bidder', intent.bidder_id, {
+      amount,
+      payment_amount: amount - donationAmount,
+      donation_amount: donationAmount,
+      createdBy,
+      paddle: bidderRow.paddle_number,
+      intent: intent.intent_id
+    });
 
     // Recompute balance and set audit status on items
     const balance = recomputeBalanceAndAudit(intent.bidder_id);

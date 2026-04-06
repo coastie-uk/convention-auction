@@ -27,7 +27,8 @@ const {
 // 2.3  Adds reversals
 // 2.4  Adds username-based users with multi-role permissions
 // 2.5  Adds items.last_print for item slip print tracking, add seconds to timekstamps
-// 2.6  Adds items.last_slide_export and items.last_card_export for export tracking, Adds items.last_bid_update for authoritative bid/retract ordering. Adds bidder ready state/fingerprint and item collection tracking for live feed
+// 2.6  Adds items.last_slide_export and items.last_card_export for export tracking, Adds items.last_bid_update for authoritative bid/retract ordering. Adds bidder ready state/fingerprint and item collection tracking for live feed. Adds donation tracking columns for cashier payments and SumUp intents
+
  
 
 let dbPath = path.join(DB_PATH, DB_NAME);
@@ -67,7 +68,8 @@ if(existingSchemaVersion > schemaVersion) {
   );
 }
 
-if(existingSchemaVersion < schemaVersion || isNewDatabase)
+// if(existingSchemaVersion < schemaVersion || isNewDatabase || 1==1)
+  if(existingSchemaVersion < schemaVersion || isNewDatabase)
 {
   log(
     'General',
@@ -113,10 +115,6 @@ if(existingSchemaVersion < schemaVersion || isNewDatabase)
         hammer_price REAL
     )`);
 
-    // db.exec(`CREATE TABLE IF NOT EXISTS passwords (
-    //     role TEXT PRIMARY KEY,
-    //     password TEXT NOT NULL
-    // )`);
 
     db.exec(`CREATE TABLE IF NOT EXISTS users (
         username TEXT PRIMARY KEY COLLATE NOCASE,
@@ -142,6 +140,7 @@ if(existingSchemaVersion < schemaVersion || isNewDatabase)
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         bidder_id   INTEGER NOT NULL,
         amount      REAL    NOT NULL,
+        donation_amount REAL NOT NULL DEFAULT 0,
         method      TEXT    NOT NULL DEFAULT 'cash',
         note        TEXT,
         created_by  TEXT,
@@ -170,6 +169,8 @@ if(existingSchemaVersion < schemaVersion || isNewDatabase)
       intent_id TEXT PRIMARY KEY,
       bidder_id INTEGER NOT NULL,
       amount_minor INTEGER NOT NULL,       -- pence, to avoid floating issues
+      donation_minor INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT,
       currency TEXT NOT NULL DEFAULT 'GBP',
       channel TEXT NOT NULL DEFAULT 'app', -- 'app' (SumUp app) | 'hosted' (optional)
       status TEXT NOT NULL CHECK (status IN ('pending','succeeded','failed','expired','cancelled')),
@@ -203,8 +204,11 @@ if(existingSchemaVersion < schemaVersion || isNewDatabase)
   try { db.exec("ALTER TABLE payments ADD COLUMN intent_id TEXT"); } catch (e) { /* already exists */ }
   try { db.exec("ALTER TABLE payments ADD COLUMN currency TEXT"); } catch (e) { /* already exists */ }
   try { db.exec("ALTER TABLE payments ADD COLUMN raw_payload TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE payments ADD COLUMN donation_amount REAL NOT NULL DEFAULT 0"); } catch (e) { /* already exists */ }
   try { db.exec("ALTER TABLE payments ADD COLUMN FOREIGN KEY (intent_id) REFERENCES payment_intents(intent_id)"); } catch (e) { /* already exists */ }
   try { db.exec("ALTER TABLE payment_intents ADD COLUMN note TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE payment_intents ADD COLUMN donation_minor INTEGER NOT NULL DEFAULT 0"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE payment_intents ADD COLUMN created_by TEXT"); } catch (e) { /* already exists */ }
 
 
   // These are critical to prevent duplicate payment records for the same provider transaction - SumUp may send multiple notifications for the same payment

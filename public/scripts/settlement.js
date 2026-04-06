@@ -16,6 +16,7 @@ const API_ROOT = `${API}/settlement`;
   const titleEl    = document.getElementById('title');
   const currencySymbol = localStorage.getItem("currencySymbol") || "£";
   const money = v => `${currencySymbol}${Number(v).toFixed(2)}`;
+  const roundCurrency = value => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
   const uploadBase = "/api/uploads";
 
   const urlParams  = new URLSearchParams(location.search);
@@ -23,7 +24,7 @@ const API_ROOT = `${API}/settlement`;
   const AUCTION_STATUS = (urlParams.get('auctionStatus') || '').toLowerCase();
 
   if (!Number.isInteger(AUCTION_ID) || AUCTION_ID <= 0) {
-    alert('This page must be opened with ?auctionId=<number>');
+    showMessage('This page must be opened with ?auctionId=<number>', 'error');
 
     throw new Error('auctionId missing');     // halt script
   }
@@ -187,7 +188,7 @@ buttons.forEach(btn => {
             return;
         }
 
-    if(!res.ok){ alert('Could not load bidder'); return; }
+    if(!res.ok){ showMessage('Could not load bidder', 'error'); return; }
     selBidder = await res.json();
 
     renderBidders();
@@ -236,10 +237,14 @@ updateTotals();
     payBody.innerHTML = '';
     (selBidder.payments || []).forEach(p => {
       const tr = document.createElement('tr');
+      const donation = Number(p.donation_amount || 0);
+      const paymentNote = donation > 0
+        ? `${p.note || ''}${p.note ? ' | ' : ''}Donation ${money(donation)}`
+        : (p.note || '');
       if (p.amount < 0) {
-        tr.innerHTML = `<td>${p.id}</td><td>${new Date(p.created_at).toLocaleString()}</td><td>${p.method}</td><td>${money(p.amount)}</td><td>${p.note}</td>`;
+        tr.innerHTML = `<td>${p.id}</td><td>${new Date(p.created_at).toLocaleString()}</td><td>${p.method}</td><td>${money(p.amount)}</td><td>${paymentNote}</td><td></td>`;
       } else {
-        tr.innerHTML = `<td>${p.id}</td><td>${new Date(p.created_at).toLocaleString()}</td><td>${p.method}</td><td>${money(p.amount)}</td><td>${p.note}</td><td><button data-id="${p.id}" class="delPay">Refund</button></td>`;
+        tr.innerHTML = `<td>${p.id}</td><td>${new Date(p.created_at).toLocaleString()}</td><td>${p.method}</td><td>${money(p.amount)}</td><td>${paymentNote}</td><td><button data-id="${p.id}" class="delPay">Refund</button></td>`;
       }
       payBody.appendChild(tr);
     });
@@ -252,8 +257,8 @@ updateTotals();
 
   function updateTotals(){
     const o=selBidder;
-    document.getElementById('totals').innerHTML=`<strong>Lots:</strong> ${money(o.lots_total)} &nbsp; <strong>Paid:</strong> ${money(o.payments_total)} &nbsp; <strong>Balance:</strong> ${money(o.balance)}`;
-    document.getElementById('payButtons').classList.toggle('disabled',o.balance===0);
+    const donationsTotal = Number(o.donations_total || 0);
+    document.getElementById('totals').innerHTML=`<strong>Lots:</strong> ${money(o.lots_total)} &nbsp; <strong>Paid:</strong> ${money(o.payments_total)} &nbsp; <strong>Donations:</strong> ${money(donationsTotal)} &nbsp; <strong>Balance:</strong> ${money(o.balance)}`;
   }
 
 
@@ -261,15 +266,18 @@ updateTotals();
   
 
   // ---------- SumUp integration helper ----------
-  async function startSumupPayment(amt, note, mode = 'app') {
+  async function startSumupPayment(amt, donation, note, mode = 'app') {
     if (!selBidder) {
-      alert('No bidder selected');
+      showMessage('No bidder selected', 'error');
       return;
     }
 
-    const amountMinor = Math.round(Number(amt) * 100);
-    if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
-      alert('Invalid amount for SumUp payment');
+    const paymentAmount = roundCurrency(amt);
+    const donationAmount = roundCurrency(donation);
+    const amountMinor = Math.round(Number(paymentAmount) * 100);
+    const donationMinor = Math.round(Number(donationAmount) * 100);
+    if (!Number.isFinite(amountMinor) || !Number.isFinite(donationMinor) || amountMinor < 0 || donationMinor < 0 || (amountMinor === 0 && donationMinor === 0)) {
+      showMessage('Invalid amount for SumUp payment', 'error');
       return;
     }
 
@@ -283,6 +291,7 @@ updateTotals();
         body: JSON.stringify({
           bidder_id: selBidder.id,
           amount_minor: amountMinor,
+          donation_minor: donationMinor,
           currency: 'GBP',
           channel: mode === 'web' ? 'hosted' : 'app',
           note: note || null,
@@ -344,8 +353,8 @@ overlay.querySelector('#amt').focus();
     overlay.querySelector('#ok').onclick=async()=>{
       const amt=Number(amtIn.value);
       const reason=overlay.querySelector('#note').value;
-        if(!amt)return alert('Amount?');
-        if(!reason)return alert('Reason?');
+        if(!amt){ showMessage('Amount?', 'error'); return; }
+        if(!reason){ showMessage('Reason?', 'error'); return; }
 
        const modal = await DayPilot.Modal.confirm("Confirm refund of " + money(amt) + " for payment ID " + id + " for reason: `" + reason + "` ?");
         if (modal.canceled) {
@@ -378,7 +387,10 @@ overlay.querySelector('#amt').focus();
     const overlay=tpl.firstElementChild;document.body.appendChild(overlay);
     overlay.querySelector('#modalTitle').textContent=`Add ${method} payment`;
     const amtIn=overlay.querySelector('#amt');
-    amtIn.value=selBidder.balance.toFixed(2);
+    const donationIn = overlay.querySelector('#donation');
+    const balanceDue = roundCurrency(selBidder.balance || 0);
+    amtIn.value=Math.max(0, balanceDue).toFixed(2);
+    donationIn.value='0.00';
 
 overlay.querySelector('#amt').focus();
 
@@ -389,19 +401,27 @@ overlay.querySelector('#amt').focus();
     
     overlay.querySelector('#cancel').onclick=()=>overlay.remove();
     overlay.querySelector('#ok').onclick=async()=>{
-      const amt=Number(amtIn.value);
-        if(!amt)return alert('Amount?');
+      const amt=roundCurrency(amtIn.value);
+      const donation=roundCurrency(donationIn.value);
+      const outstanding = Math.max(0, roundCurrency(selBidder.balance || 0));
+      if (!Number.isFinite(amt) || !Number.isFinite(donation) || amt < 0 || donation < 0) return showMessage('Invalid amount', 'error');
+      if (amt === 0 && donation === 0) return showMessage('Enter a payment or donation amount', 'info');
+      if (outstanding <= 0 && amt > 0) return showMessage('No item payment is due for this bidder', 'info');
+      if (amt > outstanding + 0.000001) return showMessage('Item payment cannot exceed the balance due', 'info');
+      if (donation > 0 && outstanding > 0 && Math.abs(amt - outstanding) > 0.000001) {
+        return showMessage('A donation can only be added when the full balance due is being paid', 'info');
+      }
       const note=overlay.querySelector('#note').value;
 
       // NEW: SumUp branch
   if (method === 'sumup-app') {
-    await startSumupPayment(amt, note, 'app');
+    await startSumupPayment(amt, donation, note, 'app');
     overlay.remove();
     return;
   }
 
   if (method === 'sumup-web') {
-    await startSumupPayment(amt, note, 'web');
+    await startSumupPayment(amt, donation, note, 'web');
     overlay.remove();
     return;
   }
@@ -422,6 +442,7 @@ overlay.querySelector('#amt').focus();
           auction_id: AUCTION_ID,
           bidder_id:selBidder.id,
           amount:amt,
+          donation_amount: donation,
           method,
           note})});
 
@@ -464,44 +485,6 @@ async function reversePayment(paymentId, amount, reason, note) {
 }
 
 
-  // async function delPayment(id) {
-  
-
-  //      const modal = await DayPilot.Modal.confirm("Are you sure you want to delete this payment?");
-  //       if (modal.canceled) {
-  //           showMessage("Payment not deleted", "info");
-  //           return;
-  //       } else { 
-
-  //   try {
-
-  //     const response = await fetch(`${API_ROOT}/payment/${id}`, {
-  //       method: 'DELETE',
-  //       headers: {
-  //         Authorization: token,
-  //         "Content-Type": "application/json"
-  //       },
-  //       body: JSON.stringify({
-  //         auctionId: AUCTION_ID
-  //       })
-
-  //     });
-
-  //     if (!response.ok) {
-  //       const error = await response.json();
-  //       throw new Error(error.error || "Failed to delete payment");
-  //     }
-
-  //      showMessage("Payment deleted", "info");
-
-  //   } catch (err) {
-  //     showMessage("Payment error " + err.message, "error");
-  //   }
-
-  //   fetchBidders();
-  // }
-  // }
-
 
     /* ---------- CSV download with auth header ---------- */
     document.getElementById('csv').onclick = async () => {
@@ -519,7 +502,7 @@ async function reversePayment(paymentId, amount, reason, note) {
         a.click();
         a.remove();
         URL.revokeObjectURL(url);
-      } catch (e) { alert(e.message || e); }
+      } catch (e) { showMessage(e.message || e, 'error'); }
     };
 
 /* ---------- summary modal ---------- */
@@ -527,21 +510,26 @@ document.getElementById('summaryBtn').onclick = async () => {
   const res = await fetch(`${API_ROOT}/summary?auction_id=${AUCTION_ID}`, {
     headers:{ Authorization: token }
   });
-  if (!res.ok) { alert('Cannot fetch summary'); return; }
+  if (!res.ok) { showMessage('Cannot fetch summary', 'error'); return; }
   const s = await res.json();
 
   const overlay = document.createElement('div');
   overlay.style = 'position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;justify-content:center;align-items:center;z-index:9999;';
   overlay.innerHTML = `
-    <div style="background:#fff;padding:22px 26px;border-radius:8px;width:340px;">
+    <div style="background:#fff;padding:22px 26px;border-radius:8px;width:460px;max-width:calc(100vw - 24px);">
       <h3>Auction Summary</h3>
       <table style="width:100%;border-collapse:collapse;font-size:0.95rem;">
-        <tr><td>Total lots</td>         <td style="text-align:right;">${currencySymbol}${s.lots_total.toFixed(2)}</td></tr>
-        <tr><td>Paid total</td>         <td style="text-align:right;">${currencySymbol}${s.payments_total.toFixed(2)}</td></tr>
-        <tr><td style="padding-top:4px;" colspan="2"><strong>By method</strong></td></tr>
-        ${Object.entries(s.breakdown).map(([m,v])=>`<tr><td>${m}</td><td style="text-align:right;">${currencySymbol}${v.toFixed(2)}</td></tr>`).join('')}
+        <tr><td>Total lots</td>         <td colspan="2" style="text-align:right;">${currencySymbol}${s.lots_total.toFixed(2)}</td></tr>
+        <tr><td>Paid total</td>         <td colspan="2" style="text-align:right;">${currencySymbol}${s.payments_total.toFixed(2)}</td></tr>
+        <tr><td>Donations total</td>    <td colspan="2" style="text-align:right;">${currencySymbol}${s.donations_total.toFixed(2)}</td></tr>
+        <tr><td>Expected grand total</td><td colspan="2" style="text-align:right;">${currencySymbol}${Number(s.expected_grand_total || 0).toFixed(2)}</td></tr>
+        <tr><td>Current grand total</td><td colspan="2" style="text-align:right;">${currencySymbol}${Number(s.current_grand_total || 0).toFixed(2)}</td></tr>
+        <tr><tr>
+        <tr><td style="padding-top:4px;" colspan="3"><strong>By method</strong></td></tr>
+        <tr><th style="text-align:left;">Method</th><th style="text-align:right;">Paid</th><th style="text-align:right;">Donation</th></tr>
+        ${Object.entries(s.breakdown).map(([m,v])=>`<tr><td>${m}</td><td style="text-align:right;">${currencySymbol}${Number(v.payments_total || 0).toFixed(2)}</td><td style="text-align:right;">${currencySymbol}${Number(v.donations_total || 0).toFixed(2)}</td></tr>`).join('')}
         <tr><td style="padding-top:6px;"><strong>Balance due</strong></td>
-            <td style="text-align:right;"><strong>${currencySymbol}${s.balance.toFixed(2)}</strong></td></tr>
+            <td colspan="2" style="text-align:right;"><strong>${currencySymbol}${s.balance.toFixed(2)}</strong></td></tr>
       </table>
       <div style="text-align:right;margin-top:10px;"><button id="closeSum">Close</button></div>
     </div>`;

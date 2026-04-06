@@ -102,7 +102,9 @@ const testData = {
   deleteItem: null,
   photoItem: null,
   duplicatedPhotoItem: null,
-  allSlipItemIds: []
+  allSlipItemIds: [],
+  bidderReportBidderAId: null,
+  bidderReportBidderBId: null
 };
 
   // Sleep function that returns a promise
@@ -1162,6 +1164,121 @@ addTest("B-038pc","POST /auctions/:auctionId/items/reset-export-tracking failure
   assert.ok(json && json.error, "Expected invalid export_type error");
 });
 
+addTest("B-038pd","GET /auctions/:auctionId/report-pdf success", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/report-pdf?selection_mode=all`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  const contentType = res.headers.get("content-type") || "";
+  assert.ok(contentType.includes("application/pdf"), `Unexpected content-type: ${contentType}`);
+  const disposition = res.headers.get("content-disposition") || "";
+  assert.ok(disposition.includes(".pdf"), `Expected pdf filename in content-disposition, got: ${disposition}`);
+  const buffer = await res.arrayBuffer();
+  assert.ok(buffer.byteLength > 0, "Auction report PDF is empty");
+});
+
+addTest("B-038pe","GET /auctions/:auctionId/report-pdf failure invalid selection mode", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/report-pdf?selection_mode=range&item_range=1-2`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 400);
+  assert.ok(json && json.error, "Expected invalid selection mode error");
+});
+
+addTest("B-038pf","setup: bidder report data", async () => {
+  await setAuctionStatus("live");
+
+  const finalizeA = await fetchJson(`${baseUrl}/lots/${testData.itemA}/finalize`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ paddle: 101, price: "10.00", auctionId: testData.auctionId })
+  });
+  await expectStatus(finalizeA.res, 200);
+  testData.bidderReportBidderAId = finalizeA.json?.bidder_id || testData.bidderReportBidderAId;
+
+  const finalizeB = await fetchJson(`${baseUrl}/lots/${testData.itemB}/finalize`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ paddle: 101, price: "15.00", auctionId: testData.auctionId })
+  });
+  await expectStatus(finalizeB.res, 200);
+  testData.bidderReportBidderAId = finalizeB.json?.bidder_id || testData.bidderReportBidderAId;
+
+  const finalizePhoto = await fetchJson(`${baseUrl}/lots/${testData.photoItem}/finalize`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ paddle: 202, price: "20.00", auctionId: testData.auctionId })
+  });
+  await expectStatus(finalizePhoto.res, 200);
+  testData.bidderReportBidderBId = finalizePhoto.json?.bidder_id || testData.bidderReportBidderBId;
+
+  await setAuctionStatus("settlement");
+
+  const payPartial = await fetchJson(`${baseUrl}/settlement/payment/${testData.auctionId}`, {
+    method: "POST",
+    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ bidder_id: testData.bidderReportBidderAId, amount: 5, method: "cash" })
+  });
+  await expectStatus(payPartial.res, 200);
+
+  const payFull = await fetchJson(`${baseUrl}/settlement/payment/${testData.auctionId}`, {
+    method: "POST",
+    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ bidder_id: testData.bidderReportBidderBId, amount: 20, method: "cash" })
+  });
+  await expectStatus(payFull.res, 200);
+
+  const collectPaidItem = await fetchJson(`${baseUrl}/cashier/live/${testData.auctionId}/items/${testData.photoItem}/collection`, {
+    method: "POST",
+    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ collected: true })
+  });
+  await expectStatus(collectPaidItem.res, 200);
+});
+
+addTest("B-038pg","GET /auctions/:auctionId/bidder-report-pdf success all", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/bidder-report-pdf?bidder_mode=all`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  const contentType = res.headers.get("content-type") || "";
+  assert.ok(contentType.includes("application/pdf"), `Unexpected content-type: ${contentType}`);
+  const disposition = res.headers.get("content-disposition") || "";
+  assert.ok(disposition.includes("bidder_report"), `Expected bidder report filename in content-disposition, got: ${disposition}`);
+  const buffer = await res.arrayBuffer();
+  assert.ok(buffer.byteLength > 0, "Bidder report PDF is empty");
+});
+
+addTest("B-038ph","GET /auctions/:auctionId/bidder-report-pdf success unpaid", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/bidder-report-pdf?bidder_mode=unpaid`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  const contentType = res.headers.get("content-type") || "";
+  assert.ok(contentType.includes("application/pdf"), `Unexpected content-type: ${contentType}`);
+  const buffer = await res.arrayBuffer();
+  assert.ok(buffer.byteLength > 0, "Unpaid bidder report PDF is empty");
+});
+
+addTest("B-038pi","GET /auctions/:auctionId/bidder-report-pdf success uncollected", async () => {
+  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/bidder-report-pdf?bidder_mode=uncollected`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  const contentType = res.headers.get("content-type") || "";
+  assert.ok(contentType.includes("application/pdf"), `Unexpected content-type: ${contentType}`);
+  const buffer = await res.arrayBuffer();
+  assert.ok(buffer.byteLength > 0, "Uncollected bidder report PDF is empty");
+});
+
+addTest("B-038pj","GET /auctions/:auctionId/bidder-report-pdf failure invalid bidder mode", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/bidder-report-pdf?bidder_mode=range`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 400);
+  assert.ok(json && json.error, "Expected invalid bidder mode error");
+});
+
 // /export-csv
 addTest("B-039","POST /export-csv success", async () => {
   const res = await fetch(`${baseUrl}/export-csv`, {
@@ -1280,6 +1397,7 @@ addTest("B-050a","GET /auctions/:publicId/slideshow-items failure invalid auctio
 
 // /validate-auction
 addTest("B-058","POST /validate-auction success", async () => {
+  await setAuctionStatus("setup");
   const { res, json } = await fetchJson(`${baseUrl}/validate-auction`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1329,14 +1447,19 @@ addTest("B-061","POST /validate-auction failure empty short_name", async () => {
 
 //TODO add test for short name OK but auction not in setup state 
 addTest("B-061a","POST /validate-auction failure short name OK but auction not in setup state", async () => {
-  await setAuctionStatus("locked");
-  await sleep(1000);
-  const { res } = await fetchJson(`${baseUrl}/validate-auction`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ short_name: testData.auctionShortName })
-  });
-  await expectStatus(res, 400);
+  await setAuctionStatus("setup");
+  try {
+    await setAuctionStatus("locked");
+    await sleep(1000);
+    const { res } = await fetchJson(`${baseUrl}/validate-auction`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ short_name: testData.auctionShortName })
+    });
+    await expectStatus(res, 400);
+  } finally {
+    await setAuctionStatus("setup");
+  }
 });
 
 addTest("B-061b","POST /validate-auction pass auth override", async () => {

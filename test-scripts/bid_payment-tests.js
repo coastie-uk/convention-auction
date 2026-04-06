@@ -93,6 +93,7 @@ const testData = {
   autoSettleItemId: null,
   bidderId: null,
   paymentId: null,
+  reversalPaymentId: null,
   auction2Id: null,
   auction2PublicId: null,
   auction2ShortName: null,
@@ -989,6 +990,16 @@ addTest("P-036","POST /settlement/payment/:payid/reverse success", async () => {
   });
   await expectStatus(res, 201);
   assert.ok(json && json.ok, "Reversal failed");
+  testData.reversalPaymentId = json.reversal_id;
+});
+
+addTest("P-036a","POST /settlement/payment/:payid/reverse failure cannot reverse reversal", async () => {
+  const { res } = await fetchJson(`${baseUrl}/settlement/payment/${testData.reversalPaymentId}/reverse`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ reason: "no reversal of reversal", auction_id: testData.auctionId })
+  });
+  await expectStatus(res, 400);
 });
 
 addTest("P-037","POST /settlement/payment/:payid/reverse failure unauthenticated", async () => {
@@ -1035,6 +1046,10 @@ addTest("P-042","GET /settlement/summary success", async () => {
   });
   await expectStatus(res, 200);
   assert.ok(json && json.auction_id, "Missing summary");
+  assert.ok(Object.prototype.hasOwnProperty.call(json, "donations_total"), "Missing donations_total");
+  assert.ok(Object.prototype.hasOwnProperty.call(json, "expected_grand_total"), "Missing expected_grand_total");
+  assert.ok(Object.prototype.hasOwnProperty.call(json, "current_grand_total"), "Missing current_grand_total");
+  assert.ok(json.breakdown && typeof json.breakdown === "object", "Missing breakdown");
 });
 
 addTest("P-043","GET /settlement/summary failure unauthenticated", async () => {
@@ -1207,6 +1222,141 @@ addTest("P-050","settlement payment math and isolation", async () => {
   });
   await expectStatus(bidderAfterPay2.res, 200);
   assert.equal(bidderAfterPay2.json.balance, 30);
+});
+
+addTest("P-050a","settlement manual donation requires full balance payment", async () => {
+  const partialWithDonation = await fetchJson(`${baseUrl}/settlement/payment/${testData.auctionId}`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ bidder_id: testData.isolationBidderId, amount: 5, donation_amount: 2, method: "cash" })
+  });
+  await expectStatus(partialWithDonation.res, 400);
+  assert.match(partialWithDonation.json?.error || "", /Donation requires/i);
+});
+
+addTest("P-050b","settlement manual donation records separately from paid balance", async () => {
+  const donateWithFinalPayment = await fetchJson(`${baseUrl}/settlement/payment/${testData.auctionId}`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ bidder_id: testData.isolationBidderId, amount: 30, donation_amount: 5, method: "cash", note: "extra support" })
+  });
+  await expectStatus(donateWithFinalPayment.res, 200);
+  assert.equal(donateWithFinalPayment.json?.balance, 0);
+
+  const bidder = await getBidderSummary(testData.auctionId, testData.isolationBidderId);
+  assert.equal(bidder.payments_total, 40);
+  assert.equal(bidder.donations_total, 5);
+  assert.equal(bidder.balance, 0);
+  assert.equal(Number(bidder.payments[bidder.payments.length - 1].amount), 35);
+  assert.equal(Number(bidder.payments[bidder.payments.length - 1].donation_amount), 5);
+});
+
+addTest("P-050c","settlement blocks item payment once balance is zero but allows donation-only", async () => {
+  const blockedPayment = await fetchJson(`${baseUrl}/settlement/payment/${testData.auctionId}`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ bidder_id: testData.isolationBidderId, amount: 1, method: "cash" })
+  });
+  await expectStatus(blockedPayment.res, 400);
+  assert.match(blockedPayment.json?.error || "", /No payment is due|Amount requested exceeds outstanding/i);
+  assert.equal(Number(blockedPayment.json?.outstanding ?? 0), 0);
+
+  const donationOnly = await fetchJson(`${baseUrl}/settlement/payment/${testData.auctionId}`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ bidder_id: testData.isolationBidderId, amount: 0, donation_amount: 2, method: "cash" })
+  });
+  await expectStatus(donationOnly.res, 200);
+
+  const bidder = await getBidderSummary(testData.auctionId, testData.isolationBidderId);
+  assert.equal(bidder.payments_total, 40);
+  assert.equal(bidder.donations_total, 7);
+  assert.equal(bidder.balance, 0);
+});
+
+addTest("P-050d","refunds reduce lot payments before donations", async () => {
+  const before = await getBidderSummary(testData.auctionId, testData.isolationBidderId);
+  const donationPayment = before.payments.find((payment) => Number(payment.donation_amount) === 5 && Number(payment.amount) === 35);
+  assert.ok(donationPayment, "Expected a mixed payment with donation");
+
+  const partialRefund = await fetchJson(`${baseUrl}/settlement/payment/${donationPayment.id}/reverse`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ amount: 10, reason: "partial lots refund", auction_id: testData.auctionId })
+  });
+  await expectStatus(partialRefund.res, 201);
+  assert.equal(Number(partialRefund.json?.refunded_donation || 0), 0);
+
+  const after = await getBidderSummary(testData.auctionId, testData.isolationBidderId);
+  assert.equal(after.payments_total, 30);
+  assert.equal(after.donations_total, 7);
+  assert.equal(after.balance, 10);
+});
+
+addTest("P-050e","refunds only reduce donation after lot payment is exhausted", async () => {
+  const before = await getBidderSummary(testData.auctionId, testData.isolationBidderId);
+  const donationPayment = before.payments.find((payment) => Number(payment.donation_amount) === 5 && Number(payment.amount) === 35);
+  assert.ok(donationPayment, "Expected a mixed payment with donation");
+
+  const finalRefund = await fetchJson(`${baseUrl}/settlement/payment/${donationPayment.id}/reverse`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ amount: 25, reason: "refund remaining mixed payment", auction_id: testData.auctionId })
+  });
+  await expectStatus(finalRefund.res, 201);
+  assert.equal(Number(finalRefund.json?.refunded_donation || 0), 5);
+
+  const after = await getBidderSummary(testData.auctionId, testData.isolationBidderId);
+  assert.equal(after.payments_total, 10);
+  assert.equal(after.donations_total, 2);
+  assert.equal(after.balance, 30);
+});
+
+addTest("P-050f","auction summary totals reflect payments donations and grand totals", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/settlement/summary?auction_id=${testData.auctionId}`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  assert.equal(Number(json.lots_total), 40);
+  assert.equal(Number(json.payments_total), 10);
+  assert.equal(Number(json.donations_total), 2);
+  assert.equal(Number(json.current_grand_total), 12);
+  assert.equal(Number(json.expected_grand_total), 42);
+  const breakdownPaymentsTotal = Object.values(json.breakdown || {}).reduce(
+    (sum, entry) => sum + Number(entry?.payments_total || 0),
+    0
+  );
+  const breakdownDonationsTotal = Object.values(json.breakdown || {}).reduce(
+    (sum, entry) => sum + Number(entry?.donations_total || 0),
+    0
+  );
+  assert.equal(Number(breakdownPaymentsTotal.toFixed(2)), 10);
+  assert.equal(Number(breakdownDonationsTotal.toFixed(2)), 2);
+  assert.equal(Number(json.breakdown.cash?.donations_total || 0), 7);
+  assert.equal(Number(json.breakdown['cash (Refund)']?.donations_total || 0), -5);
+});
+
+addTest("P-050g","live feed payment status ignores donations", async () => {
+  const { res, json } = await getLiveFeed(testData.auctionId, { includeUnsold: true });
+  await expectStatus(res, 200);
+  const bidder = json.bidders.find((row) => Number(row.bidder_id) === Number(testData.isolationBidderId));
+  assert.ok(bidder, "Expected isolation bidder in live feed");
+  assert.equal(Number(bidder.payments_total), 10);
+  assert.equal(bidder.payment_status, "part_paid");
+  assert.equal(bidder.can_collect, true);
+});
+
+addTest("P-050h","manual payment rejects negative donation amount", async () => {
+  const before = await getBidderSummary(testData.auctionId, testData.isolationBidderId);
+  const { res } = await fetchJson(`${baseUrl}/settlement/payment/${testData.auctionId}`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ bidder_id: testData.isolationBidderId, amount: 0, donation_amount: -1, method: "cash" })
+  });
+  await expectStatus(res, 400);
+  const after = await getBidderSummary(testData.auctionId, testData.isolationBidderId);
+  assert.equal(after.payments_total, before.payments_total);
+  assert.equal(after.donations_total, before.donations_total);
 });
 
 // /payments/*
@@ -1456,6 +1606,26 @@ addTest("P-059","POST /payments/intents failure amount exceeds outstanding", asy
   assert.equal(json?.outstanding_minor, testData.sumupOutstandingMinor);
 });
 
+addTest("P-059a","POST /payments/intents failure donation without full balance payment", async () => {
+  const before = await getBidderSummary(testData.sumupAuctionId, testData.sumupBidderId);
+  if ((before.balance || 0) < 2) {
+    return skipTest("No sufficient outstanding balance available for SumUp partial-donation validation.");
+  }
+  const { res, json } = await fetchJson(`${baseUrl}/payments/intents`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      auction_id: testData.sumupAuctionId,
+      bidder_id: testData.sumupBidderId,
+      amount_minor: Math.round((before.balance - 1) * 100),
+      donation_minor: 100,
+      channel: "app"
+    })
+  });
+  await expectStatus(res, 400);
+  assert.match(json?.error || "", /Donation requires/i);
+});
+
 addTest("P-060","GET /payments/intents/:id success", async () => {
   if (!testData.sumupIntentId) {
     return skipTest("No SumUp intent available.");
@@ -1577,6 +1747,42 @@ addTest("P-069","GET /payments/sumup/callback/success duplicate no payment", asy
   await fetch(`${baseUrl}/payments/sumup/callback/success?status=success&foreign-tx-id=${testData.sumupIntentId}`);
   const after = await getBidderSummary(testData.sumupAuctionId, testData.sumupBidderId);
   assert.equal(after.payments_total, testData.sumupPaymentsAfterSuccess);
+});
+
+addTest("P-069a","GET /payments/sumup/callback/success finalizes full-balance payment with donation", async () => {
+  const before = await getBidderSummary(testData.sumupAuctionId, testData.sumupBidderId);
+  const outstandingMinor = Math.max(0, Math.round((before.balance || 0) * 100));
+  if (outstandingMinor < 1) {
+    return skipTest("No outstanding balance available for SumUp donation finalization.");
+  }
+
+  const create = await fetchJson(`${baseUrl}/payments/intents`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      auction_id: testData.sumupAuctionId,
+      bidder_id: testData.sumupBidderId,
+      amount_minor: outstandingMinor,
+      donation_minor: 250,
+      channel: "app",
+      note: "phase1 sumup donation"
+    })
+  });
+  await expectStatus(create.res, 201);
+  assert.equal(create.json?.donation_minor, 250);
+
+  const callback = await fetch(`${baseUrl}/payments/sumup/callback/success?status=success&foreign-tx-id=${create.json.intent_id}`);
+  await expectStatus(callback, 200);
+  await waitForIntentStatus(create.json.intent_id, "succeeded", 3000);
+
+  const after = await getBidderSummary(testData.sumupAuctionId, testData.sumupBidderId);
+  assert.equal(after.balance, 0);
+  assert.ok(Math.abs(Number(after.payments_total) - Number(before.lots_total)) < 0.01, "SumUp full-balance payment did not settle lots");
+  assert.ok(Math.abs(Number(after.donations_total) - (Number(before.donations_total || 0) + 2.5)) < 0.01, "SumUp donation total did not update");
+  const latestPayment = after.payments[after.payments.length - 1];
+  assert.ok(latestPayment, "Expected latest SumUp payment");
+  assert.ok(Math.abs(Number(latestPayment.amount) - ((outstandingMinor + 250) / 100)) < 0.01, "SumUp gross payment amount mismatch");
+  assert.ok(Math.abs(Number(latestPayment.donation_amount) - 2.5) < 0.01, "SumUp payment donation amount mismatch");
 });
 
 run().catch(err => {

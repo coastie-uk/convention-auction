@@ -259,6 +259,27 @@
                             </span>
                         </label>
                         <label class="export-choice">
+                            <input type="radio" name="export-type" value="manual-entry-sheet">
+                            <span>
+                                <strong>Manual Entry Sheet (PDF)</strong>
+                                <small>Download an A4 portrait sheet for handwritten bidder and price recording.</small>
+                            </span>
+                        </label>
+                        <label class="export-choice">
+                            <input type="radio" name="export-type" value="report-pdf">
+                            <span>
+                                <strong>Auction Report (PDF)</strong>
+                                <small>Download a multi-page summary report with metrics, tables, and charts for the whole auction.</small>
+                            </span>
+                        </label>
+                        <label class="export-choice">
+                            <input type="radio" name="export-type" value="bidder-report-pdf">
+                            <span>
+                                <strong>Bidder Report (PDF)</strong>
+                                <small>Download a bidder-by-bidder payment and collection report with won lots and item photos.</small>
+                            </span>
+                        </label>
+                        <label class="export-choice">
                             <input type="radio" name="export-type" value="csv">
                             <span>
                                 <strong>CSV Export</strong>
@@ -267,7 +288,7 @@
                         </label>
                     </fieldset>
 
-                    <fieldset class="export-fieldset">
+                    <fieldset id="item-export-selection-fieldset" class="export-fieldset">
                         <legend>Items to Include</legend>
                         <label class="export-choice">
                             <input type="radio" name="export-selection-mode" value="all" checked>
@@ -296,6 +317,31 @@
                             <input type="text" id="export-item-range" placeholder="1,3,4-9" autocomplete="off">
                             <p class="export-help-text">Numbers refer to item numbers, not database IDs.</p>
                         </div>
+                    </fieldset>
+
+                    <fieldset id="bidder-report-selection-fieldset" class="export-fieldset" hidden>
+                        <legend>Bidders to Include</legend>
+                        <label class="export-choice">
+                            <input type="radio" name="bidder-report-mode" value="all" checked>
+                            <span>
+                                <strong>All bidders</strong>
+                                <small>Include every bidder with one or more sold lots.</small>
+                            </span>
+                        </label>
+                        <label class="export-choice">
+                            <input type="radio" name="bidder-report-mode" value="unpaid">
+                            <span>
+                                <strong>Only bidders not paid in full</strong>
+                                <small>Include bidders whose recorded payments are still below their total owed.</small>
+                            </span>
+                        </label>
+                        <label class="export-choice">
+                            <input type="radio" name="bidder-report-mode" value="uncollected">
+                            <span>
+                                <strong>Only bidders not collected</strong>
+                                <small>Include bidders with one or more uncollected won items.</small>
+                            </span>
+                        </label>
                     </fieldset>
 
                     <div id="export-job-status" class="export-job-status" hidden>

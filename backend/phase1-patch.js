@@ -20,6 +20,13 @@ const { sanitiseText } = require('./middleware/sanitiseText');
 const { audit, recomputeBalanceAndAudit } = require('./middleware/audit');
 const { block } = require('sharp');
 const { getAuditActor } = require('./users');
+const {
+  DONATION_AMOUNT_SQL,
+  SETTLEMENT_AMOUNT_SQL,
+  roundCurrency,
+  getBidderPaymentTotals,
+  calculateDonationRefundAfterSettlement
+} = require('./payment-utils');
 
 // Prepare payment methods object - this is static at runtime
 
@@ -52,6 +59,12 @@ const paymentMethods = Object.freeze(JSON.parse(JSON.stringify({
   },
 
 })));
+
+const parseMoneyAmount = (value) => {
+  if (value === '' || value === null || value === undefined) return 0;
+  const parsed = roundCurrency(value);
+  return Number.isFinite(parsed) ? parsed : NaN;
+};
 
 
 module.exports = function phase1Patch (app) {
@@ -146,7 +159,7 @@ module.exports = function phase1Patch (app) {
               AND i.hammer_price IS NOT NULL
         LEFT JOIN (
           SELECT bidder_id,
-                 SUM(amount) AS payments_total,
+                 SUM(${SETTLEMENT_AMOUNT_SQL}) AS payments_total,
                  MAX(created_at) AS last_paid_at
             FROM payments
            GROUP BY bidder_id
@@ -270,9 +283,9 @@ module.exports = function phase1Patch (app) {
     if (!item) return res.status(404).json({ error: 'Sold item not found for this auction' });
 
     const paymentSummary = db.get(`
-      SELECT IFNULL(SUM(amount), 0) AS payments_total
-        FROM payments
-       WHERE bidder_id = ?
+      SELECT IFNULL(SUM(${SETTLEMENT_AMOUNT_SQL}), 0) AS payments_total
+      FROM payments
+      WHERE bidder_id = ?
     `, [item.bidder_id]) || { payments_total: 0 };
 
     if (auctionStatus !== 'settlement' || Number(paymentSummary.payments_total || 0) <= 0) {
@@ -323,9 +336,9 @@ module.exports = function phase1Patch (app) {
     if (!bidder) return res.status(404).json({ error: 'Bidder not found for this auction' });
 
     const paymentSummary = db.get(`
-      SELECT IFNULL(SUM(amount), 0) AS payments_total
-        FROM payments
-       WHERE bidder_id = ?
+      SELECT IFNULL(SUM(${SETTLEMENT_AMOUNT_SQL}), 0) AS payments_total
+      FROM payments
+      WHERE bidder_id = ?
     `, [bidderId]) || { payments_total: 0 };
 
     if (auctionStatus !== 'settlement' || Number(paymentSummary.payments_total || 0) <= 0) {
@@ -385,7 +398,7 @@ module.exports = function phase1Patch (app) {
              GROUP BY winning_bidder_id
           ) l ON l.bidder_id = b.id
           LEFT JOIN (
-            SELECT bidder_id, SUM(amount) AS payments_total
+            SELECT bidder_id, SUM(${SETTLEMENT_AMOUNT_SQL}) AS payments_total
               FROM payments
              GROUP BY bidder_id
           ) p ON p.bidder_id = b.id
@@ -432,7 +445,8 @@ module.exports = function phase1Patch (app) {
     const rows = db.all(`
       SELECT b.id, b.paddle_number, b.name,
              IFNULL(i.lots_total, 0) AS lots_total,
-             IFNULL(p.payments_total, 0) AS payments_total
+             IFNULL(p.payments_total, 0) AS payments_total,
+             IFNULL(p.donations_total, 0) AS donations_total
         FROM bidders b
         LEFT JOIN (
           SELECT winning_bidder_id AS bidder_id,
@@ -442,7 +456,9 @@ module.exports = function phase1Patch (app) {
            GROUP BY winning_bidder_id
         ) i ON i.bidder_id = b.id
         LEFT JOIN (
-          SELECT bidder_id, SUM(amount) AS payments_total
+          SELECT bidder_id,
+                 SUM(${SETTLEMENT_AMOUNT_SQL}) AS payments_total,
+                 SUM(${DONATION_AMOUNT_SQL}) AS donations_total
             FROM payments
            GROUP BY bidder_id
         ) p ON p.bidder_id = b.id
@@ -451,7 +467,7 @@ module.exports = function phase1Patch (app) {
        ORDER BY b.paddle_number
     `,[id, id]);
     rows.forEach(r => {
-      r.balance = (r.lots_total || 0) - (r.payments_total || 0);
+      r.balance = roundCurrency((r.lots_total || 0) - (r.payments_total || 0)) || 0;
     });
     res.json(rows);
   });
@@ -476,16 +492,24 @@ module.exports = function phase1Patch (app) {
 
   settlement.post('/payment/:auctionId', authenticateRole('cashier'), checkAuctionState(['settlement']), (req, res) => {
     const auction_id = Number(req.params.auctionId);
-    const { bidder_id, amount, method = 'cash', note = '' } = req.body;
+    const { bidder_id, amount, donation_amount = 0, method = 'cash', note = '' } = req.body;
     const sanitisedNote = sanitiseText(note, 100);
+    const paymentAmount = parseMoneyAmount(amount);
+    const donationAmount = parseMoneyAmount(donation_amount);
     // acceptable methods (manual methods only here, SumUp handled elsewhere)
     const manualPaymentMethods = ['cash', 'card-manual', 'paypal-manual'];
     if (!manualPaymentMethods.includes(method)) {
       return res.status(400).json({ error: 'Invalid payment method' });
     }
 
-    if (!bidder_id || !amount || !auction_id) {
+    if (!bidder_id || !auction_id) {
       return res.status(400).json({ error: 'Missing params' });
+    }
+    if (!Number.isFinite(paymentAmount) || !Number.isFinite(donationAmount) || paymentAmount < 0 || donationAmount < 0) {
+      return res.status(400).json({ error: 'Invalid payment or donation amount' });
+    }
+    if (!(paymentAmount > 0 || donationAmount > 0)) {
+      return res.status(400).json({ error: 'Payment or donation amount required' });
     }
     // check if the requested method is enabled in config
     if (CASH_ENABLED === false && method === 'cash' || MANUAL_CARD_ENABLED === false && method === 'card-manual' || PAYPAL_ENABLED === false && method === 'paypal-manual') {
@@ -501,31 +525,47 @@ module.exports = function phase1Patch (app) {
     }
 
     // Check that the requested amount does not exceed the bidder's outstanding balance
-    const sums2 = db.prepare(`
-      SELECT
-        IFNULL((SELECT SUM(hammer_price) FROM items WHERE winning_bidder_id = ?), 0) AS lots_total,
-        IFNULL((SELECT SUM(amount) FROM payments WHERE bidder_id = ?), 0) AS payments_total
-    `).get(bidder_id, bidder_id);
-    const outstanding = Math.max(0, Math.round((sums2.lots_total - sums2.payments_total)));
-    logFromRequest(req, logLevels.DEBUG, `Bidder ${bidder_id} paddle number ${bidderRow.paddle_number} outstanding amount=${outstanding}, amount requested=${amount}`);
-    if (amount > outstanding) {
-      logFromRequest(req, logLevels.WARN, `Intent amount exceeds outstanding: bidder=${bidder_id} paddle number=${bidderRow.paddle_number} amount=${amount} outstanding=${outstanding}`);
-      return res.status(400).json({ error: 'Amount requested exceeds outstanding', outstanding});
+    const totals = getBidderPaymentTotals(db, bidder_id, auction_id);
+    const outstanding = Math.max(0, totals.balance);
+    const grossAmount = roundCurrency(paymentAmount + donationAmount);
+
+    logFromRequest(
+      req,
+      logLevels.DEBUG,
+      `Bidder ${bidder_id} paddle number ${bidderRow.paddle_number} outstanding=${outstanding}, payment=${paymentAmount}, donation=${donationAmount}, gross=${grossAmount}`
+    );
+
+    if (paymentAmount > outstanding + 0.000001) {
+      logFromRequest(req, logLevels.WARN, `Payment amount exceeds outstanding: bidder=${bidder_id} paddle number=${bidderRow.paddle_number} amount=${paymentAmount} outstanding=${outstanding}`);
+      return res.status(400).json({ error: 'Amount requested exceeds outstanding', outstanding });
+    }
+    if (outstanding <= 0 && paymentAmount > 0) {
+      return res.status(400).json({ error: 'No payment is due for this bidder' });
+    }
+    if (donationAmount > 0 && outstanding > 0 && Math.abs(paymentAmount - outstanding) > 0.000001) {
+      return res.status(400).json({ error: 'Donation requires the full outstanding balance to be paid' });
     }
 
 try {
 
-    db.run(`INSERT INTO payments (bidder_id, amount, method, note, created_by, currency)
-            VALUES (?,?,?,?,?,?)`,
-      [bidder_id, amount, method, sanitisedNote, getAuditActor(req), CURRENCY]
+    db.run(`INSERT INTO payments (bidder_id, amount, donation_amount, method, note, created_by, currency)
+            VALUES (?,?,?,?,?,?,?)`,
+      [bidder_id, grossAmount, donationAmount, method, sanitisedNote, getAuditActor(req), CURRENCY]
     );
-    audit(getAuditActor(req), 'payment', 'bidder', bidder_id, { amount, method, paddle: bidderRow.paddle_number, note: sanitisedNote });
-    logFromRequest(req, logLevels.INFO, `${method} payment by bidder ${bidder_id} for ${amount} recorded`);
+    audit(getAuditActor(req), 'payment', 'bidder', bidder_id, {
+      amount: grossAmount,
+      payment_amount: paymentAmount,
+      donation_amount: donationAmount,
+      method,
+      paddle: bidderRow.paddle_number,
+      note: sanitisedNote
+    });
+    logFromRequest(req, logLevels.INFO, `${method} payment by bidder ${bidder_id} for ${grossAmount} recorded (${paymentAmount} lots, ${donationAmount} donation)`);
 
   /* 2️⃣  recompute balance */
   const balance = recomputeBalanceAndAudit(bidder_id, req);
 
- res.json({ ok: true, balance });
+ res.json({ ok: true, balance, payments_total: totals.payments_total + paymentAmount, donations_total: totals.donations_total + donationAmount });
     
 } catch (error) {
     logFromRequest(req, logLevels.ERROR, `Failed to record payment for bidder ${bidder_id}: ${error.message}`);
@@ -566,7 +606,7 @@ settlement.post('/payment/:payid/reverse', authenticateRole(['cashier', 'admin']
     }
 
     const getOriginal = db.prepare(`
-      SELECT id, bidder_id, amount, method, note, created_by, created_at,
+      SELECT id, bidder_id, amount, donation_amount, method, note, created_by, created_at,
              provider, provider_txn_id, intent_id, currency
       FROM payments
       WHERE id = ?
@@ -579,10 +619,17 @@ settlement.post('/payment/:payid/reverse', authenticateRole(['cashier', 'admin']
       WHERE reverses_payment_id = ?
     `);
 
+    const getReversedDonationTotal = db.prepare(`
+      SELECT COALESCE(SUM(-${DONATION_AMOUNT_SQL}), 0) AS reversed_donation_total
+      FROM payments
+      WHERE reverses_payment_id = ?
+    `);
+
     const insertReversal = db.prepare(`
   INSERT INTO payments (
     bidder_id,
     amount,
+    donation_amount,
     method,
     note,
     created_by,
@@ -591,7 +638,7 @@ settlement.post('/payment/:payid/reverse', authenticateRole(['cashier', 'admin']
     reverses_payment_id,
     reversal_reason
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
     const tx = db.transaction(() => {
@@ -606,11 +653,19 @@ settlement.post('/payment/:payid/reverse', authenticateRole(['cashier', 'admin']
       }
 
       const reversed = getReversedTotal.get(originalId);
+      const reversedDonation = getReversedDonationTotal.get(originalId);
       const reversedTotal = Number(reversed?.reversed_total || 0);
+      const reversedDonationTotal = Number(reversedDonation?.reversed_donation_total || 0);
         logFromRequest(req, logLevels.DEBUG, `Original payment amount=${original.amount}, already reversed total=${reversedTotal}`);
       const remaining = Number(original.amount) - reversedTotal;
+      const originalSettlement = Number(original.amount) - Number(original.donation_amount || 0);
+      const reversedSettlementTotal = reversedTotal - reversedDonationTotal;
+      const remainingSettlement = originalSettlement - reversedSettlementTotal;
+      const remainingDonation = Number(original.donation_amount || 0) - reversedDonationTotal;
       // remaining should not go negative; but guard anyway
       const remainingSafe = remaining < 0 ? 0 : remaining;
+      const remainingSettlementSafe = remainingSettlement < 0 ? 0 : remainingSettlement;
+      const remainingDonationSafe = remainingDonation < 0 ? 0 : remainingDonation;
 
       // Determine refund amount
       const refundAmount =
@@ -626,11 +681,18 @@ settlement.post('/payment/:payid/reverse', authenticateRole(['cashier', 'admin']
       const reversalNote = `Refund of ${original.currency || ''} ${refundAmount} against ID #${original.id}. Reason: ${reason}` + (extraNote ? ` | note=${extraNote}` : '');
       logFromRequest(req, logLevels.DEBUG, `reversal note: ${reversalNote}`);
 
+const refundDonationAmount = calculateDonationRefundAfterSettlement({
+  remainingSettlementAmount: remainingSettlementSafe,
+  remainingDonationAmount: remainingDonationSafe,
+  refundAmount
+});
+
 const methodString = original.method + ' (Refund)';
 const info = insertReversal.run(
 
   original.bidder_id,                              // bidder_id
   -refundAmount,                                   // amount (negative)
+  -refundDonationAmount,                           // donation_amount (negative)
   methodString,                                    // method
   reversalNote,                                    // note
   getAuditActor(req),                              // created_by
@@ -644,6 +706,7 @@ audit(getAuditActor(req), 'payment_reversal', 'bidder', original.bidder_id, {
   original_payment_id: original.id,
   reversal_payment_id: info.lastInsertRowid,
   amount: refundAmount,
+  donation_amount: refundDonationAmount,
   reason
 });
 
@@ -654,6 +717,7 @@ logFromRequest(req, logLevels.DEBUG, `Reversal inserted with id=${info.lastInser
         original_id: original.id,
         bidder_id: original.bidder_id,
         refunded: refundAmount,
+        refunded_donation: refundDonationAmount,
         remaining: remainingSafe - refundAmount
       };
     });
@@ -701,7 +765,7 @@ logFromRequest(req, logLevels.DEBUG, `Reversal inserted with id=${info.lastInser
       SELECT b.paddle_number, IFNULL(b.name,'') AS name,             
              GROUP_CONCAT(i.item_number || ':' || i.description, '|')  AS lots_won,
              SUM(i.hammer_price) AS lots_total,
-             IFNULL((SELECT SUM(amount) FROM payments p WHERE p.bidder_id = b.id),0) AS payments_total
+             IFNULL((SELECT SUM(${SETTLEMENT_AMOUNT_SQL}) FROM payments p WHERE p.bidder_id = b.id),0) AS payments_total
         FROM bidders b
    LEFT JOIN items i ON i.winning_bidder_id = b.id
    WHERE b.auction_id = ?
@@ -826,7 +890,7 @@ if (info.changes === 0) {
         const sums = db.get(`
           SELECT
             IFNULL((SELECT SUM(hammer_price) FROM items WHERE winning_bidder_id = ?), 0) AS lots_total,
-            IFNULL((SELECT SUM(amount) FROM payments WHERE bidder_id = ?), 0) AS payments_total
+            IFNULL((SELECT SUM(${SETTLEMENT_AMOUNT_SQL}) FROM payments WHERE bidder_id = ?), 0) AS payments_total
         `, [row.winning_bidder_id, row.winning_bidder_id]);
         const newBalance = (sums.lots_total || 0) - (row.hammer_price || 0) - (sums.payments_total || 0);
         if (Number(newBalance) < 0) {
@@ -880,25 +944,29 @@ if (!auctionId || !id) return res.status(400).json({ error: 'item # and auction_
        ORDER BY item_number`, [id, auctionId]);
 
   const payments = db.all(`
-      SELECT id, amount, method, note, created_at
+      SELECT id, amount, donation_amount, method, note, created_at
         FROM payments
        WHERE bidder_id = ?
        ORDER BY id`, [id]);
 
   const summary = db.get(`
-      SELECT b.id, b.paddle_number,
-             IFNULL((SELECT SUM(i.hammer_price) FROM items i WHERE i.winning_bidder_id = b.id AND i.auction_id = ?), 0) AS lots_total,
-             IFNULL((SELECT SUM(amount) FROM payments p WHERE p.bidder_id = b.id),0) AS payments_total
+      SELECT b.id, b.paddle_number
         FROM bidders b
        WHERE b.id = ? AND b.auction_id = ?
-    GROUP BY b.id`, [auctionId, id, auctionId]);
+    GROUP BY b.id`, [id, auctionId]);
 
-   // console.log(summary.lots_total)
-const lotsTotal = Number(summary.lots_total || 0);
-const paymentsTotal = Number(summary.payments_total || 0);
-  const balance = (lotsTotal) - (paymentsTotal);
+  const totals = getBidderPaymentTotals(db, id, auctionId);
 
-  res.json({ ...summary, lots, payments, balance });
+  res.json({
+    ...summary,
+    lots_total: totals.lots_total,
+    payments_total: totals.payments_total,
+    donations_total: totals.donations_total,
+    gross_total: totals.gross_total,
+    lots,
+    payments,
+    balance: totals.balance
+  });
 });
 
   //--------------------------------------------------------------------------
@@ -916,19 +984,36 @@ settlement.get('/summary', authenticateRole('cashier'), (req, res) => {
 
   // 2. Payments grouped by method
   const rows = db.all(`
-      SELECT method, SUM(amount) AS amt
+      SELECT method,
+             SUM(${SETTLEMENT_AMOUNT_SQL}) AS payments_total,
+             SUM(${DONATION_AMOUNT_SQL}) AS donations_total,
+             SUM(amount) AS gross_total
         FROM payments p
         JOIN bidders b ON b.id = p.bidder_id
        WHERE b.auction_id = ?
        GROUP BY method`, [aid]);
 
-  const breakdown = rows.reduce((m,r)=>(m[r.method]=r.amt, m), {cash:0,card:0,paypal:0,sumup:0});
-  const paidTotal = Object.values(breakdown).reduce((a,b)=>a+b,0);
+  const breakdown = rows.reduce((memo, row) => {
+    memo[row.method] = {
+      payments_total: roundCurrency(row.payments_total || 0) || 0,
+      donations_total: roundCurrency(row.donations_total || 0) || 0,
+      gross_total: roundCurrency(row.gross_total || 0) || 0
+    };
+    return memo;
+  }, {});
+  const paidTotal = roundCurrency(rows.reduce((sum, row) => sum + Number(row.payments_total || 0), 0)) || 0;
+  const donationsTotal = roundCurrency(rows.reduce((sum, row) => sum + Number(row.donations_total || 0), 0)) || 0;
+  const expectedGrandTotal = roundCurrency((total || 0) + donationsTotal) || 0;
+  const currentGrandTotal = roundCurrency(paidTotal + donationsTotal) || 0;
 
   res.json({
     auction_id: aid,
     lots_total: total || 0,
     payments_total: paidTotal,
+    donations_total: donationsTotal,
+    gross_total: currentGrandTotal,
+    expected_grand_total: expectedGrandTotal,
+    current_grand_total: currentGrandTotal,
     breakdown,
     balance: (total || 0) - paidTotal
   });

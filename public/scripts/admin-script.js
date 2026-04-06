@@ -31,6 +31,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const cancelExportPanelButton = document.getElementById("cancel-export-panel");
     const exportForm = document.getElementById("export-form");
     const exportPanelAuction = document.getElementById("export-panel-auction");
+    const itemExportSelectionFieldset = document.getElementById("item-export-selection-fieldset");
+    const bidderReportSelectionFieldset = document.getElementById("bidder-report-selection-fieldset");
     const exportRangeControls = document.getElementById("export-range-controls");
     const exportItemRangeInput = document.getElementById("export-item-range");
     const exportNeedsAttentionTitle = document.getElementById("export-needs-attention-title");
@@ -44,6 +46,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const resetExportTrackingButton = document.getElementById("reset-export-tracking");
     const exportTypeInputs = Array.from(document.querySelectorAll('input[name="export-type"]'));
     const exportSelectionModeInputs = Array.from(document.querySelectorAll('input[name="export-selection-mode"]'));
+    const bidderReportModeInputs = Array.from(document.querySelectorAll('input[name="bidder-report-mode"]'));
     const statusOptions = ["setup", "locked", "live", "settlement", "archived"];
     const managedSections = [loginSection, adminSection, editSection, addSection, exportSection].filter(Boolean);
 
@@ -364,6 +367,12 @@ document.addEventListener("DOMContentLoaded", function () {
                 return "card export";
             case "slips":
                 return "slip print";
+            case "manual-entry-sheet":
+                return "manual entry sheet";
+            case "report-pdf":
+                return "auction report";
+            case "bidder-report-pdf":
+                return "bidder report";
             case "csv":
                 return "CSV export";
             default:
@@ -437,6 +446,10 @@ document.addEventListener("DOMContentLoaded", function () {
         return exportSelectionModeInputs.find((input) => input.checked)?.value || "all";
     }
 
+    function getSelectedBidderReportMode() {
+        return bidderReportModeInputs.find((input) => input.checked)?.value || "all";
+    }
+
     function updateExportPanelHeader() {
         exportPanelAuction.textContent = `Auction: ${getSelectedAuctionSummary()}`;
     }
@@ -445,12 +458,47 @@ document.addEventListener("DOMContentLoaded", function () {
         const exportType = getSelectedExportType();
         let selectionMode = getSelectedExportSelectionMode();
         const isSlipExport = exportType === "slips";
+        const isManualEntrySheetExport = exportType === "manual-entry-sheet";
+        const isReportPdfExport = exportType === "report-pdf";
+        const isBidderReportExport = exportType === "bidder-report-pdf";
         const isCsvExport = exportType === "csv";
         const activePptxJob = latestPptxJob && ["queued", "running", "cancelling"].includes(latestPptxJob.status)
             ? latestPptxJob
             : null;
+        const requiresAllItems = isCsvExport || isManualEntrySheetExport || isReportPdfExport;
 
-        if (isCsvExport && selectionMode === "needs-attention") {
+        if (itemExportSelectionFieldset) {
+            itemExportSelectionFieldset.hidden = isBidderReportExport;
+        }
+        if (bidderReportSelectionFieldset) {
+            bidderReportSelectionFieldset.hidden = !isBidderReportExport;
+        }
+
+        if (isBidderReportExport) {
+            exportRangeControls.hidden = true;
+            exportItemRangeInput.disabled = true;
+            exportItemRangeInput.value = "";
+            resetExportTrackingButton.hidden = true;
+            resetExportTrackingButton.disabled = true;
+
+            if (activePptxJob && (exportType === "slides" || exportType === "cards")) {
+                runExportButton.disabled = true;
+                runExportButton.textContent = "PPTX Generation In Progress";
+            } else {
+                runExportButton.disabled = false;
+                runExportButton.textContent = "Download Bidder Report";
+            }
+            return;
+        }
+
+        if (requiresAllItems && selectionMode === "needs-attention") {
+            const allModeInput = exportSelectionModeInputs.find((input) => input.value === "all");
+            if (allModeInput) {
+                allModeInput.checked = true;
+            }
+            selectionMode = "all";
+        }
+        if ((isManualEntrySheetExport || isReportPdfExport) && selectionMode === "range") {
             const allModeInput = exportSelectionModeInputs.find((input) => input.value === "all");
             if (allModeInput) {
                 allModeInput.checked = true;
@@ -468,11 +516,24 @@ document.addEventListener("DOMContentLoaded", function () {
 
         const needsAttentionInput = exportSelectionModeInputs.find((input) => input.value === "needs-attention");
         const needsAttentionChoice = needsAttentionInput?.closest(".export-choice");
+        const rangeInput = exportSelectionModeInputs.find((input) => input.value === "range");
+        const rangeChoice = rangeInput?.closest(".export-choice");
+        const allInput = exportSelectionModeInputs.find((input) => input.value === "all");
+        const allChoice = allInput?.closest(".export-choice");
         if (needsAttentionInput) {
-            needsAttentionInput.disabled = isCsvExport;
+            needsAttentionInput.disabled = requiresAllItems;
         }
         if (needsAttentionChoice) {
-            needsAttentionChoice.hidden = isCsvExport;
+            needsAttentionChoice.classList.toggle("export-choice--disabled", requiresAllItems);
+        }
+        if (rangeInput) {
+            rangeInput.disabled = isManualEntrySheetExport || isReportPdfExport;
+        }
+        if (rangeChoice) {
+            rangeChoice.classList.toggle("export-choice--disabled", isManualEntrySheetExport || isReportPdfExport);
+        }
+        if (allChoice) {
+            allChoice.classList.remove("export-choice--disabled");
         }
 
         exportRangeControls.hidden = !rangeSelected;
@@ -481,8 +542,8 @@ document.addEventListener("DOMContentLoaded", function () {
             exportItemRangeInput.value = "";
         }
 
-        resetExportTrackingButton.hidden = isCsvExport;
-        resetExportTrackingButton.disabled = isCsvExport;
+        resetExportTrackingButton.hidden = isCsvExport || isManualEntrySheetExport || isReportPdfExport;
+        resetExportTrackingButton.disabled = isCsvExport || isManualEntrySheetExport || isReportPdfExport;
         resetExportTrackingButton.textContent = `Reset ${getExportTypeDisplayText(exportType)} Tracking`;
 
         if (activePptxJob && (exportType === "slides" || exportType === "cards")) {
@@ -492,12 +553,113 @@ document.addEventListener("DOMContentLoaded", function () {
             runExportButton.disabled = false;
             if (isSlipExport) {
                 runExportButton.textContent = "Generate Slip PDF";
+            } else if (isManualEntrySheetExport) {
+                runExportButton.textContent = "Download Manual Entry Sheet";
+            } else if (isReportPdfExport) {
+                runExportButton.textContent = "Download Auction Report";
+            } else if (isBidderReportExport) {
+                runExportButton.textContent = "Download Bidder Report";
             } else if (isCsvExport) {
                 runExportButton.textContent = "Download CSV";
             } else {
                 runExportButton.textContent = "Start Export";
             }
         }
+    }
+
+    async function downloadManualEntrySheet() {
+        const token = getTokenOrLogout();
+        if (!token) return;
+
+        const response = await fetch(`${API}/auctions/${selectedAuctionId}/items/manual-entry-sheet?selection_mode=all`, {
+            headers: { Authorization: token }
+        });
+
+        if (!response.ok) {
+            let message = "Failed to generate manual entry sheet";
+            try {
+                const data = await response.json();
+                message = data.error || message;
+            } catch (parseErr) {
+                // keep fallback message
+            }
+            throw new Error(message);
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `auction_${selectedAuctionId}_manual_entry_sheet.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+        showMessage("Manual entry sheet downloaded", "success");
+    }
+
+    async function downloadAuctionReportPdf() {
+        const token = getTokenOrLogout();
+        if (!token) return;
+
+        const response = await fetch(`${API}/auctions/${selectedAuctionId}/report-pdf?selection_mode=all`, {
+            headers: { Authorization: token }
+        });
+
+        if (!response.ok) {
+            let message = "Failed to generate auction report";
+            try {
+                const data = await response.json();
+                message = data.error || message;
+            } catch (parseErr) {
+                // keep fallback message
+            }
+            throw new Error(message);
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `auction_${selectedAuctionId}_report.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+        showMessage("Auction report downloaded", "success");
+    }
+
+    async function downloadBidderReportPdf(bidderMode) {
+        const token = getTokenOrLogout();
+        if (!token) return;
+
+        const params = new URLSearchParams();
+        params.set("bidder_mode", bidderMode || "all");
+        const response = await fetch(`${API}/auctions/${selectedAuctionId}/bidder-report-pdf?${params.toString()}`, {
+            headers: { Authorization: token }
+        });
+
+        if (!response.ok) {
+            let message = "Failed to generate bidder report";
+            try {
+                const data = await response.json();
+                message = data.error || message;
+            } catch (parseErr) {
+                // keep fallback message
+            }
+            throw new Error(message);
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `auction_${selectedAuctionId}_bidder_report_${bidderMode || "all"}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+        showMessage("Bidder report downloaded", "success");
     }
 
     function renderPptxJobStatus(job) {
@@ -672,6 +834,12 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     function buildExportSelectionPayload() {
+        if (getSelectedExportType() === "bidder-report-pdf") {
+            return {
+                bidder_mode: getSelectedBidderReportMode()
+            };
+        }
+
         const selectionMode = getSelectedExportSelectionMode();
         const itemRange = exportItemRangeInput.value.trim();
 
@@ -1115,6 +1283,18 @@ document.addEventListener("DOMContentLoaded", function () {
 
             if (exportType === "slips") {
                 await printAuctionSlips(selectionPayload.selection_mode, selectionPayload.item_range || "");
+                return;
+            }
+            if (exportType === "manual-entry-sheet") {
+                await downloadManualEntrySheet();
+                return;
+            }
+            if (exportType === "report-pdf") {
+                await downloadAuctionReportPdf();
+                return;
+            }
+            if (exportType === "bidder-report-pdf") {
+                await downloadBidderReportPdf(selectionPayload.bidder_mode);
                 return;
             }
             if (exportType === "csv") {

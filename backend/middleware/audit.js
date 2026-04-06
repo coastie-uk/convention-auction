@@ -1,4 +1,5 @@
 const db = require('../db');
+const { getBidderPaymentTotals } = require('../payment-utils');
 
 const { logLevels, log } = require('../logger');
 const { getAuditActor } = require('../users');
@@ -105,18 +106,8 @@ function recomputeBalanceAndAudit(bidder_id, req) {
       req = { user: { username: 'system', role: 'system', auditUser: 'system' } };
     }
 
-  const sums = db.get(
-    `SELECT
-         (SELECT SUM(hammer_price)
-            FROM items
-           WHERE winning_bidder_id = ?) AS lots_total,
-         (SELECT SUM(amount)
-            FROM payments
-           WHERE bidder_id = ?)        AS paid_total`,
-    [bidder_id, bidder_id]
-  );
-
-  const balance = (sums.lots_total || 0) - (sums.paid_total || 0);
+  const totals = getBidderPaymentTotals(db, bidder_id);
+  const balance = totals.balance;
 
   /* 3️⃣  if fully paid, audit every lot => “item paid” */
 

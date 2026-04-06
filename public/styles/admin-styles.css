@@ -212,6 +212,10 @@ form button:hover {
     gap: 18px;
 }
 
+.export-form [hidden] {
+    display: none !important;
+}
+
 .export-form > .export-fieldset:nth-of-type(1) {
     grid-column: 1;
 }
@@ -258,6 +262,22 @@ form button:hover {
 .export-choice span {
     display: grid;
     gap: 4px;
+}
+
+.export-choice--disabled {
+    background: #f3f3f3;
+    border-color: #d6d6d6;
+    color: #8a8a8a;
+    cursor: not-allowed;
+}
+
+.export-choice--disabled strong,
+.export-choice--disabled small {
+    color: #8a8a8a;
+}
+
+.export-choice--disabled input {
+    cursor: not-allowed;
 }
 
 .export-choice small,
