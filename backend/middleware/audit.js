@@ -89,8 +89,8 @@ function audit(user, action, type, id, details = {}) {
     }
     try {
         db.run(
-            `INSERT INTO audit_log (user, action, object_type, object_id, details)
-           VALUES (?,?,?,?,?)`,
+            `INSERT INTO audit_log (user, action, object_type, object_id, details, created_at)
+           VALUES (?,?,?,?,?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))`,
             [user, action, type, id, JSON.stringify(details)]
         );
     } catch (err) {

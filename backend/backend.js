@@ -591,7 +591,7 @@ app.post('/auctions/:publicId/newitem', checkAuctionState(['setup', 'locked', 'l
                         return res.status(500).json({ error: "Database error" });
                     }
 
-                    db.run(`INSERT INTO items (item_number, description, contributor, artist, notes, photo, auction_id, date) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%d-%m-%Y %H:%M:%S', 'now'))`,
+                    db.run(`INSERT INTO items (item_number, description, contributor, artist, notes, photo, auction_id, date) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime'))`,
                         [itemNumber, sanitisedDescription, sanitisedContributor, sanitisedArtist, sanitisedNotes, photoPath, auction_id],
                         function (err) {
                             if (err) {
@@ -790,7 +790,8 @@ try {
 
         // Always update text_mod_date if any text fields changed
         if (textFieldsChanged) {
-            updates.push("text_mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now')");
+            logFromRequest(req, logLevels.DEBUG, `Text fields changed for item ${id}, updating text_mod_date`);
+            updates.push("text_mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime')");
         }
 
         // For each field, check if it's provided and different from current value. If so, add to updates (minimize DB writes)
@@ -799,9 +800,11 @@ try {
             const updateSummaryForLog = updates.map((u, i) => `${u.split('=')[0].trim()}: ${params[i]}`).join(", ");
             logFromRequest(req, logLevels.DEBUG, `updates and values: ${updateSummaryForLog}, photo: ${req.file ? photoPath : 'no file'}`);
 
-            updates.push("mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now')");
+            updates.push("mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime')");
             const sql = `UPDATE items SET ${updates.join(", ")} WHERE id = ?`;
             params.push(id);
+
+            logFromRequest(req, logLevels.DEBUG, `Executing SQL: ${sql} with params ${JSON.stringify(params)}`);
 
             db.run(sql, params, function (err5) {
                 if (err5) {
@@ -889,7 +892,7 @@ app.post('/auctions/:auctionId/items/:id/move-auction/:targetAuctionId', authent
                     return res.status(500).json({ error: err2.message });
                 }
                 const newNumber = result?.next || 1;
-                db.run("UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now'), text_mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now'), auction_id = ?, item_number = ? WHERE id = ?",
+                db.run("UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime'), text_mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime'), auction_id = ?, item_number = ? WHERE id = ?",
                     [newAuctionId, newNumber, id],
                     function (err3) {
                         if (err3) {
@@ -1041,7 +1044,7 @@ app.post('/rotate-photo', authenticateRole("admin"), async (req, res) => {
             fs.renameSync(previewPath + '.tmp', previewPath);
 
             // Update mod_date after rotation
-            db.run(`UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now') WHERE id = ?`, [id], function (err) {
+            db.run(`UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime') WHERE id = ?`, [id], function (err) {
                 if (err) {
                     logFromRequest(req, logLevels.ERROR, `Rotate: Failed to update mod_date:` + err.message);
 
@@ -1334,10 +1337,10 @@ app.post('/auctions/:auctionId/items/:id/move-after/:after_id', authenticateRole
                     ?,
                     ?,
                     ?,
-                    strftime('%d-%m-%Y %H:%M:%S', 'now'),
+                    strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime'),
                     ?,
-                    strftime('%d-%m-%Y %H:%M:%S', 'now'),
-                    strftime('%d-%m-%Y %H:%M:%S', 'now'),
+                    strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime'),
+                    strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime'),
                     ?,
                     ?,
                     ?

@@ -2,86 +2,238 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Cashier – Charity Auction</title>
+  <title>Cashier - Charity Auction</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <!-- Core styles reused from admin area -->
   <link rel="stylesheet" href="/styles/admin-styles.css">
+  <link rel="stylesheet" href="/styles/settlement.css" />
   <link rel="icon" type="image/png" href="/images/favicon.png" />
-
-  <!-- Minimal additions for sticky header layout -->
-  <style>
-    /* Sticky header bar that remains visible while scrolling */
-    #dashboard-section.sticky {
-      position: sticky;
-      top: 0;
-      display: flex;
-      gap: 0.5rem;
-      align-items: center;
-      padding: 0.5rem 1rem;
-      background: #ffffff;
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-      z-index: 1000;
-    }
-
-    #viewport {
-      padding: 1rem;
-      min-height: 70vh; /* keeps footer pushed down */
-    }
-  </style>
 </head>
 <body>
-  
-
-  <!-- 1️⃣ LOGIN -->
-  <section id="login-section">
-    <div class="login-container">
-    <h2>Cashier Login</h2>
-    <input type="text" id="cashier-username" placeholder="Username" autocomplete="username">
-    <input type="password" id="cashier-password" placeholder="Enter Password" autocomplete="current-password">
-    <button id="login-button">Login</button>
-    <p id="error-message" class="error"></p>
-    </div>
-  </section>
-
-  <!-- 2️⃣ DASHBOARD HEADER (hidden until authenticated) -->
-  <header id="dashboard-section" class="sticky" style="display:none;">
-    <b>Cashier's Panel</b>
-    <label for="live-select">Select auction:</label>
-    <select id="live-select"></select>
-    <button id="open-live" disabled>View live feed</button>
-
-    <!-- <label for="settle-select">Settlement & Payment Panel:</label>
-    <select id="settle-select"></select> -->
-    <button id="open-settle" disabled>Manage payments</button>
-    <a href="https://coastie-uk.github.io/convention-auction/user-guide.html#cashier-panel" target="_blank"><button>User guide</button></a>
-    <div class="dropdown user-menu-dropdown">
-      <button id="cashier-user-menu-button" class="user-menu-button">User</button>
-      <div class="dropdown-content user-menu-content">
-        <div class="user-menu-username-row">Signed in as <strong id="cashier-logged-in-user">unknown</strong></div>
-        <button id="change-own-password-cashier">Change Password</button>
-        <button id="logout">Logout</button>
+  <main>
+    <section id="login-section">
+      <div class="login-container">
+        <h2>Cashier Login</h2>
+        <input type="text" id="cashier-username" placeholder="Username" autocomplete="username">
+        <input type="password" id="cashier-password" placeholder="Enter Password" autocomplete="current-password">
+        <button id="login-button" type="button">Login</button>
+        <p id="error-message" class="error"></p>
       </div>
-    </div>
-  </header>
+    </section>
 
-  <!-- 3️⃣ VIEWPORT WHERE SUB‑PAGES ARE LOADED -->
-  <main id="viewport" style="display:none;">
-    <p class="placeholder">Pick an auction to begin…</p>
+    <section id="cashier-section" style="display:none;">
+      <div class="sticky-controls">
+        <div class="menu-bar">
+          <details class="menu-group">
+            <summary class="menu-trigger">Auctions</summary>
+            <div class="menu-panel">
+              <label class="menu-field" for="auction-select">
+                <span class="menu-label">Auction</span>
+                <select id="auction-select"></select>
+              </label>
+            </div>
+          </details>
+
+          <details class="menu-group">
+            <summary class="menu-trigger">Operations</summary>
+            <div class="menu-panel">
+              <button id="summaryBtn" type="button" class="menu-item-button" disabled>Payment Summary</button>
+              <button id="csv" type="button" class="menu-item-button" disabled>Download CSV Summary</button>
+            </div>
+          </details>
+
+          <details class="menu-group">
+            <summary class="menu-trigger">Go</summary>
+            <div class="menu-panel">
+              <button id="go-public" type="button" class="menu-item-button" disabled>Public Form</button>
+              <button id="go-livefeed" type="button" class="menu-item-button" disabled>Live Feed</button>
+              <a class="menu-item-link" href="/admin/index.html" target="_blank" rel="noopener noreferrer">Admin</a>
+              <a class="menu-item-link" href="/maint/index.html" target="_blank" rel="noopener noreferrer">Maintenance</a>
+              <a class="menu-item-link" href="/slideshow/index.html" target="_blank" rel="noopener noreferrer">Slideshow</a>
+            </div>
+          </details>
+
+          <details class="menu-group">
+            <summary class="menu-trigger">Help</summary>
+            <div class="menu-panel">
+              <a class="menu-item-link" href="https://coastie-uk.github.io/convention-auction/user-guide.html#cashier-panel" target="_blank" rel="noopener noreferrer">User Guide</a>
+              <button id="open-about-modal" type="button" class="menu-item-button">About</button>
+            </div>
+          </details>
+
+          <details class="menu-group user-menu-dropdown">
+            <summary id="cashier-user-menu-button" class="menu-trigger user-menu-button">User</summary>
+            <div class="menu-panel user-menu-content">
+              <div class="user-menu-username-row">Signed in as <strong id="cashier-logged-in-user">unknown</strong></div>
+              <div class="user-menu-username-row">Current role <strong id="cashier-logged-in-role">unknown</strong></div>
+              <div class="menu-divider" role="separator"></div>
+              <button id="change-own-password-cashier" type="button" class="menu-item-button">Change Password</button>
+              <button id="logout" type="button" class="menu-item-button">Logout</button>
+            </div>
+          </details>
+        </div>
+
+        <div class="top-bar-status">
+          <div id="current-auction-pill" class="header-status-pill">Auction: none selected</div>
+          <div id="current-state-pill" class="header-status-pill">State: unknown</div>
+          <div id="cashier-connection-pill" class="header-status-pill connection-status-pill is-checking">Status: <span id="cashier-connection-status">Checking...</span></div>
+        </div>
+      </div>
+
+      <section id="cashier-empty-panel" class="panel" hidden>
+        <div class="panel-body">
+          <h2 id="cashier-empty-title" class="cashier-placeholder-title">No auction selected</h2>
+          <p id="cashier-empty-copy" class="cashier-placeholder-copy">Choose an auction from the menu to begin.</p>
+        </div>
+      </section>
+
+      <div id="cashier-workspace" hidden>
+        <div class="settlement-grid">
+          <aside class="stacked-panels">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2>Settlement Queue</h2>
+                  <div class="panel-subtle">Select a bidder to review lots and record payments.</div>
+                </div>
+              </div>
+              <div class="panel-body">
+                <div class="table-wrap">
+                  <table id="bidderTable">
+                    <thead>
+                      <tr><th>Paddle</th><th>Due</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </aside>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 id="title">Select a bidder...</h2>
+                <div class="panel-subtle">Payments and collection details update from the cashier feed.</div>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div id="emptyDetail" class="empty-state">Choose a bidder from the queue to view their settlement details.</div>
+
+              <div id="detail" class="detail-layout" style="display:none;">
+                <div class="detail-sections">
+                  <section class="detail-section">
+                    <h3 class="detail-heading">Lots won</h3>
+                    <div class="table-wrap">
+                      <table id="lotsTable">
+                        <thead>
+                          <tr><th>Lot</th><th>Title (hover to preview)</th><th>Price</th></tr>
+                        </thead>
+                        <tbody></tbody>
+                      </table>
+                    </div>
+                    <div id="lotsTotal" class="section-total"></div>
+                  </section>
+
+                  <section class="detail-section">
+                    <h3 class="detail-heading">Payments</h3>
+                    <div class="table-wrap">
+                      <table id="payTable" class="pay-list">
+                        <thead>
+                          <tr><th>Id</th><th>Time</th><th>Method</th><th>Amount</th><th>Notes</th><th></th></tr>
+                        </thead>
+                        <tbody></tbody>
+                      </table>
+                    </div>
+
+                    <div id="payButtons" class="payment-actions">
+                      <button class="payment-button" data-method="cash" type="button">Cash</button>
+                      <button class="payment-button" data-method="card-manual" type="button">Card (manual)</button>
+                      <button class="payment-button" data-method="paypal-manual" type="button">PayPal (manual)</button>
+                      <button class="payment-button" data-method="sumup-app" type="button">SumUp (card reader)</button>
+                      <button class="payment-button" data-method="sumup-web" type="button">SumUp (web)</button>
+                      <button class="payment-button" data-method="sumup-indirect" type="button" hidden>SumUp (via android)</button>
+                    </div>
+
+                    <div class="receipt-actions">
+                      <button id="printReceiptBtn" class="secondary-button" type="button">Print receipt</button>
+                      <button id="toggleFingerprintBtn" class="secondary-button" type="button" hidden>Show fingerprint</button>
+                      <div id="fingerprintDisplay" class="fingerprint-chip" hidden></div>
+                    </div>
+                  </section>
+
+                  <section class="detail-section">
+                    <h3 class="detail-heading">Summary</h3>
+                    <div id="totals" class="summary-grid"></div>
+                  </section>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <template id="payTpl">
+        <div class="modal-overlay">
+          <div class="modal-card">
+            <h3 id="modalTitle" class="modal-title">Add payment</h3>
+            <label class="modal-label" for="amt">Payment amount GBP</label>
+            <input id="amt" class="modal-input" type="number" min="0" step="0.01" autofocus>
+
+            <label class="modal-label" for="donation">Donation GBP</label>
+            <input id="donation" class="modal-input" type="number" min="0" step="0.01" value="0.00">
+
+            <label class="modal-label" for="note">Note</label>
+            <input id="note" class="modal-input" type="text" maxlength="100" placeholder="Optional note">
+
+            <div class="modal-actions">
+              <button id="cancel" class="modal-button" type="button">Cancel</button>
+              <button id="ok" class="modal-button modal-button-primary" type="button">Record</button>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <template id="refundTpl">
+        <div class="modal-overlay">
+          <div class="modal-card">
+            <h3 id="modalTitle" class="modal-title">Record refund</h3>
+            <label class="modal-label" for="amt">Amount GBP</label>
+            <input id="amt" class="modal-input" type="number" min="0" step="0.01" autofocus>
+
+            <label class="modal-label" for="note">Note</label>
+            <input id="note" class="modal-input" type="text" maxlength="100" placeholder="Required reason for refund">
+
+            <div class="modal-actions">
+              <button id="cancel" class="modal-button" type="button">Cancel</button>
+              <button id="ok" class="modal-button modal-button-primary" type="button">Record</button>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <div id="about-modal" class="app-modal" hidden>
+        <div class="app-modal-card">
+          <div class="app-modal-header">
+            <div>
+              <h3>About Convention Auction</h3>
+              <p>Current software versions for this installation.</p>
+            </div>
+            <button id="close-about-modal" type="button" class="app-modal-close" aria-label="Close about dialog">Close</button>
+          </div>
+          <div class="about-grid">
+            <div class="about-row"><span>Backend</span><strong id="about-version-backend">Unknown</strong></div>
+            <div class="about-row"><span>Schema</span><strong id="about-version-schema">Unknown</strong></div>
+            <div class="about-row"><span>Payment processor</span><strong id="about-version-payment">Unknown</strong></div>
+          </div>
+          <p class="about-license">Copyright © 2026 Chris Staples. This program is free software, licensed under the GNU General Public License, version 3. Distributed without any warranty.</p>
+        </div>
+      </div>
+    </section>
   </main>
 
-  <script src="/scripts/cashier-login.js"></script>
+  <script src="/scripts/hover-photo.js"></script>
+  <script src="/scripts/daypilot-modal-3.15.1.min.js"></script>
   <script src="/scripts/banner.js"></script>
-  
-  <script>
-
-    document.getElementById("cashier-password").addEventListener("keyup", function (event) {
-      if (event.keyCode === 13) {
-        document.getElementById('login-button').click();
-      }
-    })
-  </script>
-  
-  </body>
-  
-  </html>
+  <script src="/scripts/cashier-login.js"></script>
+</body>
+</html>

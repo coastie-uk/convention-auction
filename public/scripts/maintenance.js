@@ -1,4 +1,5 @@
-const API = "/api"
+const API = "/api";
+const MAINTENANCE_TAB_KEY = "maintenanceSelectedTab";
 
 const output = document.getElementById("output");
 const loginSection = document.getElementById("login-section");
@@ -6,18 +7,274 @@ const maintenanceSection = document.getElementById("maintenance-section");
 const softwareVersion = document.getElementById("software-version");
 const maintenanceUserMenuButton = document.getElementById("maintenance-user-menu-button");
 const maintenanceLoggedInUser = document.getElementById("maintenance-logged-in-user");
+const maintenanceLoggedInRole = document.getElementById("maintenance-logged-in-role");
+const maintenancePanelPill = document.getElementById("maintenance-panel-pill");
+const menuGroups = Array.from(document.querySelectorAll(".menu-group"));
+const tabButtons = Array.from(document.querySelectorAll(".maintenance-tab-button"));
+const tabPanels = Array.from(document.querySelectorAll(".maintenance-tab-panel"));
+const openAboutModalButton = document.getElementById("open-about-modal");
+const aboutModal = document.getElementById("about-modal");
+const closeAboutModalButton = document.getElementById("close-about-modal");
+const aboutVersionBackendEl = document.getElementById("about-version-backend");
+const aboutVersionSchemaEl = document.getElementById("about-version-schema");
+const aboutVersionPaymentEl = document.getElementById("about-version-payment");
+const editAuctionModal = document.getElementById("edit-auction-modal");
+const closeEditAuctionModalButton = document.getElementById("close-edit-auction-modal");
+const cancelEditAuctionButton = document.getElementById("cancel-edit-auction");
+const saveEditAuctionButton = document.getElementById("save-edit-auction");
+const editAuctionIdInput = document.getElementById("edit-auction-id");
+const editAuctionShortNameInput = document.getElementById("edit-auction-short-name");
+const editAuctionFullNameInput = document.getElementById("edit-auction-full-name");
+const editAuctionLogoSelect = document.getElementById("edit-auction-logo-select");
+const editAuctionAdminStatePermissionInput = document.getElementById("edit-auction-admin-state-permission");
+const editAuctionDeleteButton = document.getElementById("edit-auction-delete");
+const editAuctionResetButton = document.getElementById("edit-auction-reset");
+const popoutLogsButton = document.getElementById("popout-logs");
+const autoRefreshLogsCheckbox = document.getElementById("auto-refresh-logs");
 
 var isRendering = false;
 let currentUsername = null;
+let currentVersions = {};
+let latestServerLog = "";
+let logPopupWindow = null;
 const token = localStorage.getItem("maintenanceToken");
 
-checkToken();
+function closeMenuGroups(exception = null) {
+  menuGroups.forEach((menu) => {
+    if (menu !== exception) {
+      menu.open = false;
+    }
+  });
+}
+
+function setActiveTab(tabId, { persist = true } = {}) {
+  const targetButton = tabButtons.find((button) => button.dataset.tab === tabId) || tabButtons[0];
+  const resolvedTabId = targetButton?.dataset.tab;
+
+  if (!resolvedTabId) return;
+
+  tabButtons.forEach((button) => {
+    const isActive = button === targetButton;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-current", isActive ? "page" : "false");
+  });
+
+  tabPanels.forEach((panel) => {
+    panel.hidden = panel.dataset.tabPanel !== resolvedTabId;
+  });
+
+  if (maintenancePanelPill) {
+    maintenancePanelPill.textContent = `View: ${targetButton.dataset.tabLabel || targetButton.textContent.trim()}`;
+  }
+
+  if (persist) {
+    localStorage.setItem(MAINTENANCE_TAB_KEY, resolvedTabId);
+  }
+}
+
+function updateVersionDisplays(versions = {}) {
+  currentVersions = versions || {};
+  const backend = currentVersions.backend || "N/A";
+  const schema = currentVersions.schema || "N/A";
+  const payment = currentVersions.payment_processor || "N/A";
+
+  if (softwareVersion) {
+    softwareVersion.textContent = `Backend: ${backend}, Schema: ${schema}, Payment: ${payment}`;
+  }
+
+  if (aboutVersionBackendEl) aboutVersionBackendEl.textContent = backend;
+  if (aboutVersionSchemaEl) aboutVersionSchemaEl.textContent = schema;
+  if (aboutVersionPaymentEl) aboutVersionPaymentEl.textContent = payment;
+}
+
+function openAboutModal() {
+  if (aboutModal) {
+    aboutModal.hidden = false;
+  }
+}
+
+function closeAboutModal() {
+  if (aboutModal) {
+    aboutModal.hidden = true;
+  }
+}
+
+function openEditAuctionModal(auction) {
+  if (!editAuctionModal || !auction) return;
+
+  editAuctionIdInput.value = auction.id;
+  editAuctionShortNameInput.value = auction.short_name || "";
+  editAuctionFullNameInput.value = auction.full_name || "";
+  editAuctionLogoSelect.value = auction.logo || "default_logo.png";
+  editAuctionAdminStatePermissionInput.checked = !!auction.admin_can_change_state;
+  editAuctionDeleteButton.disabled = Number(auction.item_count) > 0;
+  editAuctionDeleteButton.title = Number(auction.item_count) > 0 ? "Cannot delete auction with items" : "";
+  const canReset = auction.status === "archived" || auction.status === "setup";
+  editAuctionResetButton.disabled = !canReset;
+  editAuctionResetButton.title = canReset ? "" : "Only auctions in state setup or archived may be reset";
+  editAuctionModal.dataset.auctionStatus = auction.status || "";
+  editAuctionModal.dataset.auctionItemCount = String(auction.item_count ?? 0);
+  editAuctionModal.dataset.auctionFullName = auction.full_name || "";
+  editAuctionModal.hidden = false;
+  editAuctionFullNameInput.focus();
+
+}
+
+function closeEditAuctionModal() {
+  if (!editAuctionModal) return;
+  editAuctionModal.hidden = true;
+}
+
+async function deleteAuctionById(auctionId, auctionFullName = "") {
+  const res1 = await fetch(`${API}/maintenance/auctions/list`, {
+    method: "POST",
+    headers: {
+      Authorization: token,
+      "Content-Type": "application/json"
+    }
+  });
+
+  const auctions = await res1.json();
+  if (!res1.ok || !Array.isArray(auctions)) {
+    showMessage("Unable to fetch auction list", "error");
+    return false;
+  }
+
+  const isLast = auctions.length === 1;
+  const confirmed = await DayPilot.Modal.confirm(
+    isLast
+      ? `⚠️ WARNING: This is the last auction and deleting it will reset the database. Audit data and counters will NOT be reset. Proceed?`
+      : `Are you sure you want to delete auction ${auctionFullName || auctionId}?`
+  );
+
+  if (confirmed.canceled) return false;
+
+  const res = await fetch(`${API}/maintenance/auctions/delete`, {
+    method: "POST",
+    headers: {
+      Authorization: token,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ auction_id: auctionId })
+  });
+
+  const result = await res.json();
+  if (!res.ok) {
+    showMessage(result.error || "Failed to delete", "error");
+    return false;
+  }
+
+  showMessage(result.message, "success");
+  return true;
+}
+
+async function resetAuctionById(auctionId) {
+  const confirmMsg = `Delete all items from auction ${auctionId}? Bidder and payment details will also be removed`;
+  const password = await promptPassword(`Enter maintenance password to reset auction`, confirmMsg);
+  if (!password) return false;
+
+  const res = await fetch(`${API}/maintenance/reset`, {
+    method: "POST",
+    headers: {
+      Authorization: token,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ auction_id: auctionId, password })
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    showMessage(data.error || "Reset failed", "error");
+    return false;
+  }
+
+  showMessage(`Reset auction ${auctionId}: Removed ${data.deleted.items} items, ${data.deleted.bidders} bidders, ${data.deleted.payments} payments`, "success");
+  return true;
+}
+
+async function updateAuctionAdminStatePermission(auctionId, enabled) {
+  const res = await fetch(`${API}/maintenance/auctions/set-admin-state-permission`, {
+    method: "POST",
+    headers: {
+      Authorization: token,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ auction_id: auctionId, admin_can_change_state: enabled })
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to update control");
+  }
+
+  return data;
+}
 
 function setMaintenanceUserMenu(username) {
   const safeName = username || "maintenance";
   if (maintenanceLoggedInUser) maintenanceLoggedInUser.textContent = safeName;
   if (maintenanceUserMenuButton) maintenanceUserMenuButton.textContent = safeName;
+  if (maintenanceLoggedInRole) maintenanceLoggedInRole.textContent = "maintenance";
 }
+
+function bindMaintenanceShell() {
+  const storedTab = localStorage.getItem(MAINTENANCE_TAB_KEY) || "auction-management";
+  setActiveTab(storedTab, { persist: false });
+
+  tabButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setActiveTab(button.dataset.tab);
+    });
+  });
+
+  menuGroups.forEach((menu) => {
+    menu.addEventListener("toggle", () => {
+      if (menu.open) {
+        closeMenuGroups(menu);
+      }
+    });
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".menu-group")) {
+      closeMenuGroups();
+    }
+  });
+
+  document.querySelectorAll(".menu-item-link, .menu-item-button").forEach((element) => {
+    element.addEventListener("click", () => {
+      if (!element.disabled) {
+        closeMenuGroups();
+      }
+    });
+  });
+
+  openAboutModalButton?.addEventListener("click", openAboutModal);
+  closeAboutModalButton?.addEventListener("click", closeAboutModal);
+  aboutModal?.addEventListener("click", (event) => {
+    if (event.target === aboutModal) {
+      closeAboutModal();
+    }
+  });
+
+  closeEditAuctionModalButton?.addEventListener("click", closeEditAuctionModal);
+  cancelEditAuctionButton?.addEventListener("click", closeEditAuctionModal);
+  editAuctionModal?.addEventListener("click", (event) => {
+    if (event.target === editAuctionModal) {
+      closeEditAuctionModal();
+    }
+  });
+}
+
+bindMaintenanceShell();
+updateVersionDisplays();
+checkToken();
+
+window.addEventListener("beforeunload", () => {
+  if (logPopupWindow && !logPopupWindow.closed) {
+    logPopupWindow.close();
+  }
+});
 
 function promptPassword(message, message2 = "") {
   return new Promise((resolve) => {
@@ -171,14 +428,14 @@ async function checkToken() {
       currentUsername = data.user?.username || null;
       setMaintenanceUserMenu(currentUsername);
       loginSection.style.display = "none";
-      maintenanceSection.style.display = "block";
+      maintenanceSection.style.display = "grid";
       refreshAuctions();
       checkIntegrity();
       loadPptxImageList();
       loadUsers();
       startAutoRefresh();
       loadEnabledPaymentMethods();
-      softwareVersion.textContent = `Backend: ${data.versions.backend || 'N/A'}, Schema: ${data.versions.schema || 'N/A'}, Payment processor: ${data.versions.payment_processor || 'N/A'}`;
+      updateVersionDisplays(data.versions);
     } else {
       logOut();
       document.getElementById("error-message").innerText = data.error;
@@ -205,11 +462,11 @@ document.getElementById("login-button").addEventListener("click", async () => {
     localStorage.setItem("maintenanceToken", data.token);
     setMaintenanceUserMenu(data.user?.username || username);
     loginSection.style.display = "none";
-    maintenanceSection.style.display = "block";
+    maintenanceSection.style.display = "grid";
     refreshAuctions();
     checkToken();
     loadEnabledPaymentMethods();
-    softwareVersion.textContent = `Backend version: ${data.versions.backend || 'N/A'}, Schema version: ${data.versions.schema || 'N/A'}`;
+    updateVersionDisplays(data.versions);
 
     location.reload();
   } else {
@@ -570,6 +827,170 @@ document.getElementById("restart-server").onclick = async () => {
 
 document.getElementById("load-logs").onclick = async () => {
   loadLogs();
+};
+
+function syncLogPopupControls() {
+  if (!logPopupWindow || logPopupWindow.closed) return;
+
+  const popupCheckbox = logPopupWindow.document.getElementById("popup-auto-refresh");
+  if (popupCheckbox && autoRefreshLogsCheckbox) {
+    popupCheckbox.checked = autoRefreshLogsCheckbox.checked;
+  }
+}
+
+function syncLogPopup() {
+  if (!logPopupWindow || logPopupWindow.closed) return;
+
+  const popupLogBox = logPopupWindow.document.getElementById("popup-server-logs");
+  if (!popupLogBox) return;
+
+  popupLogBox.innerHTML = latestServerLog ? formatLogs(latestServerLog) : '<span class="maintenance-log-empty">No log output loaded yet.</span>';
+  popupLogBox.scrollTop = popupLogBox.scrollHeight;
+  syncLogPopupControls();
+}
+
+function openLogPopup() {
+  if (logPopupWindow && !logPopupWindow.closed) {
+    logPopupWindow.focus();
+    syncLogPopup();
+    return;
+  }
+
+  logPopupWindow = window.open("", "maintenanceServerLogs", "popup,width=960,height=680,resizable=yes,scrollbars=yes");
+
+  if (!logPopupWindow) {
+    showMessage("Browser blocked the log viewer pop-out window.", "error");
+    return;
+  }
+
+  const popupDoc = logPopupWindow.document;
+  popupDoc.open();
+  popupDoc.write(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Server Logs - Convention Auction</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      background: #f5f7fb;
+      color: #1b2430;
+    }
+    .popup-shell {
+      display: grid;
+      gap: 12px;
+      padding: 12px;
+    }
+    .popup-card {
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid #d8dee6;
+      border-radius: 14px;
+      box-shadow: 0 8px 24px rgba(10, 30, 60, 0.08);
+      overflow: hidden;
+    }
+    .popup-head {
+      align-items: flex-start;
+      background: #fbfcfe;
+      border-bottom: 1px solid #d8dee6;
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+      padding: 12px 14px;
+    }
+    .popup-head h1 {
+      margin: 0;
+      font-size: 1.05rem;
+    }
+    .popup-subtle {
+      color: #5f6b7a;
+      margin-top: 4px;
+    }
+    .popup-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .popup-actions button {
+      background: #0f62fe;
+      border: 1px solid #0f62fe;
+      border-radius: 10px;
+      color: #fff;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      min-height: 38px;
+      padding: 0 12px;
+    }
+    .popup-actions label {
+      align-items: center;
+      color: #1b2430;
+      display: inline-flex;
+      gap: 8px;
+      font-weight: 600;
+    }
+    .popup-actions input {
+      margin: 0;
+    }
+    #popup-server-logs {
+      background: #0f1720;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      box-sizing: border-box;
+      color: #dbe7f5;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      height: calc(100vh - 124px);
+      margin: 12px;
+      overflow: auto;
+      padding: 12px;
+      white-space: pre-wrap;
+    }
+    .maintenance-log-empty {
+      color: #8ea0b8;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div class="popup-shell">
+    <section class="popup-card">
+      <div class="popup-head">
+        <div>
+          <h1>Server Logs</h1>
+          <div class="popup-subtle">Monitoring window linked to the maintenance panel.</div>
+        </div>
+        <div class="popup-actions">
+          <label><input id="popup-auto-refresh" type="checkbox"> Auto-refresh</label>
+          <button id="popup-refresh-logs" type="button">Refresh</button>
+          <button id="popup-close-window" type="button">Close</button>
+        </div>
+      </div>
+      <div id="popup-server-logs"><span class="maintenance-log-empty">Loading logs...</span></div>
+    </section>
+  </div>
+</body>
+</html>`);
+  popupDoc.close();
+
+  popupDoc.getElementById("popup-refresh-logs")?.addEventListener("click", () => {
+    loadLogs();
+  });
+
+  popupDoc.getElementById("popup-close-window")?.addEventListener("click", () => {
+    logPopupWindow?.close();
+  });
+
+  popupDoc.getElementById("popup-auto-refresh")?.addEventListener("change", (event) => {
+    if (!autoRefreshLogsCheckbox) return;
+    autoRefreshLogsCheckbox.checked = event.target.checked;
+    autoRefreshLogsCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+
+  syncLogPopup();
+  logPopupWindow.focus();
 }
 
 async function loadLogs() {
@@ -578,15 +999,15 @@ async function loadLogs() {
   });
   const data = await res.json();
   if (res.ok) {
-
     const logBox = document.getElementById("server-logs");
-    logBox.innerHTML = formatLogs(data.log);
+    latestServerLog = data.log || "";
+    logBox.innerHTML = latestServerLog ? formatLogs(latestServerLog) : '<span class="maintenance-log-empty">No log output loaded yet.</span>';
     logBox.scrollTop = logBox.scrollHeight;
-
+    syncLogPopup();
   } else {
-    showMessage(data.error || "Failed to load logs", true);
+    showMessage(data.error || "Failed to load logs", "error");
   }
-};
+}
 
 
 
@@ -594,12 +1015,23 @@ async function loadLogs() {
 let logInterval = null;
 
 document.getElementById("auto-refresh-logs").addEventListener("change", function () {
-  if (this.checked) {
-    loadLogs(); // load immediately
-    logInterval = setInterval(loadLogs, 5000); // refresh every 5 seconds
-  } else {
+  if (logInterval) {
     clearInterval(logInterval);
     logInterval = null;
+  }
+
+  if (this.checked) {
+    loadLogs();
+    logInterval = setInterval(loadLogs, 5000);
+  }
+  syncLogPopupControls();
+});
+
+popoutLogsButton?.addEventListener("click", () => {
+  setActiveTab("server-logs");
+  openLogPopup();
+  if (!latestServerLog) {
+    loadLogs();
   }
 });
 
@@ -732,6 +1164,13 @@ document.getElementById("delete-test-bids").onclick = async () => {
 
 
 function logOut() {
+  if (logInterval) {
+    clearInterval(logInterval);
+    logInterval = null;
+  }
+  if (logPopupWindow && !logPopupWindow.closed) {
+    logPopupWindow.close();
+  }
   localStorage.removeItem("maintenanceToken");
   currentUsername = null;
   showMessage("Logged out", "info");
@@ -838,78 +1277,14 @@ try {
     ).join("")}
         </select>
     </td>
-
-  <td>
-    <label class="toggle">
-      <input
-        type="checkbox"
-        class="js-admin-state-permission"
-        data-id="${auction.id}" 
-        ${allowAdmin ? "checked" : ""}
-        aria-label="Allow admin to change state for this auction"
-      >
-
-    </label>
-  </td>
-
-     <td><button class="delete-auction-btn" 
-     data-id="${auction.id}" ${auction.item_count > 0 ? 'disabled title="Cannot delete auction with items"' : ''}>Delete</button>
-    </td>
-    <td> <button class="reset-auction-btn" data-id="${auction.id}" ${(auction.status !== "archived" && auction.status !== "setup") ? 'disabled title="Only auctions in state setup or archived may be reset"' : ''}>Reset</button></td>
+    <td>${allowAdmin ? "Yes" : "No"}</td>
+    <td><button class="edit-auction-btn" data-id="${auction.id}">Edit</button></td>
   `;
 
-    
-
-    // Hook up delete
-    const deleteBtn = row.querySelector("button");
-    deleteBtn.onclick = async () => {
-
-      // Find out how many auctions are left
-
-      const res1 = await fetch(`${API}/maintenance/auctions/list`, {
-        method: "POST",
-        headers: {
-          Authorization: token,
-          "Content-Type": "application/json"
-        }
-      });
-
-      const auctions = await res1.json();
-      if (!res1.ok || !Array.isArray(auctions)) {
-        showMessage("Unable to fetch auction list", "error");
-        return;
-      }
-
-      const isLast = auctions.length === 1;
-
-      const confirmed = confirm(
-        isLast
-          ? `⚠️ WARNING: This is the last auction and deleting it will reset the database. Audit data and counters will NOT be reset. Proceed?`
-          : `Are you sure you want to delete auction ${auction.full_name}?`
-      );
-
-      if (!confirmed) return;
-
-      const res = await fetch(`${API}/maintenance/auctions/delete`, {
-        method: "POST",
-        headers: {
-          Authorization: token,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ auction_id: auction.id })
-      });
-
-      const result = await res.json();
-      if (res.ok) {
-        showMessage(result.message, "success");
-        refreshAuctions();
-
-      } else {
-        showMessage(result.error || "Failed to delete", "error");
-      }
+    const editBtn = row.querySelector(".edit-auction-btn");
+    editBtn.onclick = () => {
+      openEditAuctionModal(auction);
     };
-
-
 
     tableBody.appendChild(row);
   });
@@ -944,42 +1319,6 @@ isRendering = false;
       }
       isRendering = false;
     }
-    else if (e.target.classList.contains("js-admin-state-permission")) {
-      const auctionId = e.target.dataset.id;
-      const newStatus = e.target.checked;
-      e.target.disabled = true;
-      try {
-        const res = await fetch(`${API}/maintenance/auctions/set-admin-state-permission`, {
-          method: 'POST',
-          headers: {
-            Authorization: token,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ auction_id: auctionId, admin_can_change_state: newStatus })
-        });
-        isRendering = true;
-        const data = await res.json();
-        if (res.ok) {
-          showMessage(data.message || `Status updated`, "success");
-        } else {
-          showMessage(data.error || "Failed to update control", "error");
-          e.target.checked = !e.target.checked;
-        }
-
-
-      } catch (e) {
-        e.target.checked = !e.target.checked;
-        showMessage(`Error occurred:` + e || "Failed to update control", "error");
-
-      } finally {
-        e.target.disabled = false;
-      }
-
-isRendering = false;
-
-    }
-
-
   };
 
 
@@ -1031,37 +1370,100 @@ document.getElementById("create-auction").onclick = async () => {
   }
 };
 
-document.addEventListener("click", async (e) => {
-  if (e.target.classList.contains("reset-auction-btn")) {
-    const auctionId = e.target.getAttribute("data-id");
+saveEditAuctionButton?.addEventListener("click", async () => {
+  const auctionId = Number(editAuctionIdInput.value);
+  const shortName = editAuctionShortNameInput.value.trim();
+  const fullName = editAuctionFullNameInput.value.trim();
+  const selectedLogo = editAuctionLogoSelect.value;
+  const adminCanSetState = !!editAuctionAdminStatePermissionInput.checked;
 
-    const confirmMsg = `Delete all items from auction ${auctionId}? Bidder and payment details will also be removed`;
- //   if (!confirm(confirmMsg)) return;
+  if (!auctionId) {
+    showMessage("Missing auction ID.", "error");
+    return;
+  }
 
-    // TODO change prompt to not show password in plain text
- //   const password = prompt(`Enter maintenance password to reset auction ${auctionId}:`);
- const password = await promptPassword(`Enter maintenance password to reset auction`, confirmMsg)
-    if (!password) return;
+  if (!shortName || !fullName) {
+    showMessage("Please provide both short and full names", "error");
+    return;
+  }
 
-    const res = await fetch(`${API}/maintenance/reset`, {
+  saveEditAuctionButton.disabled = true;
+  editAuctionDeleteButton.disabled = true;
+  editAuctionResetButton.disabled = true;
+
+  try {
+    const updateRes = await fetch(`${API}/maintenance/auctions/update`, {
       method: "POST",
       headers: {
         Authorization: token,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ auction_id: auctionId, password })
+      body: JSON.stringify({
+        auction_id: auctionId,
+        short_name: shortName,
+        full_name: fullName,
+        logo: selectedLogo
+      })
     });
 
-    const data = await res.json();
-    if (res.ok) {
-
-      showMessage(`Deleted auction ${auctionId}: ${data.deleted.items} items, ${data.deleted.bidders} bidders, ${data.deleted.payments} payments`, "success");
-      refreshAuctions(); // or reload items
-    } else {
-      showMessage(data.error || "Reset failed", "error");
+    const updateData = await updateRes.json();
+    if (!updateRes.ok) {
+      showMessage(updateData.error || "Failed to update auction", "error");
+      return;
     }
+
+    const permissionData = await updateAuctionAdminStatePermission(auctionId, adminCanSetState);
+    if (!permissionData) {
+      showMessage("Failed to update auction permission", "error");
+      return;
+    }
+
+    showMessage(updateData.message || "Auction updated", "success");
+    closeEditAuctionModal();
+    refreshAuctions();
+  } catch (error) {
+    showMessage(error?.message || "Failed to update auction", "error");
+  } finally {
+    saveEditAuctionButton.disabled = false;
+    editAuctionDeleteButton.disabled = Number(editAuctionModal?.dataset.auctionItemCount || 0) > 0;
+    editAuctionResetButton.disabled = !["archived", "setup"].includes(editAuctionModal?.dataset.auctionStatus || "");
+  }
+});
+
+editAuctionDeleteButton?.addEventListener("click", async () => {
+  const auctionId = Number(editAuctionIdInput.value);
+  if (!auctionId) {
+    showMessage("Missing auction ID.", "error");
+    return;
   }
 
+  editAuctionDeleteButton.disabled = true;
+  try {
+    const deleted = await deleteAuctionById(auctionId, editAuctionModal?.dataset.auctionFullName || "");
+    if (!deleted) return;
+    closeEditAuctionModal();
+    refreshAuctions();
+  } finally {
+    editAuctionDeleteButton.disabled = Number(editAuctionModal?.dataset.auctionItemCount || 0) > 0;
+  }
+});
+
+editAuctionResetButton?.addEventListener("click", async () => {
+  const auctionId = Number(editAuctionIdInput.value);
+  if (!auctionId) {
+    showMessage("Missing auction ID.", "error");
+    return;
+  }
+
+  editAuctionResetButton.disabled = true;
+  try {
+    const reset = await resetAuctionById(auctionId);
+    if (!reset) return;
+    closeEditAuctionModal();
+    refreshAuctions();
+  } finally {
+    editAuctionResetButton.disabled = !["archived", "setup"].includes(editAuctionModal?.dataset.auctionStatus || "");
+  }
 });
 
 let runCheck = document.getElementById("integrity-check");
@@ -1131,8 +1533,6 @@ async function checkIntegrity() {
 
 const imgForm = document.getElementById("pptx-image-form");
 const imgInput = document.getElementById("pptx-image-input");
-const imgList = document.getElementById("pptx-image-list");
-const imgStatus = document.getElementById("pptx-image-status");
 
 // Upload handler
 imgForm.addEventListener("submit", async (e) => {
@@ -1247,12 +1647,19 @@ async function loadPptxImageList() {
 
   const select = document.getElementById("auction-logo-select");
   select.innerHTML = "";
+  if (editAuctionLogoSelect) editAuctionLogoSelect.innerHTML = "";
 
   // Always offer the default option first
   const defaultOption = document.createElement("option");
   defaultOption.value = "default_logo.png";
   defaultOption.textContent = "Default Logo";
   select.appendChild(defaultOption);
+  if (editAuctionLogoSelect) {
+    const editDefaultOption = document.createElement("option");
+    editDefaultOption.value = "default_logo.png";
+    editDefaultOption.textContent = "Default Logo";
+    editAuctionLogoSelect.appendChild(editDefaultOption);
+  }
 
   if (data.files && data.files.length > 0) {
     for (const file of data.files) {
@@ -1260,6 +1667,12 @@ async function loadPptxImageList() {
       option.value = file.name;
       option.textContent = file.name;
       select.appendChild(option);
+      if (editAuctionLogoSelect) {
+        const editOption = document.createElement("option");
+        editOption.value = file.name;
+        editOption.textContent = file.name;
+        editAuctionLogoSelect.appendChild(editOption);
+      }
     }
   }
 
@@ -1274,12 +1687,19 @@ async function loadLogoOptions() {
   const data = await res.json();
   const select = document.getElementById("auction-logo-select");
   select.innerHTML = "";
+  if (editAuctionLogoSelect) editAuctionLogoSelect.innerHTML = "";
 
   // Always offer the default option first
   const defaultOption = document.createElement("option");
   defaultOption.value = "default_logo.png";
   defaultOption.textContent = "Default Logo (Recommended)";
   select.appendChild(defaultOption);
+  if (editAuctionLogoSelect) {
+    const editDefaultOption = document.createElement("option");
+    editDefaultOption.value = "default_logo.png";
+    editDefaultOption.textContent = "Default Logo (Recommended)";
+    editAuctionLogoSelect.appendChild(editDefaultOption);
+  }
 
   if (data.files && data.files.length > 0) {
     for (const file of data.files) {
@@ -1287,13 +1707,19 @@ async function loadLogoOptions() {
       option.value = file.name;
       option.textContent = file.name;
       select.appendChild(option);
+      if (editAuctionLogoSelect) {
+        const editOption = document.createElement("option");
+        editOption.value = file.name;
+        editOption.textContent = file.name;
+        editAuctionLogoSelect.appendChild(editOption);
+      }
     }
   }
 }
 
 
 // Optionally auto-load on login
-if (maintenanceSection.style.display === "block") {
+if (maintenanceSection.style.display === "grid") {
   loadPptxImageList();
 }
 
@@ -1340,7 +1766,7 @@ document.getElementById("fetch-audit-log").onclick = async () => {
 
   if (!res.ok) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td colspan="7" style="padding: 4px; color: red;">Failed to load audit log.</td>`;
+    row.innerHTML = `<td colspan="8" style="padding: 4px; color: red;">Failed to load audit log.</td>`;
     body.appendChild(row);
     return;
   }

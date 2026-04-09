@@ -9,10 +9,11 @@
 //   require('./phase1-patch')(app, authenticateRole);
 
 const express = require('express');
+const crypto = require('node:crypto');
 const db       = require('./db');
 const { checkAuctionState } = require('./middleware/checkAuctionState');
 const { authenticateRole } = require('./middleware/authenticateRole');
-const { CASH_ENABLED, MANUAL_CARD_ENABLED, PAYPAL_ENABLED, SUMUP_WEB_ENABLED, SUMUP_CARD_PRESENT_ENABLED, CURRENCY, SUMUP_CALLBACK_SUCCESS, SUMUP_RETURN_URL } = require('./config');
+const { CASH_ENABLED, MANUAL_CARD_ENABLED, PAYPAL_ENABLED, SUMUP_WEB_ENABLED, SUMUP_CARD_PRESENT_ENABLED, CURRENCY, SUMUP_CALLBACK_SUCCESS, SUMUP_RETURN_URL, SECRET_KEY } = require('./config');
 
 const { logLevels, logFromRequest, log } = require('./logger');
 const { json } = require('body-parser');
@@ -82,12 +83,43 @@ module.exports = function phase1Patch (app) {
     if (paid >= lots && lots > 0) return 'paid_in_full';
     return 'part_paid';
   };
+// Build a fingerprint for the bidder's ready for collection status, based on their current items and payments.
+// This is used to detect changes that would require the auctioneer to re-confirm the bidder's readiness
+// after marking them ready or after marking items as collected.
+// The fingerprint is a hash of the bidder's current sold items
+// (item number, description, hammer price) and payments
+// (amount, method, note), sorted in a consistent order.
+  const buildBidderFingerprint = ({ auctionId, bidderId, items = [], payments = [] }) => {
+    const payload = {
+      auction_id: Number(auctionId),
+      bidder_id: Number(bidderId),
+      items: items
+        .slice()
+        .sort((a, b) => Number(a.item_number ?? a.lot ?? 0) - Number(b.item_number ?? b.lot ?? 0))
+        .map(item => ({
+          item_number: Number(item.item_number ?? item.lot ?? 0),
+          description: String(item.description ?? ''),
+          hammer_price: Number(item.hammer_price ?? item.price ?? 0)
+        })),
+      payments: payments
+        .slice()
+        .sort((a, b) => Number(a.id ?? 0) - Number(b.id ?? 0))
+        .map(payment => ({
+          id: Number(payment.id ?? 0),
+          amount: Number(payment.amount ?? 0),
+          donation_amount: Number(payment.donation_amount ?? 0),
+          method: String(payment.method ?? ''),
+          note: String(payment.note ?? ''),
+          created_at: String(payment.created_at ?? '')
+        }))
+    };
 
-  const buildBidderFingerprint = (items) => items
-    .slice()
-    .sort((a, b) => Number(a.rowid) - Number(b.rowid))
-    .map(item => `${item.rowid}:${item.lot}:${item.price ?? ''}`)
-    .join('|');
+    return crypto
+      .createHmac('sha256', SECRET_KEY)
+      .update(JSON.stringify(payload))
+      .digest('base64url')
+      .slice(0, 16); // short fingerprint, not meant to be collision resistant, just to detect changes
+  };
 
   const getAuctionStatus = (auctionId) => {
     const row = db.get('SELECT status FROM auctions WHERE id = ?', [auctionId]);
@@ -170,6 +202,20 @@ module.exports = function phase1Patch (app) {
        ORDER BY b.paddle_number
     `, [auctionId]);
 
+    const paymentRows = db.all(`
+      SELECT p.bidder_id,
+             p.id,
+             p.amount,
+             p.donation_amount,
+             p.method,
+             p.note,
+             p.created_at
+        FROM payments p
+        JOIN bidders b ON b.id = p.bidder_id
+       WHERE b.auction_id = ?
+       ORDER BY p.bidder_id, p.id
+    `, [auctionId]);
+
     const soldByBidder = new Map();
     sold.forEach(item => {
       const bidderId = Number(item.bidder_id);
@@ -178,9 +224,23 @@ module.exports = function phase1Patch (app) {
       soldByBidder.get(bidderId).push(item);
     });
 
+    const paymentsByBidder = new Map();
+    paymentRows.forEach(payment => {
+      const bidderId = Number(payment.bidder_id);
+      if (!Number.isFinite(bidderId)) return;
+      if (!paymentsByBidder.has(bidderId)) paymentsByBidder.set(bidderId, []);
+      paymentsByBidder.get(bidderId).push(payment);
+    });
+
     const bidders = bidderRows.map(row => {
       const items = soldByBidder.get(Number(row.bidder_id)) || [];
-      const fingerprint = buildBidderFingerprint(items);
+      const payments = paymentsByBidder.get(Number(row.bidder_id)) || [];
+      const fingerprint = buildBidderFingerprint({
+        auctionId,
+        bidderId: row.bidder_id,
+        items,
+        payments
+      });
       const lotsTotal = Number(row.lots_total || 0);
       const paymentsTotal = Number(row.payments_total || 0);
       return {
@@ -242,7 +302,7 @@ module.exports = function phase1Patch (app) {
       UPDATE bidders
          SET ready_for_collection = ?,
              ready_fingerprint = ?,
-             ready_updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
+             ready_updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
        WHERE id = ? AND auction_id = ?
     `, [ready ? 1 : 0, fingerprint, bidderId, auctionId]);
 
@@ -294,7 +354,7 @@ module.exports = function phase1Patch (app) {
 
     db.run(`
       UPDATE items
-         SET collected_at = CASE WHEN ? = 1 THEN strftime('%Y-%m-%d %H:%M:%S', 'now') ELSE NULL END
+         SET collected_at = CASE WHEN ? = 1 THEN strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime') ELSE NULL END
        WHERE id = ? AND auction_id = ?
     `, [collected ? 1 : 0, itemId, auctionId]);
 
@@ -305,7 +365,7 @@ module.exports = function phase1Patch (app) {
         UPDATE bidders
            SET ready_for_collection = 1,
                ready_fingerprint = ?,
-               ready_updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
+               ready_updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
          WHERE id = ? AND auction_id = ?
       `, [bidderSummary?.current_fingerprint || '', item.bidder_id, auctionId]);
     }
@@ -347,7 +407,7 @@ module.exports = function phase1Patch (app) {
 
     db.run(`
       UPDATE items
-         SET collected_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
+         SET collected_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
        WHERE auction_id = ? AND winning_bidder_id = ? AND hammer_price IS NOT NULL
     `, [auctionId, bidderId]);
 
@@ -357,7 +417,7 @@ module.exports = function phase1Patch (app) {
       UPDATE bidders
          SET ready_for_collection = 1,
              ready_fingerprint = ?,
-             ready_updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
+             ready_updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
        WHERE id = ? AND auction_id = ?
     `, [bidderSummary?.current_fingerprint || '', bidderId, auctionId]);
 
@@ -548,8 +608,8 @@ module.exports = function phase1Patch (app) {
 
 try {
 
-    db.run(`INSERT INTO payments (bidder_id, amount, donation_amount, method, note, created_by, currency)
-            VALUES (?,?,?,?,?,?,?)`,
+    db.run(`INSERT INTO payments (bidder_id, amount, donation_amount, method, note, created_by, currency, created_at)
+            VALUES (?,?,?,?,?,?,?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))`,
       [bidder_id, grossAmount, donationAmount, method, sanitisedNote, getAuditActor(req), CURRENCY]
     );
     audit(getAuditActor(req), 'payment', 'bidder', bidder_id, {
@@ -636,9 +696,10 @@ settlement.post('/payment/:payid/reverse', authenticateRole(['cashier', 'admin']
     provider,
     currency,
     reverses_payment_id,
-    reversal_reason
+    reversal_reason,
+    created_at
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
 `);
 
     const tx = db.transaction(() => {
@@ -800,7 +861,7 @@ logFromRequest(req, logLevels.DEBUG, `Reversal inserted with id=${info.lastInser
 try {
     let bidder = db.get('SELECT id FROM bidders WHERE paddle_number = ? AND auction_id = ?', [paddle, auctionId]);
     if (!bidder) {
-      const info = db.run('INSERT INTO bidders (paddle_number, auction_id) VALUES (?, ?)', [paddle, auctionId]);
+      const info = db.run(`INSERT INTO bidders (paddle_number, auction_id, created_at) VALUES (?, ?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))`, [paddle, auctionId]);
       
       bidder = { id: info.lastInsertRowid };
     }
@@ -809,7 +870,7 @@ const stmt = db.prepare(`
   UPDATE items
      SET winning_bidder_id = ?,
          hammer_price = ?,
-         last_bid_update = strftime('%Y-%m-%d %H:%M:%S', 'now')
+         last_bid_update = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
    WHERE id = ?
      AND hammer_price IS NULL          -- ← only if not finalised yet
 `);
@@ -903,7 +964,7 @@ if (info.changes === 0) {
         UPDATE items
            SET winning_bidder_id = NULL,
                hammer_price = NULL,
-               last_bid_update = strftime('%Y-%m-%d %H:%M:%S', 'now')
+               last_bid_update = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
          WHERE id = ?
       `, [itemId]);
       if (paid) {
@@ -950,12 +1011,22 @@ if (!auctionId || !id) return res.status(400).json({ error: 'item # and auction_
        ORDER BY id`, [id]);
 
   const summary = db.get(`
-      SELECT b.id, b.paddle_number
+      SELECT b.id,
+             b.paddle_number,
+             a.full_name AS auction_name,
+             a.short_name AS auction_short_name
         FROM bidders b
+        JOIN auctions a ON a.id = b.auction_id
        WHERE b.id = ? AND b.auction_id = ?
     GROUP BY b.id`, [id, auctionId]);
 
   const totals = getBidderPaymentTotals(db, id, auctionId);
+  const fingerprint = buildBidderFingerprint({
+    auctionId,
+    bidderId: id,
+    items: lots,
+    payments
+  });
 
   res.json({
     ...summary,
@@ -965,7 +1036,8 @@ if (!auctionId || !id) return res.status(400).json({ error: 'item # and auction_
     gross_total: totals.gross_total,
     lots,
     payments,
-    balance: totals.balance
+    balance: totals.balance,
+    fingerprint
   });
 });
 

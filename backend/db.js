@@ -87,7 +87,7 @@ if(existingSchemaVersion > schemaVersion) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         short_name TEXT UNIQUE NOT NULL,
         full_name TEXT NOT NULL,
-        created_at TEXT DEFAULT (strftime('%d-%m-%Y %H:%M:%S','now')),
+        created_at TEXT DEFAULT (strftime('%d-%m-%Y %H:%M:%S','now','localtime')),
         logo TEXT,
         status TEXT DEFAULT 'setup'
         )`);
@@ -121,8 +121,8 @@ if(existingSchemaVersion > schemaVersion) {
         password TEXT NOT NULL,
         roles TEXT NOT NULL,
         is_root INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now')),
-        updated_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now'))
+        created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')),
+        updated_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
     )`);
 
     db.exec(`CREATE TABLE IF NOT EXISTS bidders (
@@ -132,7 +132,7 @@ if(existingSchemaVersion > schemaVersion) {
         ready_for_collection INTEGER NOT NULL DEFAULT 0,
         ready_fingerprint TEXT,
         ready_updated_at TEXT,
-        created_at    TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now')),
+        created_at    TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')),
         auction_id INTEGER
       )`);
 
@@ -144,7 +144,7 @@ if(existingSchemaVersion > schemaVersion) {
         method      TEXT    NOT NULL DEFAULT 'cash',
         note        TEXT,
         created_by  TEXT,
-        created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now')),
+        created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')),
         FOREIGN KEY (bidder_id) REFERENCES bidders(id)
       )`);
 
@@ -156,7 +156,7 @@ if(existingSchemaVersion > schemaVersion) {
         object_type TEXT,
         object_id   INTEGER,
         details     TEXT,
-        created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now'))
+        created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
       )`);
 
     // create uniqueness on (auction_id, paddle_number)
@@ -175,7 +175,7 @@ if(existingSchemaVersion > schemaVersion) {
       channel TEXT NOT NULL DEFAULT 'app', -- 'app' (SumUp app) | 'hosted' (optional)
       status TEXT NOT NULL CHECK (status IN ('pending','succeeded','failed','expired','cancelled')),
       sumup_checkout_id TEXT,              -- only for hosted flow (optional)
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
       expires_at TEXT,
       FOREIGN KEY (bidder_id) REFERENCES bidders(id)
     )`);
@@ -255,7 +255,7 @@ if(existingSchemaVersion > schemaVersion) {
       const rootHash = bcrypt.hashSync(rootPassword, 12);
       db.prepare(`
         INSERT INTO users (username, password, roles, is_root, created_at, updated_at)
-        VALUES (?, ?, ?, 1, strftime('%Y-%m-%d %H:%M:%S', 'now'), strftime('%Y-%m-%d %H:%M:%S', 'now'))
+        VALUES (?, ?, ?, 1, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'), strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
       `).run(ROOT_USERNAME, rootHash, JSON.stringify(ROLE_LIST));
 
       log('General', logLevels.WARN, 'Created default root account with full permissions.');
@@ -266,7 +266,7 @@ if(existingSchemaVersion > schemaVersion) {
       if (rootHash) {
         db.prepare(`
           UPDATE users
-          SET username = ?, password = ?, roles = ?, is_root = 1, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
+          SET username = ?, password = ?, roles = ?, is_root = 1, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
           WHERE rowid = ?
         `).run(ROOT_USERNAME, rootHash, JSON.stringify(ROLE_LIST), rootRow.rowid);
       }

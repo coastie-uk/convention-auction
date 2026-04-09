@@ -9,8 +9,11 @@
   const API_ROOT = '/api';
   const API = `${API_ROOT}/cashier/live`;
   const VALIDATE = `${API_ROOT}/validate`;
+  const LIST_AUCTIONS = `${API_ROOT}/list-auctions`;
+  const CHANGE_PASSWORD = `${API_ROOT}/change-password`;
   const params = new URLSearchParams(location.search);
   const AUCTION_ID = Number(params.get('auctionId'));
+  const REQUESTED_AUCTION_STATUS = (params.get('auctionStatus') || '').toLowerCase();
   const currencySymbol = localStorage.getItem('currencySymbol') || '£';
   const REFRESH_MS = 5000;
   const RECENT_ACTIVITY_LIMIT = 12;
@@ -20,23 +23,55 @@
     return;
   }
 
-  const statusEl = document.getElementById('status');
-  const chkUnsold = document.getElementById('showUnsold');
-  const applyFilter = document.getElementById('btnApply');
-  const refreshButton = document.getElementById('btnRefresh');
-  const uncollectedCsvButton = document.getElementById('btnUncollectedCsv');
-  const countdownEl = document.getElementById('refreshCountdown');
-  const filterInput = document.getElementById('filter');
-  const changePersistInput = document.getElementById('changePersistSeconds');
-  const bucketSortOrderInput = document.getElementById('bucketSortOrder');
-  const showMultiItemBucketsOnlyInput = document.getElementById('showMultiItemBucketsOnly');
-  const recentBody = document.querySelector('#recentFeed tbody');
-  const bidderGroupsEl = document.getElementById('bidderGroups');
-  const bidderSummaryEl = document.getElementById('bidderSummary');
-  const unsoldSectionEl = document.getElementById('unsoldSection');
-  const unsoldBody = document.querySelector('#unsoldFeed tbody');
-  const unsoldEmptyEl = document.getElementById('unsoldEmpty');
+  const $ = id => document.getElementById(id);
+  const els = {
+    status: $('status'),
+    chkUnsold: $('showUnsold'),
+    applyFilter: $('btnApply'),
+    refreshButton: $('btnRefresh'),
+    uncollectedCsvButton: $('btnUncollectedCsv'),
+    countdown: $('refreshCountdown'),
+    filterInput: $('filter'),
+    changePersistInput: $('changePersistSeconds'),
+    bucketSortOrderInput: $('bucketSortOrder'),
+    showMultiItemBucketsOnlyInput: $('showMultiItemBucketsOnly'),
+    recentBody: document.querySelector('#recentFeed tbody'),
+    bidderGroups: $('bidderGroups'),
+    bidderSummary: $('bidderSummary'),
+    unsoldSection: $('unsoldSection'),
+    unsoldBody: document.querySelector('#unsoldFeed tbody'),
+    unsoldEmpty: $('unsoldEmpty'),
+    auctionSelect: $('auction-select'),
+    auctionMenuState: $('auction-menu-state'),
+    currentAuctionPill: $('current-auction-pill'),
+    currentStatePill: $('current-state-pill'),
+    goPublicBtn: $('go-public'),
+    goAdminBtn: $('go-admin'),
+    goCashierBtn: $('go-cashier'),
+    userMenuBtn: $('live-feed-user-menu-button'),
+    userDisplay: $('live-feed-logged-in-user'),
+    roleDisplay: $('live-feed-logged-in-role'),
+    changePwBtn: $('change-own-password-live-feed'),
+    logoutBtn: $('logout'),
+    aboutModal: $('about-modal'),
+    openAboutModalBtn: $('open-about-modal'),
+    closeAboutModalBtn: $('close-about-modal'),
+    aboutVersionBackend: $('about-version-backend'),
+    aboutVersionSchema: $('about-version-schema'),
+    aboutVersionPayment: $('about-version-payment')
+  };
 
+  const menuGroups = Array.from(document.querySelectorAll('.menu-group'));
+
+  let authToken = null;
+  let authStorageKey = null;
+  let auctions = [];
+  let currentAuction = {
+    id: AUCTION_ID,
+    full_name: `Auction ${AUCTION_ID}`,
+    short_name: '',
+    status: REQUESTED_AUCTION_STATUS || 'unknown'
+  };
   let staleTimer = null;
   let refreshTimer = null;
   let countdownTimer = null;
@@ -53,54 +88,371 @@
   let showMultiItemBucketsOnly = loadShowMultiItemBucketsOnly();
 
   const money = value => `${currencySymbol}${Number(value || 0).toFixed(2)}`;
-  const escapeHtml = value =>
-    String(value ?? '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
+
+  function notify(message, type = 'info') {
+    if (typeof showMessage === 'function') {
+      showMessage(message, type);
+      return;
+    }
+    alert(message);
+  }
+
+  function formatRoleLabel(role) {
+    if (!role) return 'Unknown';
+    return String(role)
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b\w/g, char => char.toUpperCase());
+  }
+
   function parseDurationInput(value) {
     const seconds = Number(value);
     return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 15000;
   }
 
-  const setStatus = ok => {
-    statusEl.textContent = ok ? 'Updated' : 'Stale';
-    statusEl.className = ok ? 'ok' : 'stale';
-  };
+  function buildAuctionOptionLabel(auction) {
+    return `${auction.id}: ${auction.full_name} - ${auction.status || 'unknown'}`;
+  }
 
-  const formatCountdown = ms => {
+  function getAuctionById(auctionId) {
+    return auctions.find(auction => Number(auction.id) === Number(auctionId)) || null;
+  }
+
+  function updateAboutBox(versions = null) {
+    if (els.aboutVersionBackend) els.aboutVersionBackend.textContent = versions?.backend || 'Unknown';
+    if (els.aboutVersionSchema) els.aboutVersionSchema.textContent = versions?.schema || 'Unknown';
+    if (els.aboutVersionPayment) els.aboutVersionPayment.textContent = versions?.payment_processor || 'Unknown';
+  }
+
+  function setSessionMeta(user = null, versions = null) {
+    const username = user?.username || 'unknown';
+    const roleLabel = formatRoleLabel(user?.role);
+    if (els.userDisplay) els.userDisplay.textContent = username;
+    if (els.roleDisplay) els.roleDisplay.textContent = roleLabel;
+    if (els.userMenuBtn) els.userMenuBtn.textContent = username;
+    updateAboutBox(versions);
+  }
+
+  function updateAuctionStatusPills(statusOverride = '') {
+    const auctionLabel = currentAuction?.full_name || `Auction ${AUCTION_ID}`;
+    const state = statusOverride || currentAuction?.status || REQUESTED_AUCTION_STATUS || 'unknown';
+    const stateLabel = formatRoleLabel(state);
+
+    if (els.currentAuctionPill) els.currentAuctionPill.textContent = `Auction: ${auctionLabel}`;
+    if (els.currentStatePill) els.currentStatePill.textContent = `State: ${stateLabel}`;
+    if (els.auctionMenuState) els.auctionMenuState.textContent = stateLabel;
+  }
+
+  function syncGoActionAvailability() {
+    const hasAuction = Boolean(currentAuction?.id);
+    const isSetup = String(currentAuction?.status || '').toLowerCase() === 'setup';
+
+    if (els.goPublicBtn) {
+      els.goPublicBtn.disabled = !currentAuction?.short_name || !isSetup;
+      els.goPublicBtn.title = !currentAuction?.short_name
+        ? 'Select an auction first'
+        : (isSetup ? '' : 'Public form is only available while the auction is in setup state');
+    }
+
+    [els.goAdminBtn, els.goCashierBtn].forEach(button => {
+      if (!button) return;
+      button.disabled = !hasAuction;
+      button.title = hasAuction ? '' : 'Select an auction first';
+    });
+
+    if (els.auctionSelect) els.auctionSelect.disabled = els.auctionSelect.options.length === 0;
+  }
+
+  function updateAuctionOptionLabel(auction) {
+    if (!els.auctionSelect || !auction?.id) return;
+    const option = Array.from(els.auctionSelect.options).find(
+      item => Number(item.value) === Number(auction.id)
+    );
+    if (option) option.textContent = buildAuctionOptionLabel(auction);
+  }
+
+  function populateAuctionSelect() {
+    if (!els.auctionSelect) return;
+
+    els.auctionSelect.innerHTML = '';
+    auctions.forEach(auction => {
+      const option = new Option(buildAuctionOptionLabel(auction), auction.id);
+      els.auctionSelect.add(option);
+    });
+
+    const matchedAuction = getAuctionById(AUCTION_ID);
+    if (matchedAuction) {
+      currentAuction = matchedAuction;
+      els.auctionSelect.value = String(matchedAuction.id);
+    } else {
+      const fallbackOption = new Option(buildAuctionOptionLabel(currentAuction), currentAuction.id, true, true);
+      els.auctionSelect.add(fallbackOption);
+      els.auctionSelect.value = String(currentAuction.id);
+    }
+
+    updateAuctionStatusPills();
+    syncGoActionAvailability();
+  }
+
+  function closeMenuGroups(exceptMenu = null) {
+    menuGroups.forEach(menu => {
+      if (menu !== exceptMenu) menu.removeAttribute('open');
+    });
+  }
+
+  function openAboutModal() {
+    if (!els.aboutModal) return;
+    closeMenuGroups();
+    els.aboutModal.hidden = false;
+  }
+
+  function closeAboutModal() {
+    if (!els.aboutModal) return;
+    els.aboutModal.hidden = true;
+  }
+
+  function buildLiveFeedUrl(auction) {
+    const urlParams = new URLSearchParams();
+    urlParams.set('auctionId', auction.id);
+    urlParams.set('auctionStatus', auction.status || '');
+    return `/cashier/live-feed.html?${urlParams.toString()}`;
+  }
+
+  function buildCashierUrl(auction) {
+    const urlParams = new URLSearchParams();
+    urlParams.set('auctionId', auction.id);
+    urlParams.set('auctionStatus', auction.status || '');
+    return `/cashier/index.html?${urlParams.toString()}`;
+  }
+
+  function buildAdminUrl(auction) {
+    if (!auction?.short_name) return '/admin/index.html';
+    const urlParams = new URLSearchParams();
+    urlParams.set('auction', auction.short_name);
+    return `/admin/index.html?${urlParams.toString()}`;
+  }
+
+  function buildPublicUrl(auction) {
+    if (!auction?.short_name) return null;
+    const urlParams = new URLSearchParams();
+    urlParams.set('auction', auction.short_name);
+    return `/index.html?${urlParams.toString()}`;
+  }
+
+  function openUrlInNewTab(url) {
+    if (!url) {
+      notify('Please select an auction first', 'error');
+      return;
+    }
+    closeMenuGroups();
+    window.open(url, '_blank', 'noopener')?.focus();
+  }
+
+  function logout() {
+    if (authStorageKey) localStorage.removeItem(authStorageKey);
+    closeAboutModal();
+    window.location.replace(authStorageKey === 'token' ? '/admin/index.html' : '/cashier/index.html');
+  }
+
+  function promptPasswordChange() {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `
+        position:fixed; inset:0; background:rgba(0,0,0,.5);
+        display:flex; align-items:center; justify-content:center; z-index:9999;
+      `;
+
+      const box = document.createElement('div');
+      box.style.cssText = `
+        background:#fff; padding:16px; border-radius:8px; width:min(420px, 92vw);
+        box-shadow:0 8px 24px rgba(0,0,0,.2); font-family:system-ui, sans-serif;
+      `;
+
+      const heading = document.createElement('div');
+      heading.textContent = 'Change password';
+      heading.style.cssText = 'font-weight:600; margin-bottom:10px;';
+
+      const currentInput = document.createElement('input');
+      currentInput.type = 'password';
+      currentInput.placeholder = 'Current password';
+      currentInput.autocomplete = 'current-password';
+      currentInput.style.cssText = 'width:100%; padding:8px; margin-bottom:8px; box-sizing:border-box;';
+
+      const newInput = document.createElement('input');
+      newInput.type = 'password';
+      newInput.placeholder = 'New password';
+      newInput.autocomplete = 'new-password';
+      newInput.style.cssText = 'width:100%; padding:8px; margin-bottom:8px; box-sizing:border-box;';
+
+      const confirmInput = document.createElement('input');
+      confirmInput.type = 'password';
+      confirmInput.placeholder = 'Confirm new password';
+      confirmInput.autocomplete = 'new-password';
+      confirmInput.style.cssText = 'width:100%; padding:8px; box-sizing:border-box;';
+
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex; justify-content:flex-end; gap:8px; margin-top:12px;';
+
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.textContent = 'Cancel';
+
+      const submit = document.createElement('button');
+      submit.type = 'button';
+      submit.textContent = 'Update';
+
+      function close(result) {
+        overlay.remove();
+        resolve(result);
+      }
+
+      function submitForm() {
+        close({
+          currentPassword: currentInput.value,
+          newPassword: newInput.value,
+          confirmPassword: confirmInput.value
+        });
+      }
+
+      cancel.addEventListener('click', () => close(null));
+      submit.addEventListener('click', submitForm);
+      overlay.addEventListener('click', event => {
+        if (event.target === overlay) close(null);
+      });
+
+      [currentInput, newInput, confirmInput].forEach(input => {
+        input.addEventListener('keydown', event => {
+          if (event.key === 'Enter') submitForm();
+          if (event.key === 'Escape') close(null);
+        });
+      });
+
+      row.append(cancel, submit);
+      box.append(heading, currentInput, newInput, confirmInput, row);
+      overlay.append(box);
+      document.body.append(overlay);
+      currentInput.focus();
+    });
+  }
+
+  async function handlePasswordChange() {
+    closeMenuGroups();
+    const passwordInput = await promptPasswordChange();
+    if (!passwordInput) return;
+
+    const { currentPassword, newPassword, confirmPassword } = passwordInput;
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      notify('All password fields are required', 'error');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      notify('Passwords do not match', 'error');
+      return;
+    }
+
+    try {
+      const res = await fetch(CHANGE_PASSWORD, {
+        method: 'POST',
+        headers: {
+          Authorization: authToken,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ currentPassword, newPassword })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        notify(data.message || 'Password updated.', 'success');
+      } else {
+        notify(data.error || 'Failed to change password', 'error');
+      }
+    } catch {
+      notify('Failed to change password', 'error');
+    }
+  }
+
+  async function validateStoredToken(storageKey) {
+    const token = localStorage.getItem(storageKey);
+    if (!token) return null;
+
+    try {
+      const res = await fetch(VALIDATE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        localStorage.removeItem(storageKey);
+        return null;
+      }
+      return { token, storageKey, data };
+    } catch {
+      return null;
+    }
+  }
+
+  async function getSessionToken() {
+    for (const storageKey of ['cashierToken', 'token']) {
+      const session = await validateStoredToken(storageKey);
+      if (session) return session;
+    }
+    return null;
+  }
+
+  async function fetchAuctions() {
+    const res = await fetch(LIST_AUCTIONS, {
+      method: 'POST',
+      headers: {
+        Authorization: authToken,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+
+    return res.json();
+  }
+
+  function setStatus(ok) {
+    if (!els.status) return;
+    els.status.textContent = ok ? 'Connected' : 'Not Connected';
+    els.status.className = ok ? 'ok' : 'stale';
+  }
+
+  function formatCountdown(ms) {
     const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return minutes > 0 ? `${minutes}:${String(seconds).padStart(2, '0')}` : `${seconds}s`;
-  };
+  }
 
-  const updateCountdown = () => {
-    if (!countdownEl) return;
+  function updateCountdown() {
+    if (!els.countdown) return;
     if (!nextRefreshAt) {
-      countdownEl.textContent = '';
+      els.countdown.textContent = 'Next refresh: --';
       return;
     }
     const msRemaining = nextRefreshAt - Date.now();
-    countdownEl.textContent = msRemaining <= 0 ? 'Refreshing...' : `Next refresh: ${formatCountdown(msRemaining)}`;
-  };
+    els.countdown.textContent = msRemaining <= 0 ? 'Refreshing...' : `Next refresh: ${formatCountdown(msRemaining)}`;
+  }
 
-  const setNextRefresh = delayMs => {
+  function setNextRefresh(delayMs) {
     if (refreshTimer) clearTimeout(refreshTimer);
     nextRefreshAt = Date.now() + delayMs;
     updateCountdown();
     refreshTimer = setTimeout(() => {
       void poll({ reschedule: true });
     }, delayMs);
-  };
+  }
 
-  const startCountdown = () => {
+  function startCountdown() {
     if (countdownTimer) clearInterval(countdownTimer);
     countdownTimer = setInterval(updateCountdown, 1000);
     updateCountdown();
-  };
+  }
 
   function loadChangePersistMs() {
     const raw = localStorage.getItem('live-feed-change-persist-seconds');
@@ -130,47 +482,14 @@
   }
 
   function syncInputs() {
-    if (changePersistInput) changePersistInput.value = String(Math.round(changePersistMs / 1000));
-    if (bucketSortOrderInput) bucketSortOrderInput.value = bucketSortOrder;
-    if (showMultiItemBucketsOnlyInput) showMultiItemBucketsOnlyInput.checked = showMultiItemBucketsOnly;
+    if (els.changePersistInput) els.changePersistInput.value = String(Math.round(changePersistMs / 1000));
+    if (els.bucketSortOrderInput) els.bucketSortOrderInput.value = bucketSortOrder;
+    if (els.showMultiItemBucketsOnlyInput) els.showMultiItemBucketsOnlyInput.checked = showMultiItemBucketsOnly;
   }
 
   function resetStale() {
     clearTimeout(staleTimer);
     staleTimer = setTimeout(() => setStatus(false), REFRESH_MS * 1.5);
-  }
-
-  async function validateToken(tok) {
-    if (!tok) return false;
-    try {
-      const res = await fetch(VALIDATE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: tok
-        },
-        body: JSON.stringify({ token: tok })
-      });
-      return res.ok;
-    } catch {
-      return false;
-    }
-  }
-
-  async function getSessionToken() {
-    const cashierTok = localStorage.getItem('cashierToken');
-    if (await validateToken(cashierTok)) return cashierTok;
-
-    const genericTok = localStorage.getItem('token');
-    if (await validateToken(genericTok)) return genericTok;
-
-    return null;
-  }
-
-  const token = await getSessionToken();
-  if (!token) {
-    alert('Session expired. Please log in again.');
-    throw new Error('no valid token');
   }
 
   function getActiveItemEffects() {
@@ -270,14 +589,6 @@
     scheduleEffectRefresh();
   }
 
-  function buildBidderFingerprint(items) {
-    return items
-      .slice()
-      .sort((a, b) => Number(a.rowid) - Number(b.rowid))
-      .map(item => `${item.rowid}:${item.lot}:${item.price ?? ''}`)
-      .join('|');
-  }
-
   function getRecentSales(rows, filterValue = '') {
     return rows
       .filter(row => !filterValue || Number(filterValue) === Number(row.bidder))
@@ -333,7 +644,7 @@
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: token
+        Authorization: authToken
       },
       body: JSON.stringify(body || {})
     });
@@ -346,7 +657,7 @@
 
   async function downloadUncollectedCsv() {
     const res = await fetch(`${API}/${AUCTION_ID}/uncollected.csv`, {
-      headers: { Authorization: token }
+      headers: { Authorization: authToken }
     });
     if (!res.ok) {
       const payload = await res.json().catch(() => ({}));
@@ -384,7 +695,7 @@
   }
 
   function renderRecentActivity(soldRows, filterValue) {
-    recentBody.innerHTML = '';
+    els.recentBody.innerHTML = '';
     const visibleItems = getRecentSales(soldRows, filterValue);
     if (visibleItems.length === 0) {
       const tr = document.createElement('tr');
@@ -393,7 +704,7 @@
       td.className = 'empty-cell';
       td.textContent = 'No sold items found for the current filter.';
       tr.appendChild(td);
-      recentBody.appendChild(tr);
+      els.recentBody.appendChild(tr);
       return;
     }
 
@@ -410,17 +721,17 @@
         td.textContent = value;
         tr.appendChild(td);
       });
-      recentBody.appendChild(tr);
+      els.recentBody.appendChild(tr);
     });
   }
 
   function renderUnsold(rows) {
-    unsoldBody.innerHTML = '';
+    els.unsoldBody.innerHTML = '';
     const visible = rows.slice().sort((a, b) => Number(a.lot) - Number(b.lot));
 
-    unsoldSectionEl.hidden = !chkUnsold.checked;
-    unsoldEmptyEl.hidden = visible.length > 0;
-    if (!chkUnsold.checked) return;
+    els.unsoldSection.hidden = !els.chkUnsold.checked;
+    els.unsoldEmpty.hidden = visible.length > 0;
+    if (!els.chkUnsold.checked) return;
 
     visible.forEach(item => {
       const tr = document.createElement('tr');
@@ -434,7 +745,7 @@
       descCell.textContent = item.description ?? '';
 
       tr.append(lotCell, descCell);
-      unsoldBody.appendChild(tr);
+      els.unsoldBody.appendChild(tr);
     });
   }
 
@@ -462,10 +773,18 @@
 
     const meta = document.createElement('div');
     meta.className = 'bidder-group-meta';
-    meta.textContent = retractedCount > 0
-      ? `${liveItems.length} live • ${retractedCount} retracted • ${money(total)}`
-      : `${liveItems.length} item${liveItems.length === 1 ? '' : 's'} • ${money(total)}`;
 
+    const summaryLine = document.createElement('div');
+    summaryLine.textContent = retractedCount > 0
+      ? `${liveItems.length} live - ${retractedCount} retracted - ${money(total)}`
+      : `${liveItems.length} item${liveItems.length === 1 ? '' : 's'} - ${money(total)}`;
+
+    const fingerprintLine = document.createElement('div');
+    fingerprintLine.textContent = summary.current_fingerprint
+      ? `Fingerprint ${summary.current_fingerprint}`
+      : 'Fingerprint unavailable';
+
+    meta.append(summaryLine, fingerprintLine);
     titleWrap.append(heading, meta);
 
     const badges = document.createElement('div');
@@ -531,7 +850,7 @@
       const nextReady = readyCheckbox.checked;
       readyCheckbox.disabled = true;
       void setBidderReady(summary, nextReady, summary.current_fingerprint).catch(error => {
-        alert(error.message);
+        notify(error.message, 'error');
         readyCheckbox.checked = !nextReady;
         readyCheckbox.disabled = false;
       });
@@ -552,7 +871,7 @@
     collectAllButton.addEventListener('click', () => {
       collectAllButton.disabled = true;
       void collectAll(summary).catch(error => {
-        alert(error.message);
+        notify(error.message, 'error');
         collectAllButton.disabled = false;
       });
     });
@@ -615,7 +934,7 @@
             const nextCollected = pickupToggle.checked;
             pickupToggle.disabled = true;
             void setItemCollected(item, nextCollected).catch(error => {
-              alert(error.message);
+              notify(error.message, 'error');
               pickupToggle.checked = !nextCollected;
               pickupToggle.disabled = false;
             });
@@ -633,7 +952,7 @@
   }
 
   function buildViewModel() {
-    const filterValue = filterInput?.value.trim() || '';
+    const filterValue = els.filterInput?.value.trim() || '';
     const soldRows = lastPayload.sold || [];
     const unsoldRows = lastPayload.unsold || [];
     const bidderSummaryMap = new Map((lastPayload.bidders || []).map(summary => [Number(summary.bidder_id), summary]));
@@ -654,7 +973,9 @@
         timedChangesByBidder.set(bidderId, { addedRowIds: [], retractedRows: [] });
       }
       if (effect.type === 'added') timedChangesByBidder.get(bidderId).addedRowIds.push(String(effect.rowid));
-      if (effect.type === 'retracted') timedChangesByBidder.get(bidderId).retractedRows.push({ ...effect.snapshot, changeType: 'retracted' });
+      if (effect.type === 'retracted') {
+        timedChangesByBidder.get(bidderId).retractedRows.push({ ...effect.snapshot, changeType: 'retracted' });
+      }
     });
 
     const bidderMeta = new Map();
@@ -668,7 +989,7 @@
       const summary = bidderSummaryMap.get(bidderId);
       if (!summary) return;
       const items = allBidderMap.get(bidderId) || [];
-      const fingerprint = summary.current_fingerprint || buildBidderFingerprint(items);
+      const fingerprint = summary.current_fingerprint || '';
       const timedChanges = timedChangesByBidder.get(bidderId) || { addedRowIds: [], retractedRows: [] };
       const backendReady = Boolean(summary.ready_for_collection);
       const invalidated = backendReady && summary.ready_fingerprint && summary.ready_fingerprint !== fingerprint;
@@ -734,11 +1055,6 @@
   function render() {
     const { filterValue, soldRows, unsoldRows, bidderMeta } = buildViewModel();
     const visibleBidderIds = Array.from(bidderMeta.keys()).filter(bidderId => bidderMeta.get(bidderId).visible);
-    const recentBidderSet = new Set(
-      Array.from(bidderMeta.entries())
-        .filter(([, meta]) => meta.bucketEffects.hasTimedChange)
-        .map(([bidderId]) => bidderId)
-    );
 
     visibleBidderIds.sort((a, b) => {
       const metaA = bidderMeta.get(a);
@@ -761,24 +1077,24 @@
       return metaA.summary.bidder - metaB.summary.bidder;
     });
 
-    bidderGroupsEl.innerHTML = '';
-    bidderSummaryEl.textContent = `${visibleBidderIds.length} bidder group${visibleBidderIds.length === 1 ? '' : 's'} shown • ${lastPayload.auction_status || 'unknown'}`;
+    els.bidderGroups.innerHTML = '';
+    els.bidderSummary.textContent = `${visibleBidderIds.length} bidder group${visibleBidderIds.length === 1 ? '' : 's'} shown`;
 
     if (visibleBidderIds.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'empty-state';
       if (filterValue) {
-        empty.textContent = `No sold items found for paddle ${escapeHtml(filterValue)}.`;
+        empty.textContent = `No sold items found for paddle ${filterValue}.`;
       } else if (showMultiItemBucketsOnly) {
         empty.textContent = 'No multi-item buckets are currently shown.';
       } else {
         empty.textContent = 'No sold items to collate yet.';
       }
-      bidderGroupsEl.appendChild(empty);
+      els.bidderGroups.appendChild(empty);
     } else {
       visibleBidderIds.forEach(bidderId => {
         const meta = bidderMeta.get(bidderId);
-        bidderGroupsEl.appendChild(
+        els.bidderGroups.appendChild(
           createBidderGroup(
             meta.summary,
             meta.displayRows,
@@ -800,14 +1116,14 @@
     }
 
     pollInFlight = true;
-    if (refreshButton) refreshButton.disabled = true;
-    if (uncollectedCsvButton) uncollectedCsvButton.disabled = true;
+    if (els.refreshButton) els.refreshButton.disabled = true;
+    if (els.uncollectedCsvButton) els.uncollectedCsvButton.disabled = true;
     nextRefreshAt = null;
     updateCountdown();
 
     try {
-      const res = await fetch(`${API}/${AUCTION_ID}?unsold=${chkUnsold.checked}`, {
-        headers: { 'Content-Type': 'application/json', Authorization: token }
+      const res = await fetch(`${API}/${AUCTION_ID}?unsold=${els.chkUnsold.checked}`, {
+        headers: { 'Content-Type': 'application/json', Authorization: authToken }
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
@@ -818,6 +1134,12 @@
         bidders: Array.isArray(payload?.bidders) ? payload.bidders : [],
         auction_status: payload?.auction_status || ''
       };
+      if (lastPayload.auction_status) {
+        currentAuction.status = lastPayload.auction_status;
+        updateAuctionStatusPills(lastPayload.auction_status);
+        updateAuctionOptionLabel(currentAuction);
+        syncGoActionAvailability();
+      }
       updateItemEffects(lastPayload.sold);
       render();
       setStatus(true);
@@ -826,8 +1148,8 @@
       setStatus(false);
     } finally {
       pollInFlight = false;
-      if (refreshButton) refreshButton.disabled = false;
-      if (uncollectedCsvButton) uncollectedCsvButton.disabled = false;
+      if (els.refreshButton) els.refreshButton.disabled = false;
+      if (els.uncollectedCsvButton) els.uncollectedCsvButton.disabled = false;
       if (reschedule && document.visibilityState === 'visible') {
         setNextRefresh(REFRESH_MS);
       } else if (document.visibilityState !== 'visible') {
@@ -837,74 +1159,155 @@
     }
   }
 
-  applyFilter.addEventListener('click', () => {
-    render();
-    void poll({ reschedule: true });
-  });
+  async function loadAuctions() {
+    try {
+      auctions = await fetchAuctions();
+      populateAuctionSelect();
+    } catch (error) {
+      updateAuctionStatusPills();
+      syncGoActionAvailability();
+      notify(error.message || 'Could not load auctions', 'error');
+    }
+  }
 
-  refreshButton?.addEventListener('click', () => {
-    void poll({ force: true, reschedule: true });
-  });
+  function bindEvents() {
+    els.auctionSelect?.addEventListener('change', () => {
+      closeMenuGroups();
+      const selectedAuction = getAuctionById(Number(els.auctionSelect.value));
+      if (!selectedAuction) return;
+      window.location.assign(buildLiveFeedUrl(selectedAuction));
+    });
 
-  uncollectedCsvButton?.addEventListener('click', () => {
-    void downloadUncollectedCsv().catch(error => alert(error.message));
-  });
-
-  chkUnsold.onchange = () => {
-    render();
-    void poll({ reschedule: true });
-  };
-
-  changePersistInput?.addEventListener('change', () => {
-    changePersistMs = parseDurationInput(changePersistInput.value);
-    saveChangePersistMs();
-    syncInputs();
-    retimeActiveEffects();
-    render();
-  });
-
-  bucketSortOrderInput?.addEventListener('change', () => {
-    bucketSortOrder = bucketSortOrderInput.value;
-    saveBucketSortOrder();
-    syncInputs();
-    render();
-  });
-
-  showMultiItemBucketsOnlyInput?.addEventListener('change', () => {
-    showMultiItemBucketsOnly = Boolean(showMultiItemBucketsOnlyInput.checked);
-    saveShowMultiItemBucketsOnly();
-    syncInputs();
-    render();
-  });
-
-  filterInput?.addEventListener('keydown', event => {
-    if (event.key === 'Enter') {
+    els.applyFilter?.addEventListener('click', () => {
+      closeMenuGroups();
       render();
       void poll({ reschedule: true });
-    }
-  });
+    });
 
+    els.refreshButton?.addEventListener('click', () => {
+      closeMenuGroups();
+      void poll({ force: true, reschedule: true });
+    });
+
+    els.uncollectedCsvButton?.addEventListener('click', () => {
+      closeMenuGroups();
+      void downloadUncollectedCsv().catch(error => notify(error.message, 'error'));
+    });
+
+    els.chkUnsold?.addEventListener('change', () => {
+      render();
+      void poll({ reschedule: true });
+    });
+
+    els.changePersistInput?.addEventListener('change', () => {
+      changePersistMs = parseDurationInput(els.changePersistInput.value);
+      saveChangePersistMs();
+      syncInputs();
+      retimeActiveEffects();
+      render();
+    });
+
+    els.bucketSortOrderInput?.addEventListener('change', () => {
+      bucketSortOrder = els.bucketSortOrderInput.value;
+      saveBucketSortOrder();
+      syncInputs();
+      render();
+    });
+
+    els.showMultiItemBucketsOnlyInput?.addEventListener('change', () => {
+      showMultiItemBucketsOnly = Boolean(els.showMultiItemBucketsOnlyInput.checked);
+      saveShowMultiItemBucketsOnly();
+      syncInputs();
+      render();
+    });
+
+    els.filterInput?.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        closeMenuGroups();
+        render();
+        void poll({ reschedule: true });
+      }
+    });
+
+    els.goPublicBtn?.addEventListener('click', () => {
+      openUrlInNewTab(buildPublicUrl(currentAuction));
+    });
+
+    els.goAdminBtn?.addEventListener('click', () => {
+      openUrlInNewTab(buildAdminUrl(currentAuction));
+    });
+
+    els.goCashierBtn?.addEventListener('click', () => {
+      openUrlInNewTab(buildCashierUrl(currentAuction));
+    });
+
+    els.changePwBtn?.addEventListener('click', () => {
+      void handlePasswordChange();
+    });
+
+    els.logoutBtn?.addEventListener('click', () => {
+      closeMenuGroups();
+      logout();
+    });
+
+    els.openAboutModalBtn?.addEventListener('click', openAboutModal);
+    els.closeAboutModalBtn?.addEventListener('click', closeAboutModal);
+    els.aboutModal?.addEventListener('click', event => {
+      if (event.target === els.aboutModal) closeAboutModal();
+    });
+
+    menuGroups.forEach(menu => {
+      menu.addEventListener('toggle', () => {
+        if (menu.open) closeMenuGroups(menu);
+      });
+    });
+
+    document.addEventListener('click', event => {
+      if (!event.target.closest('.menu-group')) closeMenuGroups();
+    });
+
+    document.querySelectorAll('.menu-item-link, .menu-item-button').forEach(element => {
+      element.addEventListener('click', () => {
+        if (!element.disabled) closeMenuGroups();
+      });
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        void poll({ reschedule: true });
+        return;
+      }
+      if (refreshTimer) clearTimeout(refreshTimer);
+      nextRefreshAt = null;
+      updateCountdown();
+    });
+  }
+
+  bindEvents();
   syncInputs();
+  updateAuctionStatusPills();
+  syncGoActionAvailability();
+
+  const session = await getSessionToken();
+  if (!session) {
+    alert('Session expired. Please log in again.');
+    return;
+  }
+
+  authToken = session.token;
+  authStorageKey = session.storageKey;
+  setSessionMeta(session.data.user, session.data.versions);
+  await loadAuctions();
 
   if (typeof initPhotoHoverPopup === 'function') {
     initPhotoHoverPopup({
       container: document.body,
       delayMs: 1000,
       maxSize: 220,
-      getUrl: tr => tr.dataset.photoUrl ? `${API_ROOT}/uploads/preview_${tr.dataset.photoUrl}` : null
+      getUrl: tr => (tr.dataset.photoUrl ? `${API_ROOT}/uploads/preview_${tr.dataset.photoUrl}` : null)
     });
   }
 
   startCountdown();
   void poll({ reschedule: true });
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      void poll({ reschedule: true });
-      return;
-    }
-    if (refreshTimer) clearTimeout(refreshTimer);
-    nextRefreshAt = null;
-    updateCountdown();
-  });
 })();

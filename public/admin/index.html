@@ -28,78 +28,98 @@
 
         <section id="admin-section" style="display: none;">
             <div class="sticky-controls">
-                <div class="button-group-left">
-                    <div class="auction-filter">
-                        <label for="auction-select" style="font-weight:bold;">Auction:</label>
-                        <select id="auction-select"></select>
+                <div class="menu-bar">
+                    <details class="menu-group">
+                        <summary class="menu-trigger">Auctions</summary>
+                        <div class="menu-panel">
+                            <label class="menu-field" for="auction-select">
+                                <span class="menu-label">Auction</span>
+                                <select id="auction-select"></select>
+                            </label>
 
+                            <div id="stateChanger" class="menu-field state-changer">
+                                <label for="auctionState" class="menu-label">State</label>
+                                <select id="auctionState" class="js-auction-state menu-native-select" aria-hidden="true" tabindex="-1">
 
-                        <label for="sort-field" style="font-weight:bold;">Sort by:</label>
-                        <select id="sort-field">
-                            <option value="item_number">Number</option>
-                            <option value="description">Name</option>
-                            <option value="contributor">Contributor</option>
-                            <option value="artist">Creator</option>
-                            <option value="paddle_number">Bidder</option>
-                            <option value="hammer_price">Price</option>
-
-
-                        </select>
-
-                        <label for="sort-order" style="font-weight:bold;">Order:</label>
-                        <select id="sort-order">
-                            <option value="asc">Ascending</option>
-                            <option value="desc">Descending</option>
-                        </select>
-
-                        <div id="stateChanger" class="state-changer">
-                            <label for="auctionState" style="font-weight:bold;">State:</label>
-                            <select id="auctionState" class="js-auction-state">
-
-                            </select>
+                                </select>
+                                <div id="auction-state-menu" class="menu-choice-list" role="menu" aria-label="Auction state options"></div>
+                            </div>
                         </div>
+                    </details>
 
-
-                        <div id="auction-total">
-                            Total : £0.00
+                    <details class="menu-group">
+                        <summary class="menu-trigger">Operations</summary>
+                        <div class="menu-panel">
+                            <button id="add-item" type="button" class="menu-item-button">Create New Item...</button>
+                            <button id="refresh" type="button" class="menu-item-button">Refresh</button>
+                            <button id="open-export-panel" class="menu-item-button">Export...</button>
                         </div>
+                    </details>
 
-                    </div>
-
-                </div>
-                <div class="button-group-right">
-                    <button id="add-item">Create New Item</button>
-                    <button id="refresh">Refresh</button>
-
-                    <div class="dropdown">
-                        <button>Export</button>
-                        <div class="dropdown-content">
-                            <button id="open-export-panel">Open Export Panel</button>
+                    <details class="menu-group">
+                        <summary class="menu-trigger">View</summary>
+                        <div class="menu-panel">
+                            <label class="menu-field" for="sort-field">
+                                <span class="menu-label">Sort by</span>
+                                <select id="sort-field" class="menu-native-select" aria-hidden="true" tabindex="-1">
+                                    <option value="item_number">Number</option>
+                                    <option value="description">Name</option>
+                                    <option value="contributor">Contributor</option>
+                                    <option value="artist">Creator</option>
+                                    <option value="paddle_number">Bidder</option>
+                                    <option value="hammer_price">Price</option>
+                                </select>
+                                <div id="sort-field-menu" class="menu-choice-list" role="menu" aria-label="Sort field options"></div>
+                            </label>
+                            <div class="menu-divider" role="separator"></div>
+                            <label class="menu-field" for="sort-order">
+                                <span class="menu-label">Order</span>
+                                <select id="sort-order" class="menu-native-select" aria-hidden="true" tabindex="-1">
+                                    <option value="asc">Ascending</option>
+                                    <option value="desc">Descending</option>
+                                </select>
+                                <div id="sort-order-menu" class="menu-choice-list" role="menu" aria-label="Sort order options"></div>
+                            </label>
                         </div>
-                    </div>
+                    </details>
 
-                    <div class="dropdown">
-                        <button>Other pages</button>
-                        <div class="dropdown-content">
-                            <button id="public">Public form</button>
-                            <button id="livefeed">Live Feed</button>
-                            <a href="/maint/index.html" target="_blank"><button>Maintenance</button></a>
-                            <a href="/cashier/index.html" target="_blank"><button>Cashier</button></a>
-                            <a href="/slideshow/index.html" target="_blank"><button>Slideshow</button></a>
-
-
+                    <details class="menu-group">
+                        <summary class="menu-trigger">Go</summary>
+                        <div class="menu-panel">
+                            <button id="public" type="button" class="menu-item-button">Public form</button>
+                            <button id="livefeed" type="button" class="menu-item-button">Live Feed</button>
+                            <a class="menu-item-link" href="/maint/index.html" target="_blank" rel="noopener noreferrer">Maintenance</a>
+                            <button id="cashier-page" type="button" class="menu-item-button">Cashier</button>
+                            <a class="menu-item-link" href="/slideshow/index.html" target="_blank" rel="noopener noreferrer">Slideshow</a>
                         </div>
-                    </div>
+                    </details>
 
+                    <details class="menu-group">
+                        <summary class="menu-trigger">Help</summary>
+                        <div class="menu-panel">
+                            <a class="menu-item-link" href="https://coastie-uk.github.io/convention-auction/user-guide.html#admin-panel" target="_blank" rel="noopener noreferrer">User Guide</a>
+                            <button id="open-about-modal" type="button" class="menu-item-button">About</button>
+                        </div>
+                    </details>
 
-                    <a href="https://coastie-uk.github.io/convention-auction/user-guide.html#admin-panel" target="_blank"><button>User Guide</button></a>
-                    <div class="dropdown user-menu-dropdown">
-                        <button id="admin-user-menu-button" class="user-menu-button">User</button>
-                        <div class="dropdown-content user-menu-content">
+                    <details class="menu-group user-menu-dropdown">
+                        <summary id="admin-user-menu-button" class="menu-trigger user-menu-button">User</summary>
+                        <div class="menu-panel user-menu-content">
                             <div class="user-menu-username-row">Signed in as <strong id="admin-logged-in-user">unknown</strong></div>
-                            <button id="change-own-password-admin">Change Password</button>
-                            <button id="logout">Logout</button>
+                            <div class="user-menu-username-row">Current role <strong id="admin-logged-in-role">unknown</strong></div>
+                            <div class="menu-divider" role="separator"></div>
+                            <button id="change-own-password-admin" type="button" class="menu-item-button">Change Password</button>
+                            <button id="logout" type="button" class="menu-item-button">Logout</button>
                         </div>
+                    </details>
+                </div>
+
+                <div class="top-bar-status">
+                    <div id="current-auction-pill" class="header-status-pill">Auction: none selected</div>
+                    <div id="current-state-pill" class="header-status-pill">State: unknown</div>
+                    <div id="admin-connection-pill" class="header-status-pill connection-status-pill is-checking">Status: <span id="admin-connection-status">Checking...</span></div>
+                    <div id="auction-total" class="auction-total-pill">
+                        Total : £0.00
                     </div>
                 </div>
             </div>
@@ -382,6 +402,24 @@
                 <div style="text-align:right; margin-top:10px;">
                     <button onclick="closeHistoryModal()">Close</button>
                 </div>
+            </div>
+        </div>
+
+        <div id="about-modal" class="app-modal" hidden>
+            <div class="app-modal-card">
+                <div class="app-modal-header">
+                    <div>
+                        <h3>About Convention Auction</h3>
+                        <p>Current software versions for this installation.</p>
+                    </div>
+                    <button id="close-about-modal" type="button" class="app-modal-close" aria-label="Close about dialog">Close</button>
+                </div>
+                <div class="about-grid">
+                    <div class="about-row"><span>Backend</span><strong id="about-version-backend">Unknown</strong></div>
+                    <div class="about-row"><span>Schema</span><strong id="about-version-schema">Unknown</strong></div>
+                    <div class="about-row"><span>Payment processor</span><strong id="about-version-payment">Unknown</strong></div>
+                </div>
+                <p class="about-license">Copyright © 2026 Chris Staples. This program is free software, licensed under the GNU General Public License, version 3. Distributed without any warranty.</p>
             </div>
         </div>
 

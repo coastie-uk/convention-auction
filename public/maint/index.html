@@ -2,328 +2,583 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Maintenance Panel - Charity Auction</title>
-
+  <link rel="stylesheet" href="/styles/admin-styles.css" />
   <link rel="stylesheet" href="/styles/maintenance.css" />
   <link rel="icon" type="image/png" href="/images/favicon.png" />
-
 </head>
 <body>
   <main>
     <section id="login-section">
       <div class="login-container">
-      <h2>Maintenance Login</h2>
-      <input type="text" id="maintenance-username" placeholder="Username" autocomplete="username">
-      <input type="password" id="maintenance-password" placeholder="Enter Maintenance Password">
-      <button id="login-button">Login</button>
-      <p id="error-message" style="color:red;"></p>
-
+        <h2>Maintenance Login</h2>
+        <input type="text" id="maintenance-username" placeholder="Username" autocomplete="username" />
+        <input type="password" id="maintenance-password" placeholder="Enter Maintenance Password" autocomplete="current-password" />
+        <button id="login-button" type="button">Login</button>
+        <p id="error-message" class="error-message"></p>
       </div>
     </section>
 
     <section id="maintenance-section" style="display:none;">
-      <h1>Maintenance Panel</h1>
-      <p id="software-version" style="margin-top:5px; color:#666;"></p>
-      <div class="top-actions">
-        <a href="https://coastie-uk.github.io/convention-auction/user-guide.html#maintenance-panel" target="_blank"><button>User guide</button></a>
+      <div class="sticky-controls">
+        <div class="menu-bar">
+          <details class="menu-group">
+            <summary class="menu-trigger">Go</summary>
+            <div class="menu-panel">
+              <a class="menu-item-link" href="/admin/index.html" target="_blank" rel="noopener noreferrer">Admin</a>
+              <a class="menu-item-link" href="/cashier/index.html" target="_blank" rel="noopener noreferrer">Cashier</a>
+              <a class="menu-item-link" href="/slideshow/index.html" target="_blank" rel="noopener noreferrer">Slideshow</a>
+              <a class="menu-item-link" href="/" target="_blank" rel="noopener noreferrer">Public Form</a>
+            </div>
+          </details>
 
-        <div class="user-menu-dropdown">
-                        <button>Other pages</button>
-                        <div class="user-menu-content">
+          <details class="menu-group">
+            <summary class="menu-trigger">Help</summary>
+            <div class="menu-panel">
+              <a class="menu-item-link" href="https://coastie-uk.github.io/convention-auction/user-guide.html#maintenance-panel" target="_blank" rel="noopener noreferrer">User Guide</a>
+              <button id="open-about-modal" type="button" class="menu-item-button">About</button>
+            </div>
+          </details>
 
-                            <a href="/admin/index.html" target="_blank"><button>Admin</button></a>
-                            <a href="/cashier/index.html" target="_blank"><button>Cashier</button></a>
-                            <a href="/slideshow/index.html" target="_blank"><button>Slideshow</button></a>
+          <details class="menu-group user-menu-dropdown">
+            <summary id="maintenance-user-menu-button" class="menu-trigger user-menu-button">User</summary>
+            <div class="menu-panel user-menu-content">
+              <div class="user-menu-username-row">Signed in as <strong id="maintenance-logged-in-user">unknown</strong></div>
+              <div class="user-menu-username-row">Current role <strong id="maintenance-logged-in-role">maintenance</strong></div>
+              <div class="menu-divider" role="separator"></div>
+              <button id="change-own-password" type="button" class="menu-item-button">Change Password</button>
+              <button id="logout" type="button" class="menu-item-button">Logout</button>
+            </div>
+          </details>
+        </div>
 
+        <div class="top-bar-status">
+          <div id="maintenance-panel-pill" class="header-status-pill">View: Auction Management</div>
+          <div id="software-version" class="header-status-pill maintenance-version-pill">Versions: checking...</div>
+        </div>
+      </div>
 
-                        </div>
-                    </div>
+      <div class="maintenance-layout">
+        <aside class="panel maintenance-nav-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Maintenance</h2>
+              <div class="panel-subtle">Shared navigation and tools for platform operations.</div>
+            </div>
+          </div>
+          <div class="panel-body maintenance-nav-body">
+            <nav class="maintenance-nav-list" aria-label="Maintenance categories">
+              <button type="button" class="maintenance-tab-button is-active" data-tab="auction-management" data-tab-label="Auction Management">Auction Management</button>
+              <button type="button" class="maintenance-tab-button" data-tab="add-new-auction" data-tab-label="Add New Auction">Add New Auction</button>
+              <button type="button" class="maintenance-tab-button" data-tab="database-import-export" data-tab-label="Database + Import / Export">Database + Import / Export</button>
+              <button type="button" class="maintenance-tab-button" data-tab="diagnostics" data-tab-label="Diagnostics">Diagnostics</button>
+              <button type="button" class="maintenance-tab-button" data-tab="user-management" data-tab-label="User Management">User Management</button>
+              <button type="button" class="maintenance-tab-button" data-tab="test-data-generator" data-tab-label="Test Data Generator">Test Data Generator</button>
+              <button type="button" class="maintenance-tab-button" data-tab="template-editor" data-tab-label="Template Editor">Template Editor</button>
+              <button type="button" class="maintenance-tab-button" data-tab="image-management" data-tab-label="Image Management">Image Management</button>
+              <button type="button" class="maintenance-tab-button" data-tab="payment-management" data-tab-label="Payment Management">Payment Management</button>
+              <button type="button" class="maintenance-tab-button" data-tab="audit-viewer" data-tab-label="Audit Viewer">Audit Viewer</button>
+              <button type="button" class="maintenance-tab-button" data-tab="server-logs" data-tab-label="Server Logs">Server Logs</button>
+            </nav>
+          </div>
+        </aside>
 
-        <div class="user-menu-dropdown">
-          <button id="maintenance-user-menu-button" class="user-menu-button">User</button>
-          <div class="user-menu-content">
-            <div class="user-menu-username-row">Signed in as <strong id="maintenance-logged-in-user">unknown</strong></div>
-            <button id="change-own-password">Change Password</button>
-            <button id="logout">Log Out</button>
+        <section class="panel maintenance-content-panel">
+          <section class="maintenance-tab-panel" data-tab-panel="auction-management">
+            <div class="panel-head">
+              <div>
+                <h2>Auction Management</h2>
+                <div class="panel-subtle">Review the current auctions, then create new ones when needed.</div>
+              </div>
+            </div>
+            <div class="panel-body maintenance-tab-body">
+              <section class="maintenance-subpanel">
+                <div class="maintenance-subpanel-head">
+                  <div>
+                    <h3>Existing Auctions</h3>
+                  </div>
+                </div>
+                <div class="table-wrap">
+                  <table id="auction-table" class="maintenance-data-table">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>URL Tag</th>
+                        <th>Name</th>
+                        <th>Logo</th>
+                        <th>Items</th>
+                        <th>Status</th>
+                        <th>Admin Can Set State</th>
+                        <th>Edit</th>
+                      </tr>
+                    </thead>
+                    <tbody id="auction-table-body"></tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="maintenance-tab-panel" data-tab-panel="add-new-auction" hidden>
+            <div class="panel-head">
+              <div>
+                <h2>Add New Auction</h2>
+                <div class="panel-subtle">Create a new auction with its public URL tag, display name, and logo.</div>
+              </div>
+            </div>
+            <div class="panel-body maintenance-tab-body">
+              <section class="maintenance-subpanel">
+                <div class="maintenance-subpanel-head">
+                  <div>
+                    <h3>Create New Auction</h3>
+                    <p>Add the public URL tag, display name, and logo before opening a new event.</p>
+                  </div>
+                </div>
+                <div class="maintenance-form-grid">
+                  <label for="auction-full-name">Auction Name</label>
+                  <input type="text" id="auction-full-name" placeholder="e.g. Festival of Friendship 2026" />
+
+                  <label for="auction-short-name">URL Tag</label>
+                  <input type="text" id="auction-short-name" placeholder="e.g. fof2026" />
+
+                  <label for="auction-logo-select">Auction Logo</label>
+                  <select id="auction-logo-select"></select>
+                </div>
+                <div class="maintenance-actions-row">
+                  <button id="create-auction" type="button">Create Auction</button>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="maintenance-tab-panel" data-tab-panel="database-import-export" hidden>
+            <div class="panel-head">
+              <div>
+                <h2>Database + Import / Export</h2>
+                <div class="panel-subtle">Backup, restore, and move structured data in and out of the system.</div>
+              </div>
+            </div>
+            <div class="panel-body maintenance-tab-body">
+              <section class="maintenance-subpanel">
+                <div class="maintenance-subpanel-head">
+                  <div>
+                    <h3>Database Backup and Restore</h3>
+                    <p>These operations briefly interrupt access to the live database. Make sure nobody is editing during a restore.</p>
+                  </div>
+                </div>
+                <div class="maintenance-actions-row">
+                  <button id="backup-db" type="button">Create Backup on Server</button>
+                  <button id="download-db-file" type="button">Download Current Database File</button>
+                  <button id="download-db" type="button">Download Archive</button>
+                </div>
+                <div class="maintenance-inline-form">
+                  <input type="file" id="restore-file" />
+                  <button id="restore-db" type="button">Restore Database from Local Backup</button>
+                </div>
+              </section>
+
+              <section class="maintenance-subpanel">
+                <div class="maintenance-subpanel-head">
+                  <div>
+                    <h3>Import and Export</h3>
+                    <p>CSV columns: <code>description</code>, <code>artist</code>, <code>contributor</code>, <code>notes</code>, and <code>auction_id</code>.</p>
+                  </div>
+                </div>
+                <div class="maintenance-actions-row">
+                  <button id="export-csv" type="button">Export CSV</button>
+                </div>
+                <div class="maintenance-inline-form">
+                  <input type="file" id="import-csv" />
+                  <button id="import-csv-btn" type="button">Import CSV</button>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="maintenance-tab-panel" data-tab-panel="diagnostics" hidden>
+            <div class="panel-head">
+              <div>
+                <h2>Diagnostics</h2>
+                <div class="panel-subtle">Run storage, integrity, and service checks before deeper intervention.</div>
+              </div>
+            </div>
+            <div class="panel-body maintenance-tab-body">
+              <section class="maintenance-subpanel">
+                <div class="maintenance-subpanel-head">
+                  <div>
+                    <h3>Photo Storage</h3>
+                    <p>Review storage usage and remove orphaned image files.</p>
+                  </div>
+                </div>
+                <div class="maintenance-actions-row">
+                  <button id="photo-report" type="button">Get Photo Storage Report</button>
+                  <button id="cleanup-orphans" type="button">Clean Up Unused Photos</button>
+                </div>
+              </section>
+
+              <section class="maintenance-subpanel">
+                <div class="maintenance-subpanel-head">
+                  <div>
+                    <h3>Integrity Check</h3>
+                    <p>Check the database for invalid items before a live event.</p>
+                  </div>
+                </div>
+                <div class="maintenance-actions-row">
+                  <button id="integrity-check" type="button">Check for Invalid Items</button>
+                </div>
+                <div id="integrity-results" class="maintenance-result-box" style="display:none;">
+                  <p id="integrity-summary"></p>
+                  <pre id="invalid-items-list" class="maintenance-code-block"></pre>
+                </div>
+              </section>
+
+              <section class="maintenance-subpanel">
+                <div class="maintenance-subpanel-head">
+                  <div>
+                    <h3>Server Control</h3>
+                    <p>Restart the backend service after confirming there is no active operator workflow in progress.</p>
+                  </div>
+                </div>
+                <div class="maintenance-actions-row">
+                  <button id="restart-server" type="button">Restart Server</button>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="maintenance-tab-panel" data-tab-panel="user-management" hidden>
+            <div class="panel-head">
+              <div>
+                <h2>User Management</h2>
+                <div class="panel-subtle">Manage account access, role assignments, and password resets.</div>
+              </div>
+            </div>
+            <div class="panel-body maintenance-tab-body">
+              <section class="maintenance-subpanel">
+                <div class="maintenance-subpanel-head">
+                  <div>
+                    <h3>User Accounts</h3>
+                    <p>Update access roles directly from the account table.</p>
+                  </div>
+                </div>
+                <div class="table-wrap">
+                  <table id="user-table" class="maintenance-data-table">
+                    <thead>
+                      <tr>
+                        <th>Username</th>
+                        <th>Admin</th>
+                        <th>Cashier</th>
+                        <th>Maintenance</th>
+                        <th>Slideshow</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="user-table-body"></tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section class="maintenance-subpanel">
+                <div class="maintenance-subpanel-head">
+                  <div>
+                    <h3>Add User</h3>
+                    <p>Create an initial password and assign one or more roles.</p>
+                  </div>
+                </div>
+                <div class="maintenance-form-grid">
+                  <label for="new-user-username">Username</label>
+                  <input type="text" id="new-user-username" placeholder="Username (letters/numbers/._-)" autocomplete="username" />
+
+                  <label for="new-user-password">Initial Password</label>
+                  <input type="password" id="new-user-password" placeholder="Temporary Password" autocomplete="new-password" />
+
+                  <label for="new-user-confirm-password">Confirm Password</label>
+                  <input type="password" id="new-user-confirm-password" placeholder="Confirm Temporary Password" autocomplete="new-password" />
+                </div>
+                <div id="new-user-roles" class="maintenance-checkbox-grid">
+                  <label><input type="checkbox" name="new-user-role" value="admin" /> Admin</label>
+                  <label><input type="checkbox" name="new-user-role" value="cashier" /> Cashier</label>
+                  <label><input type="checkbox" name="new-user-role" value="maintenance" /> Maintenance</label>
+                  <label><input type="checkbox" name="new-user-role" value="slideshow" /> Slideshow</label>
+                </div>
+                <div class="maintenance-actions-row">
+                  <button id="add-user-button" type="button">Add User</button>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="maintenance-tab-panel" data-tab-panel="test-data-generator" hidden>
+            <div class="panel-head">
+              <div>
+                <h2>Test Data Generator</h2>
+                <div class="panel-subtle">Populate an auction with sample lots and bids for rehearsals and demos.</div>
+              </div>
+            </div>
+            <div class="panel-body maintenance-tab-body">
+              <section class="maintenance-subpanel">
+                <div class="maintenance-form-grid">
+                  <label for="test-auction-select">Target Auction</label>
+                  <select id="test-auction-select">
+                    <option value="">-- Select Auction --</option>
+                  </select>
+
+                  <label for="test-count">Number of Test Items</label>
+                  <input type="number" id="test-count" placeholder="Number of test items (e.g. 10)" min="1" max="1000" />
+
+                  <label for="test-bid-count">Number of Bids</label>
+                  <input type="number" id="test-bid-count" min="1" />
+
+                  <label for="test-bidder-count">Number of Bidders</label>
+                  <input type="number" id="test-bidder-count" min="1" />
+                </div>
+                <div class="maintenance-actions-row">
+                  <button id="generate-test-data" type="button">Generate Test Items</button>
+                  <button id="generate-bids-btn" type="button">Generate Test Bids</button>
+                  <button id="delete-test-bids" type="button" class="danger-button">Delete Test Bids</button>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="maintenance-tab-panel" data-tab-panel="template-editor" hidden>
+            <div class="panel-head">
+              <div>
+                <h2>Template Editor</h2>
+                <div class="panel-subtle">Edit and validate generator templates used for slide, card, and item-slip output.</div>
+              </div>
+            </div>
+            <div class="panel-body maintenance-tab-body">
+              <section class="maintenance-subpanel">
+                <div class="maintenance-subpanel-head">
+                  <div>
+                    <h3>Template Configuration</h3>
+                    <p>Load a config, validate the JSON, then save or reset it.</p>
+                  </div>
+                  <div class="maintenance-actions-row">
+                    <button type="button" onclick="showConfigEditor()">Open Editor</button>
+                  </div>
+                </div>
+
+                <section id="config-editor" style="display:none;">
+                  <div class="maintenance-form-grid">
+                    <label for="config-select">Which Config?</label>
+                    <select id="config-select" onchange="showConfigEditor()">
+                      <option value="pptx">Slide Config (pptxConfig.json)</option>
+                      <option value="card">Card Config (cardConfig.json)</option>
+                      <option value="slip">Item Slip Config (slipConfig.json)</option>
+                    </select>
+                  </div>
+
+                  <textarea id="config-json" rows="20" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
+                  <p id="config-error" class="error-message"></p>
+                  <div id="errorBox" class="error-box" role="alert" aria-live="polite"></div>
+                  <ul id="errorList" class="error-list" hidden></ul>
+
+                  <div class="maintenance-actions-row">
+                    <button id="save-config" type="button">Save Config</button>
+                    <button id="reset-pptx-config" type="button">Reset to Default</button>
+                    <button type="button" onclick="document.getElementById('config-editor').style.display='none'">Cancel</button>
+                  </div>
+                </section>
+              </section>
+            </div>
+          </section>
+
+          <section class="maintenance-tab-panel" data-tab-panel="image-management" hidden>
+            <div class="panel-head">
+              <div>
+                <h2>Image Management</h2>
+                <div class="panel-subtle">Upload reusable generator assets and remove outdated files.</div>
+              </div>
+            </div>
+            <div class="panel-body maintenance-tab-body">
+              <section class="maintenance-subpanel">
+                <form id="pptx-image-form" class="maintenance-inline-form">
+                  <input type="file" id="pptx-image-input" name="images" accept=".jpg,.jpeg,.png" multiple />
+                  <button type="submit">Upload Images</button>
+                </form>
+                <p id="pptx-image-status"></p>
+                <div class="table-wrap">
+                  <table id="pptx-image-table" class="maintenance-data-table">
+                    <thead>
+                      <tr>
+                        <th>Filename (in /resources)</th>
+                        <th>Size</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="pptx-image-table-body"></tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="maintenance-tab-panel" data-tab-panel="payment-management" hidden>
+            <div class="panel-head">
+              <div>
+                <h2>Payment Management</h2>
+                <div class="panel-subtle">Review enabled payment methods and test configured callback URLs.</div>
+              </div>
+            </div>
+            <div class="panel-body maintenance-tab-body">
+              <section class="maintenance-subpanel">
+                <div class="table-wrap">
+                  <table id="paymentMethodsTable" class="maintenance-data-table payment-methods">
+                    <thead>
+                      <tr>
+                        <th>Label</th>
+                        <th>Status</th>
+                        <th>Callback URL (click to test)</th>
+                      </tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+                <p>See documentation for instructions on configuring payment processing options.</p>
+                <p id="pay-error" class="error-message"></p>
+              </section>
+            </div>
+          </section>
+
+          <section class="maintenance-tab-panel" data-tab-panel="audit-viewer" hidden>
+            <div class="panel-head">
+              <div>
+                <h2>Audit Viewer</h2>
+                <div class="panel-subtle">Filter recent system activity and export the audit history as CSV.</div>
+              </div>
+            </div>
+            <div class="panel-body maintenance-tab-body">
+              <section class="maintenance-subpanel">
+                <div class="maintenance-filter-row">
+                  <label for="audit-filter-id">Filter by ID</label>
+                  <input type="number" id="audit-filter-id" />
+
+                  <label for="audit-filter-type">Filter by Event Type</label>
+                  <select id="audit-filter-type">
+                    <option value="">All Types</option>
+                    <option value="item">Item</option>
+                    <option value="bidder">Bidder</option>
+                    <option value="payment">Payment</option>
+                    <option value="auction">Auction</option>
+                    <option value="database">Database</option>
+                    <option value="server">Server</option>
+                  </select>
+                </div>
+                <div class="maintenance-actions-row">
+                  <button id="fetch-audit-log" type="button">Fetch Audit Log</button>
+                  <button id="export-audit-log" type="button">Download CSV</button>
+                </div>
+                <div class="table-wrap maintenance-audit-wrap">
+                  <table class="maintenance-data-table maintenance-mono-table">
+                    <thead>
+                      <tr>
+                        <th>Time</th>
+                        <th>Type</th>
+                        <th>Item ID</th>
+                        <th>Action</th>
+                        <th>Details</th>
+                        <th>User</th>
+                        <th>Auction</th>
+                        <th>Item #</th>
+                      </tr>
+                    </thead>
+                    <tbody id="audit-log-body"></tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="maintenance-tab-panel" data-tab-panel="server-logs" hidden>
+            <div class="panel-head">
+              <div>
+                <h2>Server Logs</h2>
+                <div class="panel-subtle">Refresh inline logs or pop them into a dedicated window for monitoring.</div>
+              </div>
+            </div>
+            <div class="panel-body maintenance-tab-body">
+              <section class="maintenance-subpanel">
+                <div class="maintenance-actions-row">
+                  <button id="load-logs" type="button">Refresh Logs</button>
+                  <button id="popout-logs" type="button">Pop Out Log Viewer</button>
+                  <label class="maintenance-inline-toggle"><input type="checkbox" id="auto-refresh-logs" /> Auto-refresh every 5 seconds</label>
+                </div>
+                <div id="server-logs" class="maintenance-log-box" aria-live="polite"></div>
+              </section>
+            </div>
+          </section>
+        </section>
+      </div>
+
+      <div id="output"></div>
+
+      <div id="edit-auction-modal" class="app-modal" hidden>
+        <div class="app-modal-card">
+          <div class="app-modal-header">
+            <div>
+              <h3>Edit Auction</h3>
+              <p>Update the URL tag, display name, and logo for an existing auction. Reset the auction to its initial state, or delete it entirely.</p>
+            </div>
+          </div>
+          <form id="edit-auction-form" class="maintenance-form-grid">
+            <input type="hidden" id="edit-auction-id" />
+
+            <label for="edit-auction-full-name">Auction Name</label>
+            <input type="text" id="edit-auction-full-name" placeholder="e.g. Festival of Friendship 2027" />
+
+            <label for="edit-auction-short-name">URL Tag</label>
+            <input type="text" id="edit-auction-short-name" placeholder="e.g. fof2027" />
+
+            <label for="edit-auction-logo-select">Auction Logo</label>
+            <select id="edit-auction-logo-select"></select>
+
+            <label for="edit-auction-admin-state-permission">State permission</label>
+            <label class="maintenance-inline-toggle" for="edit-auction-admin-state-permission">
+              <input type="checkbox" id="edit-auction-admin-state-permission" />
+              Allow admins to change the auction state
+            </label>
+          </form>
+          <div class="maintenance-actions-row modal-actions-row">
+            <button id="edit-auction-delete" type="button" class="danger-button">Delete Auction</button>
+            <button id="edit-auction-reset" type="button" class="danger-button">Reset Auction</button>
+            <button id="save-edit-auction" type="button">Save Changes</button>
+            <button id="cancel-edit-auction" type="button" class="app-modal-close">Cancel</button>
           </div>
         </div>
       </div>
 
-
-      <details class="group" open>
-        <summary>Auction Management</summary>
-      
-        <details class="group">
-          <summary>Create new</summary>
-
-
-        <div>
-
-          <label for="auction-full-name">Auction Name:</label>
-          <input type="text" id="auction-full-name" placeholder="e.g. Festival of Friendship 2026">
-          <label for="auction-short-name">URL Tag i.e. ?auction=[name]</label>
-          <input type="text" id="auction-short-name" placeholder="e.g. fof2026">
-          
-          <label for="auction-logo-select">Auction logo:</label>
-            <select id="auction-logo-select">
-              <!-- Options will be populated dynamically -->
-            </select>
-     
-          <button id="create-auction">Create Auction</button>
+      <div id="about-modal" class="app-modal" hidden>
+        <div class="app-modal-card">
+          <div class="app-modal-header">
+            <div>
+              <h3>About Convention Auction</h3>
+              <p>Current software versions for this installation.</p>
+            </div>
+            <button id="close-about-modal" type="button" class="app-modal-close" aria-label="Close about dialog">Close</button>
+          </div>
+          <div class="about-grid">
+            <div class="about-row"><span>Backend</span><strong id="about-version-backend">Unknown</strong></div>
+            <div class="about-row"><span>Schema</span><strong id="about-version-schema">Unknown</strong></div>
+            <div class="about-row"><span>Payment processor</span><strong id="about-version-payment">Unknown</strong></div>
+          </div>
+          <p class="about-license">Copyright © 2026 Chris Staples. This program is free software, licensed under the GNU General Public License, version 3. Distributed without any warranty.</p>
         </div>
-      </details>
-
-        <h4>Existing Auctions</h4>
-        <table id="auction-table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>URL tag</th>
-              <th>Name</th>
-              <!-- <th>Accept Submissions</th> -->
-              <th>Logo</th>
-              <th>Items</th>
-              <th>Status</th>
-              <th>Admin can set state</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="auction-table-body">
-            <!-- Rows will be added by JS -->
-          </tbody>
-        </table>
-      </details>
-
-      <details class="group">
-        <summary>Database</summary>
-        <button id="backup-db">Create Backup on server</button>
-        <button id="download-db-file">Download current database file</button>
-        <button id="download-db">Download archive (database and photos)</button>
-        <input type="file" id="restore-file">
-        <button id="restore-db">Restore database from local backup</button>
-        <p> Caution: These commands will momentarily close the database. Ensure no users are making changes</p>
-
-      </details>
-
-      <details class="group">
-        <summary>Import/Export</summary>
-        <button id="export-csv">Export CSV</button>
-        <input type="file" id="import-csv">
-        <button id="import-csv-btn">Import CSV</button>
-        <p>Column headings: description, artist, contributor, notes, and auction_id</p>
-        </details>
-
-      <details class="group">
-        <summary>Diagnostics</summary>
-
-        <button id="photo-report">Get Photo Storage Report</button>
-        <button id="cleanup-orphans">Clean Up Unused Photos</button>
-        <H3>Integrity Check</H3>
-
-        <button id="integrity-check">Check for Invalid Items</button>
-        <div id="integrity-results" style="display:none;">
-          <p id="integrity-summary"></p>
-          <!-- <button id="delete-invalid-items">Delete Invalid Items</button> -->
-          <pre id="invalid-items-list" style="background:#f0f0f0; padding:10px; max-height:200px; overflow:auto;"></pre>
-          <H3>Server control</H3>
-          <button id="restart-server">Restart Server</button>
-
-      </details>
-
-      <details class="group">
-        <summary>Security</summary>
-
-        <h3>User Accounts</h3>
-        <table id="user-table" style="width:100%; border-collapse: collapse; margin-top: 10px;">
-          <thead>
-            <tr>
-              <th style="text-align:left; border-bottom:1px solid #ccc;">Username</th>
-              <th style="text-align:center; border-bottom:1px solid #ccc;">Admin</th>
-              <th style="text-align:center; border-bottom:1px solid #ccc;">Cashier</th>
-              <th style="text-align:center; border-bottom:1px solid #ccc;">Maintenance</th>
-              <th style="text-align:center; border-bottom:1px solid #ccc;">Slideshow</th>
-              <th style="text-align:left; border-bottom:1px solid #ccc;">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="user-table-body"></tbody>
-        </table>
-
-        <h4>Add User</h4>
-        <input type="text" id="new-user-username" placeholder="Username (letters/numbers/._-)" autocomplete="username">
-        <input type="password" id="new-user-password" placeholder="Temporary Password" autocomplete="new-password">
-        <input type="password" id="new-user-confirm-password" placeholder="Confirm Temporary Password" autocomplete="new-password">
-        <div id="new-user-roles" style="display:flex; gap: 12px; flex-wrap: wrap; margin-top: 8px;">
-          <label><input type="checkbox" name="new-user-role" value="admin"> Admin</label>
-          <label><input type="checkbox" name="new-user-role" value="cashier"> Cashier</label>
-          <label><input type="checkbox" name="new-user-role" value="maintenance"> Maintenance</label>
-          <label><input type="checkbox" name="new-user-role" value="slideshow"> Slideshow</label>
-        </div>
-        <button id="add-user-button">Add User</button>
-      </details>
-
-      <details class="group">
-        <summary>Generate Test Data</summary>
-      
-        <label for="test-auction-select">Target Auction:</label>
-        <select id="test-auction-select">
-          <option value="">-- Select Auction --</option>
-        </select>
-        <label for="test-count">Number of test items:</label>
-        <input type="number" id="test-count" placeholder="Number of test items (e.g. 10)" min="1" max="1000">
-        <button id="generate-test-data">Generate</button>
-      
-        <h3>Generate Test Bids</h3>
-        <label for="test-bid-count">Number of bids:</label>
-        <input type="number" id="test-bid-count" min="1">
-      
-        <label for="test-bidder-count">Number of bidders:</label>
-        <input type="number" id="test-bidder-count" min="1">
-      
-        <button id="generate-bids-btn">Generate Bids</button>
-      
-        <h3>Test Data Management</h3>
-        <button id="delete-test-bids">Delete Test Bids</button>
-      
-      </details>
-
-      <details class="group">
-        <summary>Generator Config Editor</summary>
-        <button onclick="showConfigEditor()">Edit Output Generator Config</button>
-
-        <section id="config-editor" style="display: none;">
-          <h2>Edit Configuration</h2>
-          <label for="config-select">Which config?</label>
-          <select id="config-select" onchange="showConfigEditor()">
-            <option value="pptx">Slide Config (pptxConfig.json)</option>
-            <option value="card">Card Config (cardConfig.json)</option>
-            <option value="slip">Item Slip Config (slipConfig.json)</option>
-          </select>
-          <textarea id="config-json" rows="20" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
-          <p id="config-error" style="color: red;"></p>
-            <div id="errorBox" class="error-box" role="alert" aria-live="polite"></div>
-            <ul id="errorList" class="error-list" hidden></ul>
-          <button id="save-config">Save Config</button>
-          <button id="reset-pptx-config">Reset to Default</button>
-          <button onclick="document.getElementById('config-editor').style.display='none'">Cancel</button>
-        </section>  
-
-      </details>
-
-      <details class="group">
-        <summary>Image Manager</summary>
-        <form id="pptx-image-form">
-          <input type="file" id="pptx-image-input" name="images" accept=".jpg,.jpeg,.png" multiple>
-          <button type="submit">Upload Images</button>
-        </form>
-        <p id="pptx-image-status"></p>
-        <table id="pptx-image-table" style="width:100%; margin-top:10px; border-collapse: collapse;">
-          <thead>
-            <tr>
-              <th style="text-align:left; border-bottom:1px solid #ccc;">Filename (in /resources)</th>
-              <th style="text-align:right; border-bottom:1px solid #ccc;">Size</th>
-              <th style="text-align:right; border-bottom:1px solid #ccc;">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="pptx-image-table-body"></tbody>
-        </table>
-      </details>
-
-      <details class="payments">
-        <summary>Payment Processing</summary>
-        <table id="paymentMethodsTable" class="payment-methods">
-          <thead>
-            <tr>
-      
-              <th>Label</th>
-              <th>Status</th>
-              <th>Callback URL (click to test)</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      <p> See documentation for instructions on configuring payment processing options. </p>
-      <p id="pay-error" style="color: red;"></p>
-
-      <!-- <p>The default cashier password must be changed to allow SumUp payments.</p> -->
-      </details>
-
-<details class="group">
-  <summary>Audit Log Viewer</summary>
-    <label for="audit-filter-id">Filter by Id:</label>  
-    <input type="number" id="audit-filter-id" style="margin-right: 10px;" />
-    <label for="audit-filter-type">Filter by Event Type:</label>
-    <select id="audit-filter-type" style="margin-right: 10px;">
-      <option value="">All Types</option>
-      <option value="item">Item</option>
-      <option value="bidder">Bidder</option>
-      <option value="payment">Payment</option>
-      <option value="auction">Auction</option>
-      <option value="database">Database</option>
-      <option value="server">Server</option>
-    </select>
-    <button id="fetch-audit-log">Fetch Audit log</button>
-  <button id="export-audit-log">Download CSV</button>
-  <br>
-  <div style="max-height: 300px; overflow-y: auto; border: 1px solid #ccc; background: #f9f9f9">
-    <table style="width: 100%; font-family: monospace; border-collapse: collapse;">
-      <thead>
-        <tr>
-          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Time</th>
-          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Type</th>
-          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Item ID</th>
-          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Action</th>
-          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Details</th>
-
-          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">User</th>
-
-
-          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Auction</th>
-          <th style="text-align: left; padding: 4px; border-bottom: 1px solid #ccc;">Item #</th>
-        </tr>
-      </thead>
-      <tbody id="audit-log-body"></tbody>
-    </table>
-  </div>
- 
-</details>
-
-
-      <div class="group">
-        <button id="load-logs">View Server Logs</button>
-        <label><input type="checkbox" id="auto-refresh-logs">Auto-refresh logs every 5 seconds</label>
-        <pre id="server-logs" style="
-        background: #f0f0f0;
-        padding: 10px;
-        overflow-y: auto;       /* <- vertical scrollbar */
-        overflow-x: hidden;     /* <- optional: hide horizontal scroll */
-        white-space: pre-wrap;
-        font-family: monospace;
-        height: 300px;
-        border: 1px solid #ccc;
-        border-radius: 6px;
-      "></pre>
       </div>
-
-    
-      <div id="output"></div>
     </section>
-
-
   </main>
+
   <script src="/scripts/banner.js"></script>
   <script src="/scripts/maintenance.js"></script>
   <script src="/scripts/daypilot-modal-3.15.1.min.js"></script>
-
-
-  
   <script>
-
     document.getElementById("maintenance-password").addEventListener("keyup", function (event) {
       if (event.keyCode === 13) {
-        document.getElementById('login-button').click();
+        document.getElementById("login-button").click();
       }
-    })
+    });
   </script>
 
   <footer>

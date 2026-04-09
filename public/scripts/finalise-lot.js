@@ -9,6 +9,20 @@
 
 (() => {
 const API = "/api"
+    const ACTION_ICONS = Object.freeze({
+      finalize: `
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <circle cx="12" cy="12" r="9"></circle>
+          <path d="m8.5 12.5 2.3 2.3 4.7-5.3"></path>
+        </svg>
+      `,
+      undo: `
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="m9 14-5-5 5-5"></path>
+          <path d="M20 20a8 8 0 0 0-8-8H4"></path>
+        </svg>
+      `
+    });
 
     const TABLE_BODY    = document.getElementById('items-table-body');
     const STATUS_API    = `${API}/auction-status`;   // new endpoint in patch v1.2
@@ -73,25 +87,33 @@ const API = "/api"
       if (!cell) cell = tr.querySelector('td:last-child'); // fallback
 
       if (!cell) return;
+      const actionStrip = cell.querySelector('.item-actions') || cell;
 
       // Finalize button (only for unsold lots)
-      if (!isSold && !cell.querySelector('.btn-finalize')) {
-        const btn = document.createElement('button');
-        btn.textContent = 'Record Bid';
-        btn.className   = 'btn-finalize';
+      if (!isSold && !actionStrip.querySelector('.btn-finalize')) {
+        const btn = buildActionButton('btn-finalize', 'Record bid', ACTION_ICONS.finalize);
         btn.onclick     = () => openFinalizeModal(id, item_no, description, tr);
-        cell.appendChild(btn);
+        actionStrip.appendChild(btn);
       }
 
       // Undo button (sold but not locked)
-      if (isSold && !locked && !cell.querySelector('.btn-undo')) {
-        const u = document.createElement('button');
-        u.textContent = 'Undo';
-        u.className   = 'btn-undo';
+      if (isSold && !locked && !actionStrip.querySelector('.btn-undo')) {
+        const u = buildActionButton('btn-undo', 'Undo bid', ACTION_ICONS.undo);
         u.onclick     = () => undoFinalize(id, tr);
-        cell.appendChild(u);
+        actionStrip.appendChild(u);
       }
     });
+  }
+
+  function buildActionButton(className, title, icon) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `item-action-button ${className}`;
+    btn.title = title;
+    btn.setAttribute('aria-label', title);
+    btn.dataset.defaultTitle = title;
+    btn.innerHTML = `<span class="item-action-icon" aria-hidden="true">${icon}</span>`;
+    return btn;
   }
 
   function findNextFinalizeButton(itemId, rowEl) {
@@ -264,7 +286,7 @@ const API = "/api"
         const isMoveBtn = btn.classList.contains('move-toggle');
         if (isLive || hasBid) {
           btn.disabled = true;
-          btn.style.display = isLive ? 'none' : 'inline'; // hide move if live without bids
+          btn.style.display = isLive ? 'none' : 'inline-flex'; // hide move if live without bids
           btn.classList.add('disabled');
           btn.style.pointerEvents = 'none';
           btn.style.opacity = '0.5';
@@ -279,7 +301,7 @@ const API = "/api"
           }
         } else {
           btn.disabled = false;
-          btn.style.display = 'inline';
+          btn.style.display = 'inline-flex';
           btn.classList.remove('disabled');
           btn.style.pointerEvents = '';
           btn.style.opacity = '';

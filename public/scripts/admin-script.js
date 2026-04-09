@@ -9,7 +9,9 @@ document.addEventListener("DOMContentLoaded", function () {
     const logoutButton = document.getElementById("logout");
     const changePasswordButton = document.getElementById("change-own-password-admin");
     const loggedInUserEl = document.getElementById("admin-logged-in-user");
+    const loggedInRoleEl = document.getElementById("admin-logged-in-role");
     const userMenuButton = document.getElementById("admin-user-menu-button");
+    const menuGroups = Array.from(document.querySelectorAll(".menu-group"));
     const itemsTableBody = document.getElementById("items-table-body");
     const editForm = document.getElementById("edit-form");
     const deleteButton = document.getElementById("delete-item");
@@ -24,7 +26,15 @@ document.addEventListener("DOMContentLoaded", function () {
     const refreshButton = document.getElementById("refresh");
     const liveFeedButton = document.getElementById("livefeed");
     const publicButton = document.getElementById("public");
+    const cashierPageButton = document.getElementById("cashier-page");
     const selectAuctionState = document.getElementById('auctionState');
+    const auctionStateMenu = document.getElementById("auction-state-menu");
+    const sortFieldMenu = document.getElementById("sort-field-menu");
+    const sortOrderMenu = document.getElementById("sort-order-menu");
+    const currentAuctionPill = document.getElementById("current-auction-pill");
+    const currentStatePill = document.getElementById("current-state-pill");
+    const connectionPill = document.getElementById("admin-connection-pill");
+    const connectionStatusText = document.getElementById("admin-connection-status");
     const saveEditButton = document.getElementById("save-changes");
     const saveNewButton = document.getElementById("save-new");
     const closeExportPanelButton = document.getElementById("close-export-panel");
@@ -44,6 +54,12 @@ document.addEventListener("DOMContentLoaded", function () {
     const downloadExportJobButton = document.getElementById("download-export-job");
     const runExportButton = document.getElementById("run-export");
     const resetExportTrackingButton = document.getElementById("reset-export-tracking");
+    const openAboutModalButton = document.getElementById("open-about-modal");
+    const aboutModal = document.getElementById("about-modal");
+    const closeAboutModalButton = document.getElementById("close-about-modal");
+    const aboutVersionBackendEl = document.getElementById("about-version-backend");
+    const aboutVersionSchemaEl = document.getElementById("about-version-schema");
+    const aboutVersionPaymentEl = document.getElementById("about-version-payment");
     const exportTypeInputs = Array.from(document.querySelectorAll('input[name="export-type"]'));
     const exportSelectionModeInputs = Array.from(document.querySelectorAll('input[name="export-selection-mode"]'));
     const bidderReportModeInputs = Array.from(document.querySelectorAll('input[name="bidder-report-mode"]'));
@@ -61,6 +77,7 @@ document.addEventListener("DOMContentLoaded", function () {
     let pptxStatusPollTimer = null;
     let latestPptxJob = null;
     let autoDownloadJobId = null;
+    let adminRefreshConnected = null;
     const downloadedPptxJobs = new Set();
 
     document.getElementById("sort-field").value = selectedSort;
@@ -72,8 +89,76 @@ document.addEventListener("DOMContentLoaded", function () {
     const fmtPrice = (a, v) => a ? `${currencySymbol}${Number(v).toFixed(2)}` : '';
 
     const API = "/api";
+    const OPEN_MOVE_PANEL_KEY = "admin_open_move_panel_item";
+    const SORT_FIELD_LABELS = Object.freeze({
+        item_number: "Number",
+        description: "Name",
+        contributor: "Contributor",
+        artist: "Creator",
+        paddle_number: "Bidder",
+        hammer_price: "Price"
+    });
+    const SORT_ORDER_LABELS = Object.freeze({
+        asc: "Ascending",
+        desc: "Descending"
+    });
 
+    function setAdminConnectionStatus(isConnected, { announce = true } = {}) {
+        if (connectionPill) {
+            connectionPill.classList.remove("is-checking", "is-connected", "is-disconnected");
+            connectionPill.classList.add(isConnected ? "is-connected" : "is-disconnected");
+        }
+        if (connectionStatusText) {
+            connectionStatusText.textContent = isConnected ? "Connected" : "Not connected";
+        }
+
+        if (!announce || adminRefreshConnected === isConnected) {
+            adminRefreshConnected = isConnected;
+            return;
+        }
+
+        if (adminRefreshConnected === null) {
+            adminRefreshConnected = isConnected;
+            return;
+        }
+
+        adminRefreshConnected = isConnected;
+        showMessage(
+            isConnected ? "Admin connection restored." : "Admin background refresh lost connection.",
+            isConnected ? "success" : "error"
+        );
+    }
+
+    const ACTION_ICONS = Object.freeze({
+        history: `
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M3 12a9 9 0 1 0 3-6.7"></path>
+                <path d="M3 4v5h5"></path>
+                <path d="M12 7v5l3 2"></path>
+            </svg>
+        `,
+        edit: `
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M12 20h9"></path>
+                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+            </svg>
+        `,
+        duplicate: `
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+        `,
+        move: `
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="m8 5-4 4 4 4"></path>
+                <path d="M4 9h10a4 4 0 0 1 0 8h-2"></path>
+                <path d="m16 13 4 4-4 4"></path>
+            </svg>
+        `
+    });
     function showSection(sectionId) {
+        closeMenuGroups();
         managedSections.forEach((section) => {
             if (!section) return;
             section.style.display = section.id === sectionId ? "block" : "none";
@@ -97,27 +182,42 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     function parseDbDateTime(value) {
-        if (!value || typeof value !== "string") return null;
-        const match = value.trim().match(/^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/);
-        if (!match) return null;
-        const [, dd, mm, yyyy, hh, min, sec] = match;
-        const parsed = new Date(
-            Number(yyyy),
-            Number(mm) - 1,
-            Number(dd),
-            Number(hh),
-            Number(min),
-            sec ? Number(sec) : 0
-        );
-        const ts = parsed.getTime();
-        return Number.isFinite(ts) ? ts : null;
+        if (!value) return null;
+        if (value instanceof Date) {
+            const ts = value.getTime();
+            return Number.isFinite(ts) ? ts : null;
+        }
+
+        const rawValue = typeof value === "string" ? value.trim() : String(value).trim();
+        if (!rawValue) return null;
+
+        const legacyMatch = rawValue.match(/^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/);
+        if (legacyMatch) {
+            const [, dd, mm, yyyy, hh, min, sec] = legacyMatch;
+            const parsed = new Date(
+                Number(yyyy),
+                Number(mm) - 1,
+                Number(dd),
+                Number(hh),
+                Number(min),
+                sec ? Number(sec) : 0
+            );
+            const ts = parsed.getTime();
+            return Number.isFinite(ts) ? ts : null;
+        }
+
+        const normalizedIsoCandidate = rawValue.includes("T")
+            ? rawValue
+            : rawValue.replace(" ", "T");
+        const isoTs = Date.parse(normalizedIsoCandidate);
+        return Number.isFinite(isoTs) ? isoTs : null;
     }
 
-    function getPrintStatus(modDate, lastPrint) {
+    function getPrintStatus(textModDate, lastPrint) {
         const lastPrintTs = parseDbDateTime(lastPrint);
         if (!lastPrintTs) return "unprinted";
 
-        const modTs = parseDbDateTime(modDate);
+        const modTs = parseDbDateTime(textModDate);
         if (!modTs) return "printed";
         return modTs > lastPrintTs ? "stale" : "printed";
     }
@@ -130,11 +230,23 @@ document.addEventListener("DOMContentLoaded", function () {
             ? "Slip print is up to date"
             : (printStatus === "stale" ? "Slip may be out of date" : "Not printed yet");
         return `
-            <button class="print-slip-button ${statusClass}" data-id="${itemId}" title="Print item slip (${statusHint})" aria-label="Print item slip">
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path d="M7 3h10v4H7zM7 17h10v4H7zM7 12h10v4H7z"></path>
-                    <path d="M4 8h16a2 2 0 0 1 2 2v5h-3v-3H5v3H2v-5a2 2 0 0 1 2-2z"></path>
-                </svg>
+            <button type="button" class="item-action-button print-slip-button ${statusClass}" data-id="${itemId}" title="Print item slip (${statusHint})" aria-label="Print item slip">
+                <span class="item-action-icon item-action-icon--print" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" focusable="false">
+                        <path d="M7 3h10v4H7zM7 17h10v4H7zM7 12h10v4H7z"></path>
+                        <path d="M4 8h16a2 2 0 0 1 2 2v5h-3v-3H5v3H2v-5a2 2 0 0 1 2-2z"></path>
+                    </svg>
+                </span>
+            </button>
+        `;
+    }
+
+    function renderIconButton({ className = "", title = "", icon = "", attributes = "" }) {
+        const buttonClass = ["item-action-button", className].filter(Boolean).join(" ");
+        const safeTitle = escapeHtml(title);
+        return `
+            <button type="button" class="${buttonClass}" title="${safeTitle}" aria-label="${safeTitle}" ${attributes}>
+                <span class="item-action-icon" aria-hidden="true">${icon}</span>
             </button>
         `;
     }
@@ -820,6 +932,7 @@ document.addEventListener("DOMContentLoaded", function () {
             showMessage("Please select an auction first", "error");
             return;
         }
+        closeMenuGroups();
         updateExportPanelHeader();
         updateExportSelectionUI();
         showSection("export-section");
@@ -926,10 +1039,106 @@ document.addEventListener("DOMContentLoaded", function () {
         showMessage("CSV export downloaded", "success");
     }
 
-    function setAdminUserMenu(username) {
-        if (!username) return;
+    function closeMenuGroups(exceptMenu = null) {
+        menuGroups.forEach((menu) => {
+            if (menu !== exceptMenu) {
+                menu.removeAttribute("open");
+            }
+        });
+    }
+
+    function formatRoleLabel(role) {
+        if (!role) return "Unknown";
+        return String(role)
+            .replace(/[_-]+/g, " ")
+            .replace(/\b\w/g, (char) => char.toUpperCase());
+    }
+
+    function formatStateLabel(state) {
+        return formatRoleLabel(state);
+    }
+
+    function updateAboutBox(user = null, versions = null) {
+        if (aboutVersionBackendEl) aboutVersionBackendEl.textContent = versions?.backend || "Unknown";
+        if (aboutVersionSchemaEl) aboutVersionSchemaEl.textContent = versions?.schema || "Unknown";
+        if (aboutVersionPaymentEl) aboutVersionPaymentEl.textContent = versions?.payment_processor || "Unknown";
+    }
+
+    function setAdminSessionMeta(user = null, versions = null) {
+        const username = user?.username || "unknown";
+        const roleLabel = formatRoleLabel(user?.role);
+
         if (loggedInUserEl) loggedInUserEl.textContent = username;
+        if (loggedInRoleEl) loggedInRoleEl.textContent = roleLabel;
         if (userMenuButton) userMenuButton.textContent = username;
+        updateAboutBox(user, versions);
+    }
+
+    function updateHeaderAuctionStatus() {
+        const selectedAuction = auctions.find((auction) => auction.id === selectedAuctionId);
+        const auctionLabel = selectedAuction?.full_name || "none selected";
+        const stateLabel = formatStateLabel(selectedAuction?.status || selectAuctionState?.value || "unknown");
+        if (currentAuctionPill) currentAuctionPill.textContent = `Auction: ${auctionLabel}`;
+        if (currentStatePill) currentStatePill.textContent = `State: ${stateLabel}`;
+        updateGoMenuAvailability();
+    }
+
+    function updateGoMenuAvailability() {
+        const selectedAuction = auctions.find((auction) => auction.id === selectedAuctionId);
+        const isSetup = String(selectedAuction?.status || "").toLowerCase() === "setup";
+
+        if (publicButton) {
+            publicButton.disabled = !selectedAuction || !isSetup;
+            publicButton.title = !selectedAuction
+                ? "Please select an auction first"
+                : (isSetup ? "" : "Public form is only available while the auction is in setup state");
+        }
+
+        if (cashierPageButton) {
+            cashierPageButton.disabled = !selectedAuction;
+            cashierPageButton.title = selectedAuction ? "" : "Please select an auction first";
+        }
+    }
+
+    function renderChoiceMenu(container, choices, selectedValue, { disabled = false, titleWhenDisabled = "" } = {}) {
+        if (!container) return;
+        container.innerHTML = choices.map(({ value, label }) => `
+            <button
+                type="button"
+                class="menu-choice-button${String(value) === String(selectedValue) ? " is-selected" : ""}"
+                data-value="${escapeHtml(value)}"
+                aria-pressed="${String(value) === String(selectedValue) ? "true" : "false"}"
+                ${disabled ? "disabled" : ""}
+                ${disabled && titleWhenDisabled ? `title="${escapeHtml(titleWhenDisabled)}"` : ""}
+            >
+                <span class="menu-choice-check" aria-hidden="true">${String(value) === String(selectedValue) ? "✓" : ""}</span>
+                <span>${escapeHtml(label)}</span>
+            </button>
+        `).join("");
+    }
+
+    function syncViewMenus() {
+        renderChoiceMenu(
+            sortFieldMenu,
+            Object.entries(SORT_FIELD_LABELS).map(([value, label]) => ({ value, label })),
+            selectedSort
+        );
+        renderChoiceMenu(
+            sortOrderMenu,
+            Object.entries(SORT_ORDER_LABELS).map(([value, label]) => ({ value, label })),
+            selectedOrder
+        );
+    }
+
+    function openAboutModal() {
+        if (!aboutModal) return;
+        closeMenuGroups();
+        aboutModal.hidden = false;
+    }
+
+    function closeAboutModal() {
+        if (!aboutModal) return;
+        aboutModal.hidden = true;
     }
 
     function promptPasswordChange() {
@@ -1025,10 +1234,9 @@ document.addEventListener("DOMContentLoaded", function () {
             });
             const data = await response.json();
             if (response.ok) {
-                setAdminUserMenu(data.user?.username || "admin");
+                setAdminSessionMeta(data.user, data.versions);
                 showSection("admin-section");
-                await loadAuctions();
-                loadItems();
+                await refreshAdminData({ showErrors: true, announceConnectivity: false });
                 startAutoRefresh();
             } else {
                 logout();
@@ -1041,58 +1249,135 @@ document.addEventListener("DOMContentLoaded", function () {
     checkToken();
     updateExportPanelHeader();
     updateExportSelectionUI();
+    setAdminSessionMeta();
+    syncViewMenus();
+    updateHeaderAuctionStatus();
+
+    menuGroups.forEach((menu) => {
+        menu.addEventListener("toggle", () => {
+            if (menu.open) {
+                closeMenuGroups(menu);
+            }
+        });
+    });
+
+    document.addEventListener("click", (event) => {
+        if (!event.target.closest(".menu-group")) {
+            closeMenuGroups();
+        }
+    });
+
+    document.querySelectorAll(".menu-item-link").forEach((link) => {
+        link.addEventListener("click", () => {
+            closeMenuGroups();
+        });
+    });
+
+    sortFieldMenu?.addEventListener("click", (event) => {
+        const button = event.target.closest(".menu-choice-button");
+        if (!button || button.disabled) return;
+        sortSelect.value = button.dataset.value;
+        sortSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    sortOrderMenu?.addEventListener("click", (event) => {
+        const button = event.target.closest(".menu-choice-button");
+        if (!button || button.disabled) return;
+        orderSelect.value = button.dataset.value;
+        orderSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    auctionStateMenu?.addEventListener("click", (event) => {
+        const button = event.target.closest(".menu-choice-button");
+        if (!button || button.disabled) return;
+        selectAuctionState.value = button.dataset.value;
+        selectAuctionState.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    openAboutModalButton?.addEventListener("click", openAboutModal);
+    closeAboutModalButton?.addEventListener("click", closeAboutModal);
+    aboutModal?.addEventListener("click", (event) => {
+        if (event.target === aboutModal) {
+            closeAboutModal();
+        }
+    });
 
     const auctionSelect = document.getElementById("auction-select");
     const orderSelect = document.getElementById("sort-order");
     const sortSelect = document.getElementById("sort-field");
 
-    async function loadAuctions() {
+    async function loadAuctions(options = {}) {
+        const { suppressErrors = false, rethrow = false } = options;
         const token = localStorage.getItem("token");
-        const res = await fetch(`${API}/list-auctions`, {
-            method: "POST",
-            headers: {
-                "Authorization": token,
-                "Content-Type": "application/json"
-            },
-        });
-        auctions = await res.json();
 
-        if (auctions.length === 0) {
-            showMessage("No auctions defined. Use the maintenance interface to add one", "info");
-            return;
+        try {
+            const res = await fetch(`${API}/list-auctions`, {
+                method: "POST",
+                headers: {
+                    "Authorization": token,
+                    "Content-Type": "application/json"
+                },
+            });
+
+            if (res.status === 403) {
+                if (!suppressErrors) {
+                    showMessage("Session expired. Please log in again.", "info");
+                }
+                localStorage.removeItem("token");
+                setTimeout(() => {
+                    window.location.href = "/admin";
+                }, 1500);
+                throw new Error("Session expired");
+            }
+
+            if (!res.ok) {
+                const error = await res.json().catch(() => ({}));
+                throw new Error(error.error || "Failed to load auctions");
+            }
+
+            auctions = await res.json();
+
+            if (auctions.length === 0) {
+                if (!suppressErrors) {
+                    showMessage("No auctions defined. Use the maintenance interface to add one", "info");
+                }
+                return;
+            }
+
+            auctionSelect.innerHTML = "";
+
+            auctions.forEach(auction => {
+                const opt = document.createElement("option");
+                opt.value = auction.id;
+                opt.textContent = `${auction.full_name} - ${auction.status}`;
+                auctionSelect.appendChild(opt);
+            });
+
+            const urlParam = new URLSearchParams(window.location.search).get("auction");
+            const storedAuctionId = sessionStorage.getItem("auction_id");
+
+            if (urlParam) {
+                const match = auctions.find(a => a.short_name === urlParam);
+                if (match) auctionSelect.value = match.id;
+            } else if (storedAuctionId) {
+                auctionSelect.value = storedAuctionId;
+            }
+
+            selectedAuctionId = parseInt(auctionSelect.value, 10);
+            sessionStorage.setItem("auction_id", selectedAuctionId);
+            updateExportPanelHeader();
+            updateHeaderAuctionStatus();
+
+            if (window.refreshAuctionStatus) {
+                await window.refreshAuctionStatus();
+            }
+            checkStatusChange();
+        } catch (error) {
+            if (!suppressErrors) {
+                showMessage("Error fetching auctions: " + error.message, "error");
+            }
+            if (rethrow) throw error;
         }
-        // build a list of auctions for the selector
-        auctionSelect.innerHTML = "";
-
-        auctions.forEach(auction => {
-            const opt = document.createElement("option");
-            opt.value = auction.id;
-            opt.textContent = `${auction.full_name} - ${auction.status}`;
-            auctionSelect.appendChild(opt);
-        });
-
-        // Preselect from URL or sessionStorage
-        const urlParam = new URLSearchParams(window.location.search).get("auction");
-        const storedAuctionId = sessionStorage.getItem("auction_id");
-
-        if (urlParam) {
-            const match = auctions.find(a => a.short_name === urlParam);
-            if (match) auctionSelect.value = match.id;
-        } else if (storedAuctionId) {
-            auctionSelect.value = storedAuctionId;
-        }
-
-        selectedAuctionId = parseInt(auctionSelect.value, 10);
-        sessionStorage.setItem("auction_id", selectedAuctionId);
-        updateExportPanelHeader();
-
-        if (window.refreshAuctionStatus) {        // get status first
-            await window.refreshAuctionStatus();
-        }
-        loadItems();    // now build the table
-        checkStatusChange();   // now update the change state control      
-
-
     }
 
     function checkStatusChange() {
@@ -1100,7 +1385,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const selectedAuction = auctions.find(a => a.id === selectedAuctionId);
         selectedAuctionCanChangeState = selectedAuction?.admin_can_change_state;
         const currentStatus = selectedAuction?.status;
-   
+
 
         const select = document.getElementById("auctionState");
         select.innerHTML = statusOptions.map(opt =>
@@ -1119,6 +1404,17 @@ document.addEventListener("DOMContentLoaded", function () {
             select.title = "Change auction state";
         }
 
+        renderChoiceMenu(
+            auctionStateMenu,
+            statusOptions.map((value) => ({ value, label: formatStateLabel(value) })),
+            currentStatus,
+            {
+                disabled: !selectedAuctionCanChangeState,
+                titleWhenDisabled: "Admin state change disabled for this auction (toggle in Maintenance ▶ Auctions)."
+            }
+        );
+        updateHeaderAuctionStatus();
+
         // if (!selectedAuctionCanChangeState) {
         //     stateChanger.hidden = true;
         // } else {stateChanger.hidden = false;
@@ -1133,10 +1429,12 @@ document.addEventListener("DOMContentLoaded", function () {
     auctionSelect.addEventListener("change", async () => {
         selectedAuctionId = parseInt(auctionSelect.value, 10);
         sessionStorage.setItem("auction_id", selectedAuctionId);
+        setStoredMovePanelItemId(null);
+        closeMenuGroups();
         updateExportPanelHeader();
         await window.refreshAuctionStatus();
         checkStatusChange(); //update the auction state control
-        loadItems();
+        await loadItems();
         if (window.refreshAuctionStatus) window.refreshAuctionStatus();
 
     });
@@ -1144,12 +1442,16 @@ document.addEventListener("DOMContentLoaded", function () {
     orderSelect.addEventListener("change", () => {
         selectedOrder = orderSelect.value;
         sessionStorage.setItem("item_sort_order", selectedOrder);
+        syncViewMenus();
+        closeMenuGroups();
         loadItems();
     });
 
     sortSelect.addEventListener("change", () => {
         selectedSort = sortSelect.value;
         sessionStorage.setItem("item_sort_field", selectedSort);
+        syncViewMenus();
+        closeMenuGroups();
         loadItems();
     });
 
@@ -1173,11 +1475,9 @@ document.addEventListener("DOMContentLoaded", function () {
             localStorage.setItem("token", data.token);
             currencySymbol = data.currency || "£";
             localStorage.setItem("currencySymbol", currencySymbol);
-            setAdminUserMenu(data.user?.username || username);
+            setAdminSessionMeta(data.user || { username, role: "admin" }, data.versions);
             showSection("admin-section");
-
-            loadAuctions();
-            loadItems();
+            await refreshAdminData({ showErrors: true, announceConnectivity: false });
             startAutoRefresh();
         } else {
             showMessage("Login failed: " + data.error, "error");
@@ -1191,6 +1491,7 @@ document.addEventListener("DOMContentLoaded", function () {
     })
 
     changePasswordButton.addEventListener("click", async function () {
+        closeMenuGroups();
         const passwordInput = await promptPasswordChange();
         if (!passwordInput) return;
         const { currentPassword, newPassword, confirmPassword } = passwordInput;
@@ -1222,6 +1523,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
     addItemButton.addEventListener("click", function () {
+        closeMenuGroups();
         showSection("add-section");
     });
 
@@ -1309,8 +1611,8 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     refreshButton.addEventListener("click", function () {
-        loadItems();
-        loadAuctions();
+        closeMenuGroups();
+        void refreshAdminData({ showErrors: true });
     })
     function normalizeString(value) {
         if (value === null || value === undefined) return "";
@@ -1355,11 +1657,95 @@ document.addEventListener("DOMContentLoaded", function () {
         stopPptxStatusPolling();
         latestPptxJob = null;
         autoDownloadJobId = null;
+        sessionStorage.removeItem(OPEN_MOVE_PANEL_KEY);
+        closeAboutModal();
+        setAdminSessionMeta();
         showSection("login-section");
     }
 
+    function getStoredMovePanelItemId() {
+        const rawValue = sessionStorage.getItem(OPEN_MOVE_PANEL_KEY);
+        if (!rawValue) return null;
 
-    async function loadItems() {
+        try {
+            const parsed = JSON.parse(rawValue);
+            const auctionId = Number(parsed?.auctionId);
+            const itemId = Number(parsed?.itemId);
+            if (auctionId !== Number(selectedAuctionId)) return null;
+            return Number.isInteger(itemId) && itemId > 0 ? itemId : null;
+        } catch (_) {
+            const itemId = Number(rawValue);
+            return Number.isInteger(itemId) && itemId > 0 ? itemId : null;
+        }
+    }
+
+    function setStoredMovePanelItemId(itemId) {
+        const auctionId = Number(selectedAuctionId);
+        if (Number.isInteger(itemId) && itemId > 0 && Number.isInteger(auctionId) && auctionId > 0) {
+            sessionStorage.setItem(OPEN_MOVE_PANEL_KEY, JSON.stringify({ auctionId, itemId }));
+            return;
+        }
+        sessionStorage.removeItem(OPEN_MOVE_PANEL_KEY);
+    }
+
+    function syncMoveToggleStates() {
+        document.querySelectorAll(".move-toggle").forEach((button) => {
+            const itemId = Number(button.dataset.id);
+            const panel = document.querySelector(`.move-panel[data-id="${itemId}"]`);
+            const isOpen = !!panel && panel.classList.contains("is-open");
+            button.setAttribute("aria-expanded", isOpen ? "true" : "false");
+        });
+    }
+
+    function closeAllMovePanels() {
+        document.querySelectorAll(".move-panel").forEach((panel) => {
+            panel.classList.remove("is-open");
+            panel.style.display = "none";
+        });
+        setStoredMovePanelItemId(null);
+        syncMoveToggleStates();
+    }
+
+    function toggleMovePanel(itemId) {
+        const panel = document.querySelector(`.move-panel[data-id="${itemId}"]`);
+        const button = document.querySelector(`.move-toggle[data-id="${itemId}"]`);
+        const shouldOpen = !!panel && !!button && !button.disabled && !panel.classList.contains("is-open");
+
+        closeAllMovePanels();
+
+        if (!shouldOpen || !panel) {
+            return;
+        }
+
+        panel.classList.add("is-open");
+        panel.style.display = "grid";
+        setStoredMovePanelItemId(itemId);
+        syncMoveToggleStates();
+    }
+
+    function restoreMovePanelState() {
+        const itemId = getStoredMovePanelItemId();
+        if (!itemId) {
+            syncMoveToggleStates();
+            return;
+        }
+
+        const panel = document.querySelector(`.move-panel[data-id="${itemId}"]`);
+        const button = document.querySelector(`.move-toggle[data-id="${itemId}"]`);
+        if (!panel || !button || button.disabled) {
+            setStoredMovePanelItemId(null);
+            syncMoveToggleStates();
+            return;
+        }
+
+        panel.classList.add("is-open");
+        panel.style.display = "grid";
+        syncMoveToggleStates();
+    }
+
+
+    async function loadItems(options = {}) {
+        const { suppressErrors = false, rethrow = false } = options;
         const token = localStorage.getItem("token");
         if (!token) return logout();
         const showBidCols = showBidStates.includes(window.currentAuctionStatus);
@@ -1374,12 +1760,14 @@ document.addEventListener("DOMContentLoaded", function () {
 
             // Check for 403 (unauthorized)
             if (response.status === 403) {
-                showMessage("Session expired. Please log in again.", "info");
+                if (!suppressErrors) {
+                    showMessage("Session expired. Please log in again.", "info");
+                }
                 localStorage.removeItem("token");
                 setTimeout(() => {
                     window.location.href = "/admin";
                 }, 1500);
-                return;
+                throw new Error("Session expired");
             }
 
             if (!response.ok) {
@@ -1438,27 +1826,51 @@ document.addEventListener("DOMContentLoaded", function () {
                 row.dataset.hasBid = hasBid ? "1" : "0";
                 row.dataset.item_number = item.item_number;
                 row.dataset.description = item.description;
+                const editTitle = hasBid ? "Item has bids and cannot be edited" : "Edit item";
+                const moveTitle = hasBid ? "Item has bids and cannot be moved" : "Move item within auction or to a different auction";
+
                 row.innerHTML = `
                 <td>${item.item_number}</td>
                 <td>${escapedDescription}</td>
                 <td>${escapedContributor}</td>
                 <td>${escapedArtist}</td>
                 <td>
-                    ${item.photo ? `<img src='${imgSrc}' alt='Item Image' style="max-width:60px; cursor:pointer;" class="popup-image">` : 'No Image'}
+                    ${item.photo ? `<img src='${imgSrc}' alt='Item Image' class="popup-image item-thumb">` : '<span class="item-photo-placeholder">No image</span>'}
                 </td>
 
                 ${showBidCols ? `
                     <td>${item.paddle_no ?? ''}</td>
                     <td>${fmtPrice(hasBid, item.hammer_price ?? '')}</td>` : ''
                     }
-                <td>
-            
-                    ${renderPrintButton(item.id, printStatus)}
-                    <button onclick="showItemHistory(${item.id})" title="Display item history">History</button>
-                    <button onclick="editItem('${encodedItem}')" data-default-title="Edit item" title="${hasBid ? 'Item has bids and cannot be edited' : 'Edit item'}" ${hasBid ? 'disabled' : ''}>Edit</button>
-                    <button class="duplicate-item-button" data-id="${item.id}" title="Duplicate this item immediately after itself">Duplicate</button>
-                    <button class="move-toggle" data-id="${item.id}" data-default-title="Move item within auction or to a different auction" title="${hasBid ? 'Item has bids and cannot be moved' : 'Move item within auction or to a different auction'}" ${hasBid ? 'disabled' : ''} >Move</button>
-                    <div class="move-panel" data-id="${item.id}" style="display:none; margin-top: 5px;">
+                <td class="actions-cell">
+                    <div class="item-actions">
+                        ${renderPrintButton(item.id, printStatus)}
+                        ${renderIconButton({
+                            className: "history-button",
+                            title: "Display item history",
+                            icon: ACTION_ICONS.history,
+                            attributes: `onclick="showItemHistory(${item.id})"`
+                        })}
+                        ${renderIconButton({
+                            className: "edit-item-button",
+                            title: editTitle,
+                            icon: ACTION_ICONS.edit,
+                            attributes: `onclick="editItem('${encodedItem}')" data-default-title="Edit item" ${hasBid ? "disabled" : ""}`
+                        })}
+                        ${renderIconButton({
+                            className: "duplicate-item-button",
+                            title: "Duplicate this item immediately after itself",
+                            icon: ACTION_ICONS.duplicate,
+                            attributes: `data-id="${item.id}" data-default-title="Duplicate this item immediately after itself"`
+                        })}
+                        ${renderIconButton({
+                            className: "move-toggle",
+                            title: moveTitle,
+                            icon: ACTION_ICONS.move,
+                            attributes: `data-id="${item.id}" data-default-title="Move item within auction or to a different auction" aria-expanded="false" ${hasBid ? "disabled" : ""}`
+                        })}
+                    </div>
+                    <div class="move-panel" data-id="${item.id}" style="display:none;">
                         <select class="move-auction-select" data-id="${item.id}">
                         <option value="">Move to auction...</option>
                         ${auctions
@@ -1470,7 +1882,6 @@ document.addEventListener("DOMContentLoaded", function () {
                         })
                         .join("")}
                             </select>
-                    <br/>
                     <select class="move-after-dropdown" data-id="${item.id}">
                     <option value="">Move after...</option>
                     ${items
@@ -1492,16 +1903,21 @@ document.addEventListener("DOMContentLoaded", function () {
 
             /* NEW — inject Finalize buttons once rows are in the DOM */
             if (window.enhanceFinalizeButtons) window.enhanceFinalizeButtons();
+            restoreMovePanelState();
 
 
         } catch (error) {
-            showMessage("Error fetching items: " + error.message, "error");
+            if (!suppressErrors) {
+                showMessage("Error fetching items: " + error.message, "error");
+            }
+            if (rethrow) throw error;
         }
 
         document.querySelectorAll(".move-toggle").forEach(button => {
             button.addEventListener("click", function () {
-                const panel = this.nextElementSibling;
-                panel.style.display = panel.style.display === "none" ? "block" : "none";
+                const itemId = parseInt(this.dataset.id, 10);
+                if (!itemId || isNaN(itemId)) return;
+                toggleMovePanel(itemId);
             });
         });
 
@@ -1537,6 +1953,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     if (!response.ok) throw new Error(result.error || "Move failed");
 
                     showMessage(result.message || "Item moved to different auction", "success");
+                    setStoredMovePanelItemId(null);
                     loadItems(); // Refresh the list
                 } catch (err) {
                     showMessage("Move failed: " + err.message, "error");
@@ -1603,6 +2020,27 @@ document.addEventListener("DOMContentLoaded", function () {
 
     }
 
+    async function refreshAdminData({ showErrors = false, announceConnectivity = true } = {}) {
+        try {
+            const hasSelectedAuction = Number.isInteger(parseInt(selectedAuctionId, 10)) && parseInt(selectedAuctionId, 10) > 0;
+
+            if (hasSelectedAuction) {
+                await Promise.all([
+                    loadAuctions({ suppressErrors: !showErrors, rethrow: true }),
+                    loadItems({ suppressErrors: !showErrors, rethrow: true })
+                ]);
+            } else {
+                await loadAuctions({ suppressErrors: !showErrors, rethrow: true });
+                await loadItems({ suppressErrors: !showErrors, rethrow: true });
+            }
+            setAdminConnectionStatus(true, { announce: announceConnectivity });
+            return true;
+        } catch (_) {
+            setAdminConnectionStatus(false, { announce: announceConnectivity });
+            return false;
+        }
+    }
+
 
     document.getElementById("items-table-body").addEventListener("click", async function (e) {
         const duplicateButton = e.target.closest(".duplicate-item-button");
@@ -1651,7 +2089,8 @@ document.addEventListener("DOMContentLoaded", function () {
             showMessage(`Moving item....`, "info");
 
             dropdown.disabled = true;
-            const moveButton = dropdown.closest(".move-panel")?.previousElementSibling;
+            const movePanel = dropdown.closest(".move-panel");
+            const moveButton = movePanel?.closest(".actions-cell")?.querySelector(".move-toggle");
             if (moveButton) moveButton.disabled = true;
 
             const res = await fetch(`${API}/auctions/${selectedAuctionId}/items/${id}/move-after/${after_id}`, {
@@ -1671,6 +2110,7 @@ document.addEventListener("DOMContentLoaded", function () {
             const data = await res.json();
             if (res.ok) {
                 showMessage(`Item moved`, "success");
+                setStoredMovePanelItemId(null);
                 loadItems();
             } else {
                 dropdown.disabled = false;
@@ -1763,8 +2203,7 @@ document.addEventListener("DOMContentLoaded", function () {
     function startAutoRefresh() {
         setInterval(() => {
             if (document.visibilityState === "visible") {
-                loadItems();
-                loadAuctions();
+                void refreshAdminData({ showErrors: false });
             } else {
             }
         }, 30000);
@@ -2017,6 +2456,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Button to open the live feed view
     liveFeedButton.addEventListener("click", function () {
+        closeMenuGroups();
 
         const selectedAuction = auctions.find(a => a.id === selectedAuctionId);
         const status = selectedAuction?.status;
@@ -2028,12 +2468,22 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Button to open the public page
     publicButton.addEventListener("click", function () {
+        closeMenuGroups();
         // look up the current shortname
         const selectedAuction = auctions.find(a => a.id === selectedAuctionId);
         const shortName = selectedAuction?.short_name;
+        if (!selectedAuction || selectedAuction.status !== "setup") return;
         window.open(`/index.html?auction=` + shortName, '_blank').focus();
 
     })
+
+    cashierPageButton?.addEventListener("click", function () {
+        closeMenuGroups();
+        const selectedAuction = auctions.find(a => a.id === selectedAuctionId);
+        if (!selectedAuction) return;
+        const status = selectedAuction?.status || "";
+        window.open(`/cashier/index.html?auctionId=${selectedAuctionId}&auctionStatus=${encodeURIComponent(status)}`, '_blank').focus();
+    });
 
     document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
@@ -2051,6 +2501,7 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById('auctionState')?.addEventListener('change', async () => {
         var token = localStorage.getItem("token");
         if (!token) return logout();
+        closeMenuGroups();
 
 
 
@@ -2109,9 +2560,11 @@ document.addEventListener("DOMContentLoaded", function () {
             e.preventDefault();
             closeExportPanel();
         }
+        else if (e.key === 'Escape' && aboutModal && !aboutModal.hidden) {
+            e.preventDefault();
+            closeAboutModal();
+        }
 
- 
     });
-
 
 });

@@ -53,6 +53,56 @@ const {
 
 const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
 
+function normaliseAuctionShortName(shortName) {
+  if (!shortName) {
+    return { error: "Missing short_name or full_name" };
+  }
+
+  if (/\s/.test(shortName) || shortName.length < 3 || shortName.length > 64) {
+    return { error: "Short name must not contain spaces and be between 3 and 64 characters." };
+  }
+
+  const sanitisedShortName = sanitiseText(shortName, 64).trim().toLowerCase();
+  if (!sanitisedShortName) {
+    return { error: "Short name must not be empty." };
+  }
+
+  return { value: sanitisedShortName };
+}
+
+function normaliseAuctionFullName(fullName) {
+  if (!fullName) {
+    return { error: "Missing short_name or full_name" };
+  }
+
+  const sanitisedFullName = sanitiseText(fullName, 256).trim();
+  if (!sanitisedFullName) {
+    return { error: "Full name must not be empty." };
+  }
+
+  return { value: sanitisedFullName };
+}
+
+function validateAuctionLogo(logo) {
+  const requestedLogo = sanitiseText(logo || "default_logo.png", 255).trim() || "default_logo.png";
+  const logoPath = path.join(CONFIG_IMG_DIR, requestedLogo);
+
+  if (!logoPath.startsWith(CONFIG_IMG_DIR)) {
+    return { error: "Invalid logo selection." };
+  }
+
+  if (!fs.existsSync(logoPath)) {
+    return { error: "Selected logo does not exist." };
+  }
+
+  const ext = path.extname(requestedLogo).toLowerCase();
+  if (!allowedExtensions.includes(ext)) {
+    return { error: "Selected logo is not a supported image." };
+  }
+
+  return { value: requestedLogo };
+}
+
 // Ensure PPTX_CONFIG_DIR exists and has default config files (removes a manual setup step)
 if (!fs.existsSync(PPTX_CONFIG_DIR)) fs.mkdirSync(PPTX_CONFIG_DIR, { recursive: true });
 
@@ -429,7 +479,7 @@ router.post("/import", async (req, res) => {
          (item_number, description, artist, contributor, notes, auction_id, date)
        VALUES
          (@item_number, @description, @artist, @contributor, @notes, @auction_id,
-          strftime('%d-%m-%Y %H:%M:%S','now'))`
+          strftime('%d-%m-%Y %H:%M:%S','now','localtime'))`
     );
 
     // keep a local counter per auction to avoid N queries inside the loop
@@ -1124,7 +1174,7 @@ router.post("/generate-test-data", checkAuctionState(['setup']), async (req, res
     notes: getRandom(sampleData.notes)
   }));
 
-  const stmt = db.prepare(`INSERT INTO items (description, contributor, artist, notes, photo, auction_id, item_number, date, test_item) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%d-%m-%Y %H:%M:%S', 'now'), '1')`);
+  const stmt = db.prepare(`INSERT INTO items (description, contributor, artist, notes, photo, auction_id, item_number, date, test_item) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime'), '1')`);
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
@@ -1410,24 +1460,39 @@ router.post("/auctions/delete", (req, res) => {
 router.post("/auctions/create", (req, res) => {
   const { short_name, full_name, logo } = req.body;
 
-  // 1. Validate input
+  const shortNameResult = normaliseAuctionShortName(short_name);
+  const fullNameResult = normaliseAuctionFullName(full_name);
+  const logoResult = validateAuctionLogo(logo);
+
   if (!short_name || !full_name) {
     logFromRequest(req, logLevels.ERROR, `Create auction missing short_name or full_name`);
     return res.status(400).json({ error: "Missing short_name or full_name" });
   }
 
-  if (/\s/.test(short_name) || short_name.length < 3 || short_name.length > 64) {
+  if (shortNameResult.error) {
     logFromRequest(req, logLevels.ERROR, `Create auction invalid short_name format`);
-    return res.status(400).json({ error: "Short name must not contain spaces and be between 3 and 64 characters." });
-}
+    return res.status(400).json({ error: shortNameResult.error });
+  }
 
-    const sanitised_full_name = sanitiseText(full_name, 256);
-    const sanitised_short_name = sanitiseText(short_name, 64);
+  if (fullNameResult.error) {
+    logFromRequest(req, logLevels.ERROR, `Create auction invalid full_name format`);
+    return res.status(400).json({ error: fullNameResult.error });
+  }
+
+  if (logoResult.error) {
+    logFromRequest(req, logLevels.ERROR, `Create auction invalid logo ${logo}`);
+    return res.status(400).json({ error: logoResult.error });
+  }
+
+  const sanitised_short_name = shortNameResult.value;
+  const sanitised_full_name = fullNameResult.value;
+  const selectedLogo = logoResult.value;
+
   try {
     // 2. Uniqueness check (sync)
     const existing = db.get(
       "SELECT id FROM auctions WHERE short_name = ?",
-      [sanitised_short_name.trim()]
+      [sanitised_short_name]
     );
     if (existing)
       return res.status(400).json({ error: "Short name must be unique. This one already exists." });
@@ -1446,17 +1511,86 @@ router.post("/auctions/create", (req, res) => {
 
     // 3. Insert (remember: params go in ONE array)
     const result = db.run(
-      "INSERT INTO auctions (short_name, full_name, logo, public_id) VALUES (?, ?, ?, ?)",
-      [sanitised_short_name.trim().toLowerCase(), sanitised_full_name.trim(), logo || "default_logo.png", public_id]
+      "INSERT INTO auctions (short_name, full_name, logo, public_id, created_at) VALUES (?, ?, ?, ?, strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime'))",
+      [sanitised_short_name, sanitised_full_name, selectedLogo, public_id]
     );
     const NewId = result.lastInsertRowid;
-    logFromRequest(req, logLevels.INFO, `Created new auction Id ${NewId} ${short_name} with logo: ${logo}`);
-    audit(getAuditActor(req), 'create auction', 'auction', NewId, { short_name: short_name.trim().toLowerCase(), full_name: sanitised_full_name.trim(), logo });
-    return res.status(201).json({ message: `Auction ${sanitised_full_name.trim()} created.` });
+    logFromRequest(req, logLevels.INFO, `Created new auction Id ${NewId} ${sanitised_short_name} with logo: ${selectedLogo}`);
+    audit(getAuditActor(req), 'create auction', 'auction', NewId, { short_name: sanitised_short_name, full_name: sanitised_full_name, logo: selectedLogo });
+    return res.status(201).json({ message: `Auction ${sanitised_full_name} created.` });
     
   } catch (err) {
     logFromRequest(req, logLevels.ERROR, `Create auction error: ${err?.stack || err.message}`);
     res.status(500).json({ error: "Could not create auction" + err.message });
+  }
+});
+
+//--------------------------------------------------------------------------
+// POST /auctions/update
+// API to update auction metadata
+//--------------------------------------------------------------------------
+
+router.post("/auctions/update", (req, res) => {
+  const { auction_id, short_name, full_name, logo } = req.body;
+
+  if (!auction_id) {
+    return res.status(400).json({ error: "Missing auction ID." });
+  }
+
+  const shortNameResult = normaliseAuctionShortName(short_name);
+  if (shortNameResult.error) {
+    return res.status(400).json({ error: shortNameResult.error });
+  }
+
+  const fullNameResult = normaliseAuctionFullName(full_name);
+  if (fullNameResult.error) {
+    return res.status(400).json({ error: fullNameResult.error });
+  }
+
+  const logoResult = validateAuctionLogo(logo);
+  if (logoResult.error) {
+    return res.status(400).json({ error: logoResult.error });
+  }
+
+  const currentAuction = db.prepare(`
+    SELECT id, short_name, full_name, logo
+    FROM auctions
+    WHERE id = ?
+  `).get(auction_id);
+
+  if (!currentAuction) {
+    return res.status(404).json({ error: "Auction not found." });
+  }
+
+  const duplicateAuction = db.prepare(`
+    SELECT id
+    FROM auctions
+    WHERE short_name = ? AND id != ?
+  `).get(shortNameResult.value, auction_id);
+
+  if (duplicateAuction) {
+    return res.status(400).json({ error: "Short name must be unique. This one already exists." });
+  }
+
+  try {
+    db.run(
+      `UPDATE auctions
+       SET short_name = ?, full_name = ?, logo = ?
+       WHERE id = ?`,
+      [shortNameResult.value, fullNameResult.value, logoResult.value, auction_id]
+    );
+
+    logFromRequest(req, logLevels.INFO, `Updated auction ${auction_id} metadata : short_name: "${shortNameResult.value}", full_name: "${fullNameResult.value}", logo: "${logoResult.value}"`);
+    audit(getAuditActor(req), "auction settings", "auction", auction_id, {
+      short_name: { from: currentAuction.short_name, to: shortNameResult.value },
+      full_name: { from: currentAuction.full_name, to: fullNameResult.value },
+      logo: { from: currentAuction.logo, to: logoResult.value }
+    });
+
+    return res.json({ message: `Auction ${auction_id} updated.` });
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Auction update error: ${err?.stack || err.message}`);
+    return res.status(500).json({ error: "Internal error" });
   }
 });
 
@@ -1749,7 +1883,7 @@ router.post("/generate-bids", checkAuctionState(['live', 'settlement']), (req, r
         .get(paddle, auction_id);
 
       if (!existing) {
-        const info = db.prepare('INSERT INTO bidders (paddle_number, auction_id) VALUES (?, ?)')
+        const info = db.prepare(`INSERT INTO bidders (paddle_number, auction_id, created_at) VALUES (?, ?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))`)
           .run(paddle, auction_id);
         existing = { id: info.lastInsertRowid };
       }
@@ -1770,7 +1904,7 @@ router.post("/generate-bids", checkAuctionState(['live', 'settlement']), (req, r
            SET winning_bidder_id = ?,
                hammer_price = ?,
                test_bid = ?,
-               last_bid_update = strftime('%Y-%m-%d %H:%M:%S', 'now')
+               last_bid_update = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
          WHERE id = ?
       `).run(selected.id, price, testBid, itemId);
 
@@ -1804,7 +1938,7 @@ router.post("/delete-test-bids", checkAuctionState(['live', 'settlement']), (req
       SET winning_bidder_id = NULL,
           hammer_price = NULL,
           test_bid = NULL,
-          last_bid_update = strftime('%Y-%m-%d %H:%M:%S', 'now')
+          last_bid_update = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
       WHERE auction_id = ? AND test_bid = 1
     `).run(auction_id);
 

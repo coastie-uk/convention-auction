@@ -40,6 +40,38 @@ api.use(express.json());
 
 const posInt = (x) => Number.isInteger(x) && x > 0;
 
+function formatLocalSqlDateTime(date = new Date()) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
+}
+
+function parseLocalSqlDateTime(value) {
+  if (!value || typeof value !== 'string') return null;
+  const rawValue = value.trim();
+  const match = rawValue.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (match) {
+    const [, yyyy, mm, dd, hh, min, ss] = match;
+    const parsed = new Date(
+      Number(yyyy),
+      Number(mm) - 1,
+      Number(dd),
+      Number(hh),
+      Number(min),
+      ss ? Number(ss) : 0
+    );
+    const ts = parsed.getTime();
+    if (Number.isFinite(ts)) return ts;
+  }
+
+  const isoTs = Date.parse(rawValue);
+  return Number.isFinite(isoTs) ? isoTs : null;
+}
+
 
 // API to create a payment intent
 // supports channels: 'hosted' (desktop/QR), 'app' (direct app)
@@ -84,7 +116,8 @@ api.post('/payments/intents', authenticateRole("cashier"), checkAuctionState(['s
 
     const intentId = uuidv4();
 
-    const expiresAt = new Date(Date.now() + PAYMENT_TTL_MIN * 60 * 1000).toISOString();
+    const createdAt = formatLocalSqlDateTime();
+    const expiresAt = formatLocalSqlDateTime(new Date(Date.now() + PAYMENT_TTL_MIN * 60 * 1000));
 if (channel !== 'hosted' && channel !== 'app') {
       logFromRequest(req, logLevels.WARN, `Attempt to create SumUp payment with invalid channel: ${channel}`);
       return res.status(400).json({ error: `Invalid channel specified: ${channel}` });
@@ -98,9 +131,9 @@ if (channel !== 'hosted' && channel !== 'app') {
 
   //  TODO
     db.prepare(`
-      INSERT INTO payment_intents (intent_id, bidder_id, amount_minor, donation_minor, created_by, currency, status, channel, expires_at, note)
-      VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
-    `).run(intentId, bidder_id, gross_minor, donation_minor, auditActor, CURRENCY, channel, expiresAt, sanitisedNote);
+      INSERT INTO payment_intents (intent_id, bidder_id, amount_minor, donation_minor, created_by, currency, status, channel, created_at, expires_at, note)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+    `).run(intentId, bidder_id, gross_minor, donation_minor, auditActor, CURRENCY, channel, createdAt, expiresAt, sanitisedNote);
 
     const payload = { intent_id: intentId, amount_minor: gross_minor, donation_minor, currency: CURRENCY };
 
@@ -433,7 +466,8 @@ async function verifyAndFinalizeIntent(intentId, { raw = null, source = 'manual'
   const auditUser = intent.created_by || (source === 'webhook' ? 'sumup-web' : 'sumup-app');
 
   // Expiry guard
-  if (intent.expires_at && new Date(intent.expires_at) < new Date()) {
+  const expiresAtTs = parseLocalSqlDateTime(intent.expires_at);
+  if (expiresAtTs && expiresAtTs < Date.now()) {
     db.prepare(`UPDATE payment_intents SET status='expired' WHERE intent_id=? AND status='pending'`).run(intentId);
     return;
   }
@@ -479,8 +513,8 @@ async function verifyAndFinalizeIntent(intentId, { raw = null, source = 'manual'
 
 // Create payment record
     const r = db.prepare(`
-      INSERT INTO payments (bidder_id, amount, donation_amount, method, note, created_by, provider, provider_txn_id, intent_id, raw_payload, currency)
-      VALUES (?, ?, ?, ? , ?, ?, 'sumup', ?, ?, ?, ?)
+      INSERT INTO payments (bidder_id, amount, donation_amount, method, note, created_by, provider, provider_txn_id, intent_id, raw_payload, currency, created_at)
+      VALUES (?, ?, ?, ? , ?, ?, 'sumup', ?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
     `).run(intent.bidder_id, amount, donationAmount, createdBy, intent.note, auditUser, providerTxn, intent.intent_id, raw ? JSON.stringify(raw) : (latest ? JSON.stringify(latest) : null), CURRENCY);
 
     // Mark intent done
@@ -576,7 +610,7 @@ function expireStaleIntents() {
     SET status = 'expired'
     WHERE status = 'pending'
       AND expires_at IS NOT NULL
-      AND expires_at < datetime('now')
+      AND julianday(expires_at) < julianday('now', 'localtime')
   `);
   const info = stmt.run();
   if (info.changes > 0) {

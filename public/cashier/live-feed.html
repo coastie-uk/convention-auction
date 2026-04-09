@@ -2,52 +2,75 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Live Feed – Auction</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Feed - Auction</title>
   <link rel="stylesheet" href="/styles/admin-styles.css" />
+  <link rel="icon" type="image/png" href="/images/favicon.png" />
   <style>
-    #status.ok    { color: green; }
-    #status.stale { color: darkorange; }
-    tr.unsold-row {   color: #777; }
-    body {
-      background: #f5f7fb;
+    #status {
+      font-weight: 700;
+    }
+    #status.ok {
+      color: green;
+    }
+    #status.stale {
+      color: darkorange;
+    }
+    #status.connecting {
+      color: #24436b;
+    }
+    tr.unsold-row {
+      color: #777;
     }
     .page-shell {
-      padding: 12px;
+      display: grid;
+      gap: 12px;
     }
-    .toolbar {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px 10px;
-      margin-bottom: 12px;
-    }
-    .toolbar label {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .toolbar input[type="number"] {
-      width: 84px;
-    }
-    .toolbar select,
-    .toolbar button,
-    .toolbar input[type="number"] {
+    .menu-field input[type="number"] {
+      background: #fff;
+      border: 1px solid #cbd5df;
+      border-radius: 10px;
+      color: var(--admin-text);
       font: inherit;
+      min-height: 40px;
+      padding: 8px 10px;
+      width: 100%;
+      box-sizing: border-box;
     }
-    .refresh-controls {
-      display: inline-flex;
+    .menu-static-value {
       align-items: center;
-      gap: 8px;
+      background: #f8fbff;
+      border: 1px solid #dbe6f5;
+      border-radius: 10px;
+      color: var(--admin-text);
+      display: flex;
+      font-weight: 600;
+      min-height: 40px;
+      padding: 8px 10px;
+      box-sizing: border-box;
     }
-    #btnRefresh {
-      padding: 5px 9px;
+    .menu-checkbox-row {
+      align-items: center;
+      background: #f8fbff;
+      border: 1px solid #dbe6f5;
+      border-radius: 10px;
+      color: var(--admin-text);
       cursor: pointer;
+      display: flex;
+      gap: 10px;
+      min-height: 40px;
+      padding: 8px 12px;
+      font-weight: 600;
+      box-sizing: border-box;
+    }
+    .menu-checkbox-row input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      flex: 0 0 auto;
     }
     #refreshCountdown {
-      color: #555;
-      font-size: 0.95rem;
-      white-space: nowrap;
-      min-width: 9ch;
+      min-width: 150px;
     }
     .live-grid {
       display: grid;
@@ -305,94 +328,177 @@
   </style>
 </head>
 <body>
-  <div class="page-shell">
+  <main>
+    <div class="page-shell">
+      <div class="sticky-controls">
+        <div class="menu-bar">
+          <details class="menu-group">
+            <summary class="menu-trigger">Auctions</summary>
+            <div class="menu-panel">
+              <label class="menu-field" for="auction-select">
+                <span class="menu-label">Auction</span>
+                <select id="auction-select"></select>
+              </label>
 
+              <div class="menu-field">
+                <span class="menu-label">State</span>
+                <div id="auction-menu-state" class="menu-static-value">Unknown</div>
+              </div>
+            </div>
+          </details>
 
-    <div class="toolbar">
-      <label>Filter Paddle #:
-        <input id="filter" type="number" min="1" max="999" />
-      </label>
-      <button id="btnApply" type="button">Go</button>
-      <span id="status" class="ok">Connected</span>
-      <span class="refresh-controls">
-        <button id="btnRefresh" type="button">Refresh now</button>
-        <!-- <span id="refreshCountdown" aria-live="polite">Next refresh: --</span> -->
-      </span>
-      <button id="btnUncollectedCsv" class="action-btn" type="button">Uncollected CSV</button>
-      <label>
-        Change cue (s):
-        <input id="changePersistSeconds" type="number" min="1" step="1" value="60" />
-      </label>
-      <label>
-        Bucket sort:
-        <select id="bucketSortOrder">
-          <option value="last_update" selected>Last update</option>
-          <option value="last_paid">Last paid</option>
-          <option value="ready_state">Ready state</option>
-          <option value="paddle">Paddle number</option>
-        </select>
-      </label>
-      <label>
-        <input type="checkbox" id="showMultiItemBucketsOnly" />
-        2+ items only
-      </label>
-      <label>
-        <input type="checkbox" id="showUnsold" checked>
-        Show unsold
-      </label>
-    </div>
+          <details class="menu-group">
+            <summary class="menu-trigger">Operations</summary>
+            <div class="menu-panel">
+              <button id="btnRefresh" type="button" class="menu-item-button">Refresh</button>
+              <button id="btnUncollectedCsv" type="button" class="menu-item-button">Export uncollected list</button>
+            </div>
+          </details>
 
-    <div class="live-grid">
-      <div class="stacked-panels">
+          <details class="menu-group">
+            <summary class="menu-trigger">View</summary>
+            <div class="menu-panel">
+              <label class="menu-field" for="filter">
+                <span class="menu-label">Filter paddle #</span>
+                <input id="filter" type="number" min="1" max="999" />
+              </label>
+              <button id="btnApply" type="button" class="menu-item-button">Apply filter</button>
+              <div class="menu-divider" role="separator"></div>
+              <label class="menu-field" for="changePersistSeconds">
+                <span class="menu-label">Show changes for... (s)</span>
+                <input id="changePersistSeconds" type="number" min="0" step="5" value="60" />
+              </label>
+              <label class="menu-field" for="bucketSortOrder">
+                <span class="menu-label">Bucket sort</span>
+                <select id="bucketSortOrder">
+                  <option value="last_update" selected>Last update</option>
+                  <option value="last_paid">Last paid</option>
+                  <option value="ready_state">Ready state</option>
+                  <option value="paddle">Paddle number</option>
+                </select>
+              </label>
+              <span class="menu-label">Show...</span>
+              <label class="menu-checkbox-row" for="showMultiItemBucketsOnly">
+                <input type="checkbox" id="showMultiItemBucketsOnly" />
+                <span>2+ items only</span>
+              </label>
+              <label class="menu-checkbox-row" for="showUnsold">
+                <input type="checkbox" id="showUnsold" checked />
+                <span>Unsold items</span>
+              </label>
+            </div>
+          </details>
+
+          <details class="menu-group">
+            <summary class="menu-trigger">Go</summary>
+            <div class="menu-panel">
+              <button id="go-public" type="button" class="menu-item-button">Public Form</button>
+              <button id="go-admin" type="button" class="menu-item-button">Admin</button>
+              <button id="go-cashier" type="button" class="menu-item-button">Cashier</button>
+              <a class="menu-item-link" href="/maint/index.html" target="_blank" rel="noopener noreferrer">Maintenance</a>
+              <a class="menu-item-link" href="/slideshow/index.html" target="_blank" rel="noopener noreferrer">Slideshow</a>
+            </div>
+          </details>
+
+          <details class="menu-group">
+            <summary class="menu-trigger">Help</summary>
+            <div class="menu-panel">
+              <a class="menu-item-link" href="https://coastie-uk.github.io/convention-auction/user-guide.html" target="_blank" rel="noopener noreferrer">User Guide</a>
+              <button id="open-about-modal" type="button" class="menu-item-button">About</button>
+            </div>
+          </details>
+
+          <details class="menu-group user-menu-dropdown">
+            <summary id="live-feed-user-menu-button" class="menu-trigger user-menu-button">User</summary>
+            <div class="menu-panel user-menu-content">
+              <div class="user-menu-username-row">Signed in as <strong id="live-feed-logged-in-user">unknown</strong></div>
+              <div class="user-menu-username-row">Current role <strong id="live-feed-logged-in-role">unknown</strong></div>
+              <div class="menu-divider" role="separator"></div>
+              <button id="change-own-password-live-feed" type="button" class="menu-item-button">Change Password</button>
+              <button id="logout" type="button" class="menu-item-button">Logout</button>
+            </div>
+          </details>
+        </div>
+
+        <div class="top-bar-status">
+          <div id="current-auction-pill" class="header-status-pill">Auction: loading...</div>
+          <div id="current-state-pill" class="header-status-pill">State: loading...</div>
+          <div class="header-status-pill">Status: <span id="status" class="connecting">Connecting</span></div>
+          <div id="refreshCountdown" class="header-status-pill" aria-live="polite">Next refresh: --</div>
+        </div>
+      </div>
+
+      <div class="live-grid">
+        <div class="stacked-panels">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Recent Bids</h2>
+              <span class="panel-subtle"></span>
+            </div>
+            <div class="panel-body">
+              <table id="recentFeed" class="datatable compact-table">
+                <thead>
+                  <tr><th>Paddle #</th><th>Lot</th><th>Title</th><th>Price</th></tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="unsoldSection" class="panel">
+            <div class="panel-head">
+              <h2>Unsold Lots</h2>
+              <span class="panel-subtle"></span>
+            </div>
+            <div class="panel-body">
+              <table id="unsoldFeed" class="datatable compact-table">
+                <thead>
+                  <tr><th>Lot</th><th>Title</th></tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+              <div id="unsoldEmpty" class="empty-state" hidden>No unsold lots are currently shown.</div>
+            </div>
+          </section>
+        </div>
+
         <section class="panel">
           <div class="panel-head">
-            <h2>Recent Bids</h2>
-            <span class="panel-subtle"></span>
+            <h2>Collection Buckets</h2>
+            <span id="bidderSummary" class="panel-subtle">Loading...</span>
           </div>
           <div class="panel-body">
-            <table id="recentFeed" class="datatable compact-table">
-              <thead>
-                <tr><th>Paddle #</th><th>Lot</th><th>Title</th><th>Price</th></tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </section>
-
-        <section id="unsoldSection" class="panel">
-          <div class="panel-head">
-            <h2>Unsold Lots</h2>
-            <span class="panel-subtle"></span>
-          </div>
-          <div class="panel-body">
-            <table id="unsoldFeed" class="datatable compact-table">
-              <thead>
-                <tr><th>Lot</th><th>Title</th></tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-            <div id="unsoldEmpty" class="empty-state" hidden>No unsold lots are currently shown.</div>
+            <div id="bidderGroups" class="bidder-groups"></div>
           </div>
         </section>
       </div>
-
-      <section class="panel">
-        <div class="panel-head">
-          <h2>Collection Buckets</h2>
-          <span id="bidderSummary" class="panel-subtle">Loading…</span>
-        </div>
-        <div class="panel-body">
-          <div id="bidderGroups" class="bidder-groups"></div>
-        </div>
-      </section>
     </div>
-  </div>
+
+    <div id="about-modal" class="app-modal" hidden>
+      <div class="app-modal-card">
+        <div class="app-modal-header">
+          <div>
+            <h3>About Convention Auction</h3>
+            <p>Current software versions for this installation.</p>
+          </div>
+          <button id="close-about-modal" type="button" class="app-modal-close" aria-label="Close about dialog">Close</button>
+        </div>
+        <div class="about-grid">
+          <div class="about-row"><span>Backend</span><strong id="about-version-backend">Unknown</strong></div>
+          <div class="about-row"><span>Schema</span><strong id="about-version-schema">Unknown</strong></div>
+          <div class="about-row"><span>Payment processor</span><strong id="about-version-payment">Unknown</strong></div>
+        </div>
+        <p class="about-license">Copyright © 2026 Chris Staples. This program is free software, licensed under the GNU General Public License, version 3. Distributed without any warranty.</p>
+      </div>
+    </div>
+
+    <footer>
+      <p>Developed by Chris Staples ("Coastie") for Festival of Friendship <span title="Hoers">🐴</span></p>
+    </footer>
+  </main>
 
   <script src="/scripts/hover-photo.js"></script>
-  <script src="/scripts/live-feed.js"></script>
   <script src="/scripts/banner.js"></script>
-  <footer>
-    <p>Developed by Chris Staples ("Coastie") for Festival of Friendship <span title="Hoers">🐴</span></p>
-</footer>
+  <script src="/scripts/live-feed.js"></script>
 </body>
 </html>

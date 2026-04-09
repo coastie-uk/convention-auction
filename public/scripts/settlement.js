@@ -13,11 +13,25 @@ const API_ROOT = `${API}/settlement`;
   const lotsBody   = document.querySelector('#lotsTable tbody');
   const payBody    = document.querySelector('#payTable tbody');
   const detailBox  = document.getElementById('detail');
+  const emptyDetailEl = document.getElementById('emptyDetail');
+  const lotsTotalEl = document.getElementById('lotsTotal');
   const titleEl    = document.getElementById('title');
+  const fingerprintDisplay = document.getElementById('fingerprintDisplay');
+  const toggleFingerprintBtn = document.getElementById('toggleFingerprintBtn');
+  const printReceiptBtn = document.getElementById('printReceiptBtn');
   const currencySymbol = localStorage.getItem("currencySymbol") || "£";
   const money = v => `${currencySymbol}${Number(v).toFixed(2)}`;
   const roundCurrency = value => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
   const uploadBase = "/api/uploads";
+  let currentUsername = 'unknown';
+  let fingerprintVisible = false;
+  const receiptDateTime = value => new Date(value).toLocaleString('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 
   const urlParams  = new URLSearchParams(location.search);
   const AUCTION_ID = Number(urlParams.get('auctionId'));
@@ -48,6 +62,217 @@ const API_ROOT = `${API}/settlement`;
     });
   }
 
+  async function fetchCurrentUsername() {
+    if (!token) return;
+    try {
+      const res = await fetch(`${API}/validate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ token })
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      currentUsername = data?.user?.username || currentUsername;
+    } catch (_) {
+      // username is a nicety for the receipt footer; keep fallback
+    }
+  }
+
+  const escapeHtml = value => String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+
+  const truncateReceiptText = (value, max = 30) => {
+    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+    if (text.length <= max) return text;
+    return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+  };
+
+  const formatPaymentMethod = method => {
+    switch (method) {
+      case 'card-manual':
+        return 'Card';
+      case 'paypal-manual':
+        return 'PayPal';
+      case 'sumup-app':
+        return 'SumUp reader';
+      case 'sumup-web':
+        return 'SumUp web';
+      default:
+        return String(method ?? '').replace(/-/g, ' ') || 'Payment';
+    }
+  };
+
+  function buildReceiptHtml(bidder, printedAt) {
+    const auctionName = bidder.auction_name || bidder.auction_short_name || `Auction ${AUCTION_ID}`;
+    const lots = Array.isArray(bidder.lots) ? bidder.lots : [];
+    const payments = Array.isArray(bidder.payments) ? bidder.payments : [];
+    const donationTotal = Number(bidder.donations_total || 0);
+    const balance = roundCurrency(bidder.balance || 0);
+    const fingerprint = bidder.fingerprint || '';
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Receipt ${escapeHtml(auctionName)} #${escapeHtml(bidder.paddle_number)}</title>
+  <style>
+    @page { size: 72mm auto; margin: 4mm; }
+    html, body { margin: 0; padding: 0; background: #fff; }
+    body { width: 64mm; font-family: "Arial Narrow", Arial, sans-serif; color: #000; font-size: 10pt; line-height: 1.25; }
+    .receipt { width: 100%; }
+    .center { text-align: center; }
+    .auction-name { font-size: 11pt; font-weight: 700; margin-bottom: 2mm; }
+    .bidder-number { font-size: 21pt; font-weight: 700; text-align: center; margin: 0 0 3mm; }
+    .section { margin-top: 3mm; }
+    .section-title { font-size: 9pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 1.5mm; }
+    .rule { border-top: 1px dashed #000; margin: 2.5mm 0; }
+    .item-row, .payment-row, .summary-row { display: grid; gap: 2mm; align-items: start; }
+    .item-row { grid-template-columns: 8mm minmax(0, 1fr) auto; }
+    .payment-row, .summary-row { grid-template-columns: minmax(0, 1fr) auto; }
+    .lot-number, .amount, .summary-value { white-space: nowrap; }
+    .description, .payment-meta, .payment-note { min-width: 0; overflow: hidden; }
+    .description { white-space: nowrap; }
+    .payment-meta { font-size: 8.5pt; }
+    .payment-note { font-size: 8.5pt; margin-top: 0.5mm; }
+    .amount-due { font-weight: 700; font-size: 12pt; }
+    .printed-at, .receipt-fingerprint { margin-top: 3mm; font-size: 8pt; }
+    .receipt-fingerprint { font-family: "Courier New", monospace; overflow: hidden; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <div class="receipt">
+    <div class="auction-name center">${escapeHtml(auctionName)}</div>
+    <div class="bidder-number">${escapeHtml(bidder.paddle_number)}</div>
+
+    <div class="section">
+      <div class="section-title">Items won</div>
+      ${lots.length ? lots.map(lot => `
+        <div class="item-row">
+          <div class="lot-number">#${escapeHtml(lot.item_number)}</div>
+          <div class="description">${escapeHtml(truncateReceiptText(lot.description, 30))}</div>
+          <div class="amount">${escapeHtml(money(lot.hammer_price))}</div>
+        </div>
+      `).join('') : '<div>No items won</div>'}
+    </div>
+
+    <div class="rule"></div>
+    <div class="summary-row">
+      <div>Total price</div>
+      <div class="summary-value">${escapeHtml(money(bidder.lots_total || 0))}</div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Payments</div>
+      ${payments.length ? payments.map(payment => `
+        <div class="payment-row">
+          <div>
+            <div class="payment-meta">${escapeHtml(receiptDateTime(payment.created_at))}  ${escapeHtml(formatPaymentMethod(payment.method))}</div>
+            ${Number(payment.donation_amount || 0) > 0 ? `<div class="payment-note">Donation ${escapeHtml(money(payment.donation_amount))}</div>` : ''}
+          </div>
+          <div class="amount">${escapeHtml(money(payment.amount))}</div>
+        </div>
+      `).join('') : '<div>No payments recorded</div>'}
+    </div>
+
+    ${donationTotal > 0 ? `
+      <div class="rule"></div>
+      <div class="summary-row">
+        <div>Total donations</div>
+        <div class="summary-value">${escapeHtml(money(donationTotal))}</div>
+      </div>
+    ` : ''}
+
+    <div class="rule"></div>
+    <div class="summary-row amount-due">
+      <div>Amount due</div>
+      <div class="summary-value">${escapeHtml(money(balance))}</div>
+    </div>
+
+    <div class="printed-at">Printed ${escapeHtml(receiptDateTime(printedAt))} by user: ${escapeHtml(currentUsername)}</div>
+    ${fingerprint ? `<div class="receipt-fingerprint">Fingerprint ${escapeHtml(fingerprint)}</div>` : ''}
+  </div>
+</body>
+</html>`;
+  }
+
+  function printReceiptDocument(html) {
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    iframe.style.opacity = '0';
+    iframe.style.pointerEvents = 'none';
+
+    const cleanup = () => {
+      setTimeout(() => iframe.remove(), 15000);
+    };
+
+    iframe.onload = () => {
+      setTimeout(() => {
+        try {
+          const frameWindow = iframe.contentWindow;
+          if (!frameWindow) throw new Error('Unable to access print frame');
+          frameWindow.focus();
+          frameWindow.print();
+        } catch (error) {
+          showMessage(`Receipt print failed: ${error.message}`, 'error');
+        } finally {
+          cleanup();
+        }
+      }, 150);
+    };
+
+    iframe.srcdoc = html;
+    document.body.appendChild(iframe);
+  }
+
+  function handlePrintReceipt() {
+    if (!selBidder) {
+      showMessage('Select a bidder first', 'info');
+      return;
+    }
+    printReceiptDocument(buildReceiptHtml(selBidder, new Date().toISOString()));
+  }
+
+  function updateFingerprintDisplay() {
+    if (!fingerprintDisplay || !toggleFingerprintBtn) return;
+
+    const fingerprint = selBidder?.fingerprint || '';
+    const hasFingerprint = Boolean(fingerprint);
+
+    toggleFingerprintBtn.hidden = !hasFingerprint;
+    toggleFingerprintBtn.textContent = fingerprintVisible ? 'Hide fingerprint' : 'Show fingerprint';
+
+    if (!hasFingerprint) {
+      fingerprintDisplay.hidden = true;
+      fingerprintDisplay.textContent = '';
+      return;
+    }
+
+    fingerprintDisplay.hidden = !fingerprintVisible;
+    fingerprintDisplay.textContent = fingerprintVisible ? `Fingerprint: ${fingerprint}` : '';
+  }
+
+  function updatePaymentStateTooltip(isSettlementState) {
+    const buttons = document.querySelectorAll('#payButtons button[data-method]');
+    buttons.forEach((btn) => {
+      if (!isSettlementState) {
+        btn.title = 'Payments require the auction to be in settlement state';
+      } else if (btn.style.display === 'none') {
+        btn.title = 'This payment method is currently disabled.';
+      } else {
+        btn.removeAttribute('title');
+      }
+    });
+  }
+
   async function fetchBidders(){
     const res = await fetch(`${API_ROOT}/bidders?auction_id=${AUCTION_ID}`, { headers:{ Authorization:token }});
     bidders = await res.json();
@@ -55,7 +280,7 @@ const API_ROOT = `${API}/settlement`;
     renderBidders();
     if(selBidder){
       const updated = bidders.find(b=>b.id===selBidder.id);
-      if(updated) selectBidder(updated);
+      if(updated) selectBidder(updated, { preserveUiState: true });
     }
   }
 
@@ -171,10 +396,22 @@ buttons.forEach(btn => {
 
   }
 
-  async function selectBidder(b){
-    selBidder=null;
+  async function selectBidder(b, options = {}){
+    const { preserveUiState = false } = options;
+    if(!b){
+      selBidder=null;
+      renderBidders();
+      detailBox.style.display='none';
+      if (emptyDetailEl) emptyDetailEl.style.display = 'block';
+      titleEl.textContent='Select a bidder...';
+      fingerprintVisible = false;
+      if (lotsTotalEl) lotsTotalEl.textContent = '';
+      updateFingerprintDisplay();
+      return;
+    }
+
+    selBidder = b;
     renderBidders();
-    if(!b){ detailBox.style.display='none'; titleEl.textContent='Select a bidder…'; return; }
 
     const res = await fetch(`${API_ROOT}/bidders/${b.id}?auction_id=${AUCTION_ID}`, { headers:{ Authorization:token }});
 
@@ -190,10 +427,12 @@ buttons.forEach(btn => {
 
     if(!res.ok){ showMessage('Could not load bidder', 'error'); return; }
     selBidder = await res.json();
+    if (!preserveUiState) fingerprintVisible = false;
 
     renderBidders();
 
     titleEl.textContent=`Paddle #${selBidder.paddle_number}`;
+    if (emptyDetailEl) emptyDetailEl.style.display = 'none';
     detailBox.style.display='block';
 
     renderLots();
@@ -202,15 +441,17 @@ buttons.forEach(btn => {
 
     if (AUCTION_STATUS === 'settlement') {
 document.getElementById('payButtons').classList.remove('disabled');
-document.querySelectorAll('#payButtons button').forEach(btn => btn.disabled = false);
-document.querySelectorAll('#delPay button').forEach(btn => btn.disabled = false);
+document.querySelectorAll('#payButtons button[data-method]').forEach(btn => btn.disabled = false);
+document.querySelectorAll('.delPay').forEach(btn => btn.disabled = false);
+updatePaymentStateTooltip(true);
 
 
   } else {
   
-document.querySelectorAll('#payButtons button').forEach(btn => btn.disabled = true);
-document.querySelectorAll('#delPay button').forEach(btn => btn.disabled = true);
+document.querySelectorAll('#payButtons button[data-method]').forEach(btn => btn.disabled = true);
+document.querySelectorAll('.delPay').forEach(btn => btn.disabled = true);
 document.getElementById('payButtons').classList.add('disabled');
+updatePaymentStateTooltip(false);
   }
 
 updateTotals();
@@ -231,6 +472,7 @@ updateTotals();
       else delete tr.dataset.photoUrl;
       lotsBody.appendChild(tr);
     });
+    if (lotsTotalEl) lotsTotalEl.textContent = `Total lots: ${money(selBidder.lots_total || 0)}`;
   }
 
   function renderPayments() {
@@ -242,9 +484,9 @@ updateTotals();
         ? `${p.note || ''}${p.note ? ' | ' : ''}Donation ${money(donation)}`
         : (p.note || '');
       if (p.amount < 0) {
-        tr.innerHTML = `<td>${p.id}</td><td>${new Date(p.created_at).toLocaleString()}</td><td>${p.method}</td><td>${money(p.amount)}</td><td>${paymentNote}</td><td></td>`;
+        tr.innerHTML = `<td>${p.id}</td><td>${new Date(p.created_at).toLocaleString()}</td><td>${formatPaymentMethod(p.method)}</td><td>${money(p.amount)}</td><td>${paymentNote}</td><td></td>`;
       } else {
-        tr.innerHTML = `<td>${p.id}</td><td>${new Date(p.created_at).toLocaleString()}</td><td>${p.method}</td><td>${money(p.amount)}</td><td>${paymentNote}</td><td><button data-id="${p.id}" class="delPay">Refund</button></td>`;
+        tr.innerHTML = `<td>${p.id}</td><td>${new Date(p.created_at).toLocaleString()}</td><td>${formatPaymentMethod(p.method)}</td><td>${money(p.amount)}</td><td>${paymentNote}</td><td><button data-id="${p.id}" class="delPay refund-button">Refund</button></td>`;
       }
       payBody.appendChild(tr);
     });
@@ -258,7 +500,20 @@ updateTotals();
   function updateTotals(){
     const o=selBidder;
     const donationsTotal = Number(o.donations_total || 0);
-    document.getElementById('totals').innerHTML=`<strong>Lots:</strong> ${money(o.lots_total)} &nbsp; <strong>Paid:</strong> ${money(o.payments_total)} &nbsp; <strong>Donations:</strong> ${money(donationsTotal)} &nbsp; <strong>Balance:</strong> ${money(o.balance)}`;
+    document.getElementById('totals').innerHTML=`
+      <div class="summary-card">
+        <span class="summary-card-label">Paid</span>
+        <span class="summary-card-value">${money(o.payments_total)}</span>
+      </div>
+      <div class="summary-card">
+        <span class="summary-card-label">Donations</span>
+        <span class="summary-card-value">${money(donationsTotal)}</span>
+      </div>
+      <div class="summary-card">
+        <span class="summary-card-label">Balance</span>
+        <span class="summary-card-value">${money(o.balance)}</span>
+      </div>`;
+    updateFingerprintDisplay();
   }
 
 
@@ -378,9 +633,21 @@ overlay.querySelector('#amt').focus();
   }
 
     // payment modal via buttons
-  document.querySelectorAll('#payButtons button').forEach(btn=>{
+  document.querySelectorAll('#payButtons button[data-method]').forEach(btn=>{
     btn.onclick=()=>openPayModal(btn.dataset.method);
   });
+
+  if (printReceiptBtn) {
+    printReceiptBtn.onclick = handlePrintReceipt;
+  }
+
+  if (toggleFingerprintBtn) {
+    toggleFingerprintBtn.onclick = () => {
+      if (!selBidder?.fingerprint) return;
+      fingerprintVisible = !fingerprintVisible;
+      updateFingerprintDisplay();
+    };
+  }
 
   function openPayModal(method){
     const tpl=document.getElementById('payTpl').content.cloneNode(true);
@@ -540,6 +807,7 @@ document.getElementById('summaryBtn').onclick = async () => {
 
 
   // polling
+  void fetchCurrentUsername();
   fetchBidders();
   refreshPaymentButtons();
   setInterval(fetchBidders,POLL_MS);

@@ -123,7 +123,7 @@ function createUser({ username, passwordHash, roles, isRoot = false }) {
 
   const info = db.prepare(`
     INSERT INTO users (username, password, roles, is_root, created_at, updated_at)
-    VALUES (?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%S', 'now'), strftime('%Y-%m-%d %H:%M:%S', 'now'))
+    VALUES (?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'), strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
   `).run(normalizedUsername, passwordHash, JSON.stringify(normalizedRoles), isRootUser ? 1 : 0);
 
   return info;
@@ -136,7 +136,7 @@ function updateUserRoles(username, roles) {
   if (normalizedUsername === ROOT_USERNAME) {
     return db.prepare(`
       UPDATE users
-      SET roles = ?, is_root = 1, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
+      SET roles = ?, is_root = 1, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
       WHERE lower(username) = lower(?)
     `).run(JSON.stringify(ROLE_LIST), ROOT_USERNAME);
   }
@@ -148,7 +148,7 @@ function updateUserRoles(username, roles) {
 
   return db.prepare(`
     UPDATE users
-    SET roles = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
+    SET roles = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
     WHERE lower(username) = lower(?)
   `).run(JSON.stringify(normalizedRoles), normalizedUsername);
 }
@@ -159,7 +159,7 @@ function setUserPassword(username, passwordHash) {
 
   return db.prepare(`
     UPDATE users
-    SET password = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
+    SET password = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
     WHERE lower(username) = lower(?)
   `).run(passwordHash, normalizedUsername);
 }

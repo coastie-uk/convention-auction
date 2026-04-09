@@ -224,6 +224,40 @@ addTest("M-012","maintenance/auctions/set-admin-state-permission success", async
   assert.ok(json && json.message, `Unexpected response: ${text}`);
 });
 
+addTest("M-012A","maintenance/auctions/update failure missing auction_id", async () => {
+  const { res } = await fetchJson(`${baseUrl}/maintenance/auctions/update`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      short_name: context.testAuctionShortName,
+      full_name: context.testAuctionFullName,
+      logo: "default_logo.png"
+    })
+  });
+  await expectStatus(res, 400);
+});
+
+addTest("M-012B","maintenance/auctions/update success", async () => {
+  const updatedShortName = `${context.testAuctionShortName}_edit`;
+  const updatedFullName = `${context.testAuctionFullName} Updated`;
+
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/auctions/update`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      auction_id: context.testAuctionId,
+      short_name: updatedShortName,
+      full_name: updatedFullName,
+      logo: "default_logo.png"
+    })
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && json.message, `Unexpected response: ${text}`);
+
+  context.testAuctionShortName = updatedShortName;
+  context.testAuctionFullName = updatedFullName;
+});
+
 addTest("M-013","maintenance/export success", async () => {
   const res = await fetch(`${baseUrl}/maintenance/export`, {
     headers: authHeaders(context.token)
