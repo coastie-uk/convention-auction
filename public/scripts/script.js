@@ -4,6 +4,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const noPhotoCheckbox = document.getElementById("no-photo");
     const form = document.getElementById("auction-form");
     const submitButton = form.querySelector("button[type='submit']");
+    const photoPreviewSlot = document.getElementById("photo-preview-slot");
     const messageContainer = document.createElement("div");
     form.appendChild(messageContainer);
     let latestFile = null;
@@ -100,6 +101,10 @@ document.addEventListener("DOMContentLoaded", function () {
         if (this.checked) {
             photoInput.disabled = true;
             photoInput.required = false;
+            photoInput.value = "";
+            livephotoInput.value = "";
+            latestFile = null;
+            clearPreview();
         } else {
             photoInput.disabled = false;
             photoInput.required = true;
@@ -109,37 +114,24 @@ document.addEventListener("DOMContentLoaded", function () {
     photoInput.addEventListener("change", function () {
         if (this.files && this.files[0]) {
             latestFile = 1;
-            const reader = new FileReader();
-            reader.onload = function (e) {
-                let imgPreview = document.getElementById("img-preview");
-                if (!imgPreview) {
-                    imgPreview = document.createElement("img");
-                    imgPreview.id = "img-preview";
-                    imgPreview.style.maxWidth = "100px";
-                    form.insertBefore(imgPreview, photoInput.nextSibling);
-                }
-                imgPreview.src = e.target.result;
-            };
-            reader.readAsDataURL(this.files[0]);
+            livephotoInput.value = "";
+            showPreview(this.files[0]);
         }
     });
 
     livephotoInput.addEventListener("change", function () {
         if (this.files && this.files[0]) {
             latestFile = 2;
-            const reader = new FileReader();
-            reader.onload = function (e) {
-                let imgPreview = document.getElementById("img-preview");
-                if (!imgPreview) {
-                    imgPreview = document.createElement("img");
-                    imgPreview.id = "img-preview";
-                    imgPreview.style.maxWidth = "100px";
-                    form.insertBefore(imgPreview, photoInput.nextSibling);
-                }
-                imgPreview.src = e.target.result;
-            };
-            reader.readAsDataURL(this.files[0]);
+            photoInput.value = "";
+            showPreview(this.files[0]);
         }
+    });
+
+    form.addEventListener("reset", function () {
+        latestFile = null;
+        photoInput.disabled = false;
+        photoInput.required = true;
+        clearPreview();
     });
 
     form.addEventListener("submit", async function (event) {
@@ -209,9 +201,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     messageContainer.style.color = "green";
                     showMessage("Item submitted successfully!", "success");
                     form.reset();
-                    if (document.getElementById("img-preview")) {
-                        document.getElementById("img-preview").remove();
-                    }
+                    clearPreview();
                 } else {
                     // Backend returned an error (e.g. auction not active)
                     showMessage(data.error || "There was a problem with your submission.", "error");
@@ -268,5 +258,26 @@ document.addEventListener("DOMContentLoaded", function () {
  
     }
     
+    }
+
+    function showPreview(file) {
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            let imgPreview = document.getElementById("img-preview");
+            if (!imgPreview) {
+                imgPreview = document.createElement("img");
+                imgPreview.id = "img-preview";
+                imgPreview.alt = "Selected item photo preview";
+                photoPreviewSlot.replaceChildren(imgPreview);
+            }
+            imgPreview.src = e.target.result;
+            photoPreviewSlot.hidden = false;
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function clearPreview() {
+        photoPreviewSlot.replaceChildren();
+        photoPreviewSlot.hidden = true;
     }
 });

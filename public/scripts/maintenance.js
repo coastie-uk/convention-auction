@@ -12,6 +12,8 @@ const maintenancePanelPill = document.getElementById("maintenance-panel-pill");
 const menuGroups = Array.from(document.querySelectorAll(".menu-group"));
 const tabButtons = Array.from(document.querySelectorAll(".maintenance-tab-button"));
 const tabPanels = Array.from(document.querySelectorAll(".maintenance-tab-panel"));
+const userManagementTabButton = tabButtons.find((button) => button.dataset.tab === "user-management") || null;
+const userManagementPanel = document.querySelector('[data-tab-panel="user-management"]');
 const openAboutModalButton = document.getElementById("open-about-modal");
 const aboutModal = document.getElementById("about-modal");
 const closeAboutModalButton = document.getElementById("close-about-modal");
@@ -34,10 +36,52 @@ const autoRefreshLogsCheckbox = document.getElementById("auto-refresh-logs");
 
 var isRendering = false;
 let currentUsername = null;
+let currentMaintenanceUser = null;
 let currentVersions = {};
 let latestServerLog = "";
 let logPopupWindow = null;
-const token = localStorage.getItem("maintenanceToken");
+
+function getAuthToken() {
+  return window.AppAuth?.getToken?.() || localStorage.getItem("maintenanceToken") || "";
+}
+
+let token = getAuthToken();
+
+function canManageUsers(user = currentMaintenanceUser) {
+  if (window.AppAuth?.canAccess) {
+    return window.AppAuth.canAccess(user, { permission: "manage_users" });
+  }
+  return Array.isArray(user?.permissions) && user.permissions.includes("manage_users");
+}
+
+function clearUserManagementData() {
+  const tableBody = document.getElementById("user-table-body");
+  if (tableBody) {
+    tableBody.innerHTML = "";
+  }
+}
+
+function applyUserManagementAccess(user = currentMaintenanceUser) {
+  const allowed = canManageUsers(user);
+  if (userManagementTabButton) {
+    userManagementTabButton.hidden = !allowed;
+    userManagementTabButton.disabled = !allowed;
+  }
+
+  if (!allowed) {
+    clearUserManagementData();
+    if (localStorage.getItem(MAINTENANCE_TAB_KEY) === "user-management") {
+      localStorage.setItem(MAINTENANCE_TAB_KEY, "auction-management");
+    }
+    const activePanel = tabPanels.find((panel) => !panel.hidden);
+    if (activePanel?.dataset.tabPanel === "user-management") {
+      setActiveTab("auction-management");
+    }
+    if (userManagementPanel) {
+      userManagementPanel.hidden = true;
+    }
+  }
+}
 
 function closeMenuGroups(exception = null) {
   menuGroups.forEach((menu) => {
@@ -48,7 +92,10 @@ function closeMenuGroups(exception = null) {
 }
 
 function setActiveTab(tabId, { persist = true } = {}) {
-  const targetButton = tabButtons.find((button) => button.dataset.tab === tabId) || tabButtons[0];
+  const availableButtons = tabButtons.filter((button) => !button.hidden && !button.disabled);
+  const targetButton = tabButtons.find((button) => button.dataset.tab === tabId && !button.hidden && !button.disabled)
+    || availableButtons[0]
+    || tabButtons[0];
   const resolvedTabId = targetButton?.dataset.tab;
 
   if (!resolvedTabId) return;
@@ -214,7 +261,11 @@ function setMaintenanceUserMenu(username) {
   const safeName = username || "maintenance";
   if (maintenanceLoggedInUser) maintenanceLoggedInUser.textContent = safeName;
   if (maintenanceUserMenuButton) maintenanceUserMenuButton.textContent = safeName;
-  if (maintenanceLoggedInRole) maintenanceLoggedInRole.textContent = "maintenance";
+  if (maintenanceLoggedInRole) {
+    maintenanceLoggedInRole.textContent = window.AppAuth?.describeAccess
+      ? window.AppAuth.describeAccess(currentMaintenanceUser || { roles: ["maintenance"], permissions: [] })
+      : "Manage Auctions";
+  }
 }
 
 function bindMaintenanceShell() {
@@ -417,61 +468,32 @@ function promptPasswordChange() {
 
 // Check if maint is already authenticated
 async function checkToken() {
-  if (token) {
-    const response = await fetch(`${API}/validate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token })
-    });
-    const data = await response.json();
-    if (response.ok) {
-      currentUsername = data.user?.username || null;
-      setMaintenanceUserMenu(currentUsername);
-      loginSection.style.display = "none";
-      maintenanceSection.style.display = "grid";
-      refreshAuctions();
-      checkIntegrity();
-      loadPptxImageList();
+  token = getAuthToken();
+  const session = window.__APP_AUTH_READY__ ? await window.__APP_AUTH_READY__ : await window.AppAuth?.refreshSession?.();
+  if (session?.user) {
+    currentUsername = session.user.username || null;
+    currentMaintenanceUser = session.user;
+    setMaintenanceUserMenu(currentUsername);
+    applyUserManagementAccess(session.user);
+    loginSection.style.display = "none";
+    maintenanceSection.style.display = "grid";
+    refreshAuctions();
+    checkIntegrity();
+    loadPptxImageList();
+    if (canManageUsers(session.user)) {
       loadUsers();
-      startAutoRefresh();
-      loadEnabledPaymentMethods();
-      updateVersionDisplays(data.versions);
-    } else {
-      logOut();
-      document.getElementById("error-message").innerText = data.error;
-      showMessage("Authentication: " + data.error, "error");
     }
+    startAutoRefresh();
+    loadEnabledPaymentMethods();
+    updateVersionDisplays(session.versions);
+  } else {
+    logOut();
   }
 }
 
 
 document.getElementById("login-button").addEventListener("click", async () => {
-  const username = document.getElementById("maintenance-username").value.trim();
-  const password = document.getElementById("maintenance-password").value;
-  if (!username || !password) {
-    document.getElementById("error-message").innerText = "Username and password are required.";
-    return;
-  }
-  const res = await fetch(`${API}/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password, role: "maintenance" })
-  });
-  const data = await res.json();
-  if (res.ok) {
-    localStorage.setItem("maintenanceToken", data.token);
-    setMaintenanceUserMenu(data.user?.username || username);
-    loginSection.style.display = "none";
-    maintenanceSection.style.display = "grid";
-    refreshAuctions();
-    checkToken();
-    loadEnabledPaymentMethods();
-    updateVersionDisplays(data.versions);
-
-    location.reload();
-  } else {
-    document.getElementById("error-message").innerText = data.error;
-  }
+  window.location.replace("/login.html");
 });
 
 document.getElementById("backup-db").onclick = async () => {
@@ -613,6 +635,28 @@ function formatLogs(rawText) {
 }
 
 const USER_ROLE_ORDER = ["admin", "cashier", "maintenance", "slideshow"];
+const USER_PERMISSION_ORDER = ["live_feed", "admin_bidding", "manage_users"];
+const ACCESS_DEPENDENCIES = [
+  { permission: "admin_bidding", role: "admin" },
+  { permission: "manage_users", role: "maintenance" }
+];
+
+function syncDependentAccessCheckboxes(scope = document) {
+  ACCESS_DEPENDENCIES.forEach(({ permission, role }) => {
+    scope.querySelectorAll(`input[value="${permission}"]`).forEach((permissionInput) => {
+      const isNewUserRow = permissionInput.name === "new-user-permission";
+      const roleInput = isNewUserRow
+        ? scope.querySelector(`input[name="new-user-role"][value="${role}"]`)
+        : scope.querySelector(`input[data-access-role="${role}"]`);
+
+      const allowed = Boolean(roleInput?.checked);
+      permissionInput.disabled = !allowed;
+      if (!allowed) {
+        permissionInput.checked = false;
+      }
+    });
+  });
+}
 
 document.getElementById("change-own-password").onclick = async () => {
   const passwordInput = await promptPasswordChange();
@@ -629,7 +673,7 @@ document.getElementById("change-own-password").onclick = async () => {
   const res = await fetch(`${API}/change-password`, {
     method: "POST",
     headers: {
-      Authorization: token,
+      Authorization: getAuthToken(),
       "Content-Type": "application/json"
     },
     body: JSON.stringify({ currentPassword, newPassword })
@@ -648,6 +692,7 @@ document.getElementById("add-user-button").onclick = async () => {
   const password = document.getElementById("new-user-password").value;
   const confirmPassword = document.getElementById("new-user-confirm-password").value;
   const roles = Array.from(document.querySelectorAll('input[name="new-user-role"]:checked')).map((el) => el.value);
+  const permissions = Array.from(document.querySelectorAll('input[name="new-user-permission"]:checked')).map((el) => el.value);
 
   if (!username || !password) {
     return showMessage("Username and password are required.", "error");
@@ -657,17 +702,17 @@ document.getElementById("add-user-button").onclick = async () => {
     return showMessage("Passwords do not match.", "error");
   }
 
-  if (roles.length === 0) {
-    return showMessage("Select at least one role.", "error");
+  if (roles.length === 0 && permissions.length === 0) {
+    return showMessage("Select at least one access option.", "error");
   }
 
   const res = await fetch(`${API}/maintenance/users`, {
     method: "POST",
     headers: {
-      Authorization: token,
+      Authorization: getAuthToken(),
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ username, password, roles })
+    body: JSON.stringify({ username, password, roles, permissions })
   });
 
   const data = await res.json();
@@ -677,6 +722,8 @@ document.getElementById("add-user-button").onclick = async () => {
     document.getElementById("new-user-password").value = "";
     document.getElementById("new-user-confirm-password").value = "";
     document.querySelectorAll('input[name="new-user-role"]').forEach((el) => { el.checked = false; });
+    document.querySelectorAll('input[name="new-user-permission"]').forEach((el) => { el.checked = false; });
+    syncDependentAccessCheckboxes(document);
     loadUsers();
   } else {
     showMessage(data.error || "Failed to create user.", "error");
@@ -685,14 +732,29 @@ document.getElementById("add-user-button").onclick = async () => {
 
 async function loadUsers() {
   const tableBody = document.getElementById("user-table-body");
-  if (!tableBody || !token) return;
+  if (!tableBody || !canManageUsers()) {
+    clearUserManagementData();
+    return;
+  }
+
+  const authToken = getAuthToken();
+  if (!authToken) return;
 
   const res = await fetch(`${API}/maintenance/users`, {
-    headers: { Authorization: token }
+    headers: { Authorization: authToken }
   });
   const data = await res.json();
 
   if (!res.ok) {
+    if (res.status === 403) {
+      if (data?.reason === "remote_logout") {
+        window.AppAuth?.clearAllSessions?.({ broadcast: true });
+        window.location.replace("/login.html?reason=remote_logout");
+        return;
+      }
+      applyUserManagementAccess(null);
+      return;
+    }
     showMessage(data.error || "Failed to load users.", "error");
     return;
   }
@@ -704,7 +766,7 @@ async function loadUsers() {
   if (users.length === 0) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 6;
+    td.colSpan = 9;
     td.textContent = "No users found.";
     tr.appendChild(td);
     tableBody.appendChild(tr);
@@ -714,6 +776,7 @@ async function loadUsers() {
   users.forEach((user) => {
     const tr = document.createElement("tr");
     const roleCheckboxes = {};
+    const permissionCheckboxes = {};
 
     const usernameTd = document.createElement("td");
     usernameTd.textContent = user.username === currentUsername ? `${user.username} (you)` : user.username;
@@ -731,87 +794,155 @@ async function loadUsers() {
       tr.appendChild(td);
     });
 
+    USER_PERMISSION_ORDER.forEach((permission) => {
+      const td = document.createElement("td");
+      td.style.textAlign = "center";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = Array.isArray(user.permissions) && user.permissions.includes(permission);
+      cb.disabled = Boolean(user.is_root);
+      cb.dataset.accessPermission = permission;
+      permissionCheckboxes[permission] = cb;
+      td.appendChild(cb);
+      tr.appendChild(td);
+    });
+
+    roleCheckboxes.admin.dataset.accessRole = "admin";
+    roleCheckboxes.maintenance.dataset.accessRole = "maintenance";
+    roleCheckboxes.admin.addEventListener("change", () => syncDependentAccessCheckboxes(tr));
+    roleCheckboxes.maintenance.addEventListener("change", () => syncDependentAccessCheckboxes(tr));
+    syncDependentAccessCheckboxes(tr);
+
     const actionsTd = document.createElement("td");
-    const saveRolesBtn = document.createElement("button");
-    saveRolesBtn.textContent = "Save Roles";
-    saveRolesBtn.disabled = Boolean(user.is_root);
-    saveRolesBtn.onclick = async () => {
-      const roles = USER_ROLE_ORDER.filter((role) => roleCheckboxes[role].checked);
-      if (roles.length === 0) {
-        showMessage("A user must have at least one role.", "error");
-        return;
-      }
-      const updateRes = await fetch(`${API}/maintenance/users/${encodeURIComponent(user.username)}/roles`, {
-        method: "PATCH",
-        headers: {
-          Authorization: token,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ roles })
-      });
-      const updateData = await updateRes.json();
-      if (updateRes.ok) {
-        showMessage(updateData.message || "Permissions updated.", "success");
-        loadUsers();
-      } else {
-        showMessage(updateData.error || "Failed to update permissions.", "error");
-      }
-    };
-
-    const setPasswordBtn = document.createElement("button");
-    setPasswordBtn.textContent = "Set Password";
-    setPasswordBtn.onclick = async () => {
-      const newPassword = await promptPassword(`Enter new password for "${user.username}"`);
-      if (!newPassword) return;
-      const confirmPassword = await promptPassword(`Confirm new password for "${user.username}"`);
-      if (!confirmPassword) return;
-      if (newPassword !== confirmPassword) {
-        showMessage("Passwords do not match.", "error");
-        return;
-      }
-      const pwRes = await fetch(`${API}/maintenance/users/${encodeURIComponent(user.username)}/password`, {
-        method: "POST",
-        headers: {
-          Authorization: token,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ newPassword })
-      });
-      const pwData = await pwRes.json();
-      if (pwRes.ok) {
-        showMessage(pwData.message || "Password updated.", "success");
-      } else {
-        showMessage(pwData.error || "Failed to set password.", "error");
-      }
-    };
-
-    const deleteBtn = document.createElement("button");
-    deleteBtn.textContent = "Delete";
-    deleteBtn.disabled = Boolean(user.is_root) || user.username === currentUsername;
-    deleteBtn.onclick = async () => {
-      const confirmed = confirm(`Delete user "${user.username}"?`);
+    const logoutNowBtn = document.createElement("button");
+    logoutNowBtn.textContent = "Logout now";
+    logoutNowBtn.onclick = async () => {
+      const confirmed = confirm(`Log out "${user.username}" from all current sessions?`);
       if (!confirmed) return;
-      const delRes = await fetch(`${API}/maintenance/users/${encodeURIComponent(user.username)}`, {
-        method: "DELETE",
-        headers: { Authorization: token }
+      const logoutRes = await fetch(`${API}/maintenance/users/${encodeURIComponent(user.username)}/logout-now`, {
+        method: "POST",
+        headers: { Authorization: getAuthToken() }
       });
-      const delData = await delRes.json();
-      if (delRes.ok) {
-        showMessage(delData.message || "User deleted.", "success");
+      const logoutData = await logoutRes.json();
+      if (logoutRes.ok) {
+        showMessage(logoutData.message || "User logged out from all sessions.", "success");
+        if (user.username === currentUsername) {
+          window.AppAuth?.clearAllSessions?.({ broadcast: true });
+          window.location.replace("/login.html?reason=remote_logout");
+          return;
+        }
         loadUsers();
       } else {
-        showMessage(delData.error || "Failed to delete user.", "error");
+        showMessage(logoutData.error || "Failed to log out user.", "error");
       }
     };
 
-    actionsTd.appendChild(saveRolesBtn);
-    actionsTd.appendChild(setPasswordBtn);
-    actionsTd.appendChild(deleteBtn);
+    if (!user.is_root) {
+      const saveRolesBtn = document.createElement("button");
+      saveRolesBtn.textContent = "Save Access";
+      saveRolesBtn.onclick = async () => {
+        const roles = USER_ROLE_ORDER.filter((role) => roleCheckboxes[role].checked);
+        const permissions = USER_PERMISSION_ORDER.filter((permission) => permissionCheckboxes[permission].checked);
+        if (roles.length === 0 && permissions.length === 0) {
+          showMessage("A user must have at least one access option.", "error");
+          return;
+        }
+        const updateRes = await fetch(`${API}/maintenance/users/${encodeURIComponent(user.username)}/access`, {
+          method: "PATCH",
+          headers: {
+            Authorization: getAuthToken(),
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ roles, permissions })
+        });
+        const updateData = await updateRes.json();
+        if (updateRes.ok) {
+          showMessage(updateData.message || "Access updated.", "success");
+          loadUsers();
+        } else {
+          showMessage(updateData.error || "Failed to update access.", "error");
+        }
+      };
+
+      const setPasswordBtn = document.createElement("button");
+      setPasswordBtn.textContent = "Set Password";
+      setPasswordBtn.onclick = async () => {
+        const newPassword = await promptPassword(`Enter new password for "${user.username}"`);
+        if (!newPassword) return;
+        const confirmPassword = await promptPassword(`Confirm new password for "${user.username}"`);
+        if (!confirmPassword) return;
+        if (newPassword !== confirmPassword) {
+          showMessage("Passwords do not match.", "error");
+          return;
+        }
+        const pwRes = await fetch(`${API}/maintenance/users/${encodeURIComponent(user.username)}/password`, {
+          method: "POST",
+          headers: {
+            Authorization: getAuthToken(),
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ newPassword })
+        });
+        const pwData = await pwRes.json();
+        if (pwRes.ok) {
+          showMessage(pwData.message || "Password updated.", "success");
+        } else {
+          showMessage(pwData.error || "Failed to set password.", "error");
+        }
+      };
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.textContent = "Delete";
+      deleteBtn.disabled = user.username === currentUsername;
+      deleteBtn.onclick = async () => {
+        const confirmed = confirm(`Delete user "${user.username}"?`);
+        if (!confirmed) return;
+        const delRes = await fetch(`${API}/maintenance/users/${encodeURIComponent(user.username)}`, {
+          method: "DELETE",
+          headers: { Authorization: getAuthToken() }
+        });
+        const delData = await delRes.json();
+        if (delRes.ok) {
+          showMessage(delData.message || "User deleted.", "success");
+          loadUsers();
+        } else {
+          showMessage(delData.error || "Failed to delete user.", "error");
+        }
+      };
+
+      actionsTd.appendChild(saveRolesBtn);
+      actionsTd.appendChild(setPasswordBtn);
+      actionsTd.appendChild(logoutNowBtn);
+      actionsTd.appendChild(deleteBtn);
+    } else {
+      actionsTd.appendChild(logoutNowBtn);
+    }
     tr.appendChild(actionsTd);
 
     tableBody.appendChild(tr);
   });
 }
+
+document.querySelector('input[name="new-user-role"][value="admin"]')?.addEventListener("change", () => {
+  syncDependentAccessCheckboxes(document);
+});
+document.querySelector('input[name="new-user-role"][value="maintenance"]')?.addEventListener("change", () => {
+  syncDependentAccessCheckboxes(document);
+});
+syncDependentAccessCheckboxes(document);
+
+window.addEventListener(window.AppAuth?.SESSION_EVENT || "appauth:session", (event) => {
+  const session = event.detail || null;
+  token = session?.token || getAuthToken();
+  currentMaintenanceUser = session?.user || null;
+  currentUsername = session?.user?.username || currentUsername;
+  setMaintenanceUserMenu(currentUsername);
+  applyUserManagementAccess(currentMaintenanceUser);
+  updateVersionDisplays(session?.versions || currentVersions);
+  if (canManageUsers(currentMaintenanceUser)) {
+    void loadUsers();
+  }
+});
 
 
 document.getElementById("restart-server").onclick = async () => {
@@ -1171,10 +1302,11 @@ function logOut() {
   if (logPopupWindow && !logPopupWindow.closed) {
     logPopupWindow.close();
   }
-  localStorage.removeItem("maintenanceToken");
+  window.AppAuth?.clearAllSessions?.({ broadcast: true });
+  token = "";
   currentUsername = null;
   showMessage("Logged out", "info");
-  window.location.reload(); // Or redirect to login: window.location.href = "/maint.html"
+  window.location.replace("/login.html?reason=signed_out");
 }
 
 document.getElementById("logout").onclick = logOut;
@@ -1239,8 +1371,8 @@ async function refreshAuctions() {
   if (res.status === 403) {
     showMessage("Session expired or unauthorized. Logging out...", "error");
     setTimeout(() => {
-      localStorage.removeItem("maintenanceToken");
-      window.location.reload(); // or redirect to login
+      window.AppAuth?.clearSharedSession?.({ broadcast: false });
+      window.location.replace("/login.html");
     }, 1500);
     return;
   }

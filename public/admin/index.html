@@ -15,7 +15,7 @@
 <body>
 
     <main>
-        <section id="login-section">
+  <section id="login-section" style="display: none;">
             <div class="login-container">
                 <h2>Admin Login</h2>
                 <input type="text" id="admin-username" placeholder="Username" autocomplete="username">
@@ -29,6 +29,20 @@
         <section id="admin-section" style="display: none;">
             <div class="sticky-controls">
                 <div class="menu-bar">
+
+                    <details class="menu-group">
+                        <summary class="menu-trigger">Open</summary>
+                        <div class="menu-panel">
+                            <a class="menu-item-link" href="/maint/index.html" data-access-role="maintenance">Manage Auctions</a>
+                            <button type="button" class="menu-item-button is-current-page" aria-current="page">Manage Items</button>
+                            <button id="cashier-page" type="button" class="menu-item-button" data-access-role="cashier">Manage Payments</button>
+                            <button id="livefeed" type="button" class="menu-item-button" data-access-permission="live_feed">Manage Collections</button>
+                            <div class="menu-divider" role="separator"></div>
+                            <a class="menu-item-link" href="/slideshow/index.html" target="_blank" rel="noopener noreferrer" data-access-role="slideshow">Slideshow</a>
+                            <button id="public" type="button" class="menu-item-button">Public form</button>
+                        </div>
+                    </details>
+
                     <details class="menu-group">
                         <summary class="menu-trigger">Auctions</summary>
                         <div class="menu-panel">
@@ -83,18 +97,9 @@
                         </div>
                     </details>
 
-                    <details class="menu-group">
-                        <summary class="menu-trigger">Go</summary>
-                        <div class="menu-panel">
-                            <button id="public" type="button" class="menu-item-button">Public form</button>
-                            <button id="livefeed" type="button" class="menu-item-button">Live Feed</button>
-                            <a class="menu-item-link" href="/maint/index.html" target="_blank" rel="noopener noreferrer">Maintenance</a>
-                            <button id="cashier-page" type="button" class="menu-item-button">Cashier</button>
-                            <a class="menu-item-link" href="/slideshow/index.html" target="_blank" rel="noopener noreferrer">Slideshow</a>
-                        </div>
-                    </details>
 
-                    <details class="menu-group">
+
+                    <details class="menu-group menu-group--right">
                         <summary class="menu-trigger">Help</summary>
                         <div class="menu-panel">
                             <a class="menu-item-link" href="https://coastie-uk.github.io/convention-auction/user-guide.html#admin-panel" target="_blank" rel="noopener noreferrer">User Guide</a>
@@ -106,7 +111,7 @@
                         <summary id="admin-user-menu-button" class="menu-trigger user-menu-button">User</summary>
                         <div class="menu-panel user-menu-content">
                             <div class="user-menu-username-row">Signed in as <strong id="admin-logged-in-user">unknown</strong></div>
-                            <div class="user-menu-username-row">Current role <strong id="admin-logged-in-role">unknown</strong></div>
+                            <div class="user-menu-username-row">Access <strong id="admin-logged-in-role">unknown</strong></div>
                             <div class="menu-divider" role="separator"></div>
                             <button id="change-own-password-admin" type="button" class="menu-item-button">Change Password</button>
                             <button id="logout" type="button" class="menu-item-button">Logout</button>
@@ -424,10 +429,18 @@
         </div>
 
     </main>
+    <script src="/scripts/banner.js"></script>
+    <script src="/scripts/session-auth.js"></script>
+    <script>
+        window.__APP_PAGE_AUTH__ = {
+            viewKey: "admin",
+            access: { role: "admin" }
+        };
+    </script>
+    <script src="/scripts/auth-bootstrap.js"></script>
     <script src="/scripts/admin-script.js"></script>
     <script src="/scripts/daypilot-modal-3.15.1.min.js"></script>
     <script src="/scripts/finalise-lot.js"></script>
-    <script src="/scripts/banner.js"></script>
 
 
     <script>

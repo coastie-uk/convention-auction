@@ -4,9 +4,22 @@
  */
 
 const db = require('./db');
-const { ROLE_LIST, ROLE_SET, ROOT_USERNAME } = require('./auth-constants');
+const {
+  ROLE_LIST,
+  ROLE_SET,
+  PERMISSION_LIST,
+  PERMISSION_SET,
+  ROOT_USERNAME
+} = require('./auth-constants');
 
 const USERNAME_REGEX = /^[a-z0-9._-]{3,64}$/;
+const VIEW_PRIORITY = Object.freeze([
+  { key: 'admin', path: '/admin/index.html', role: 'admin' },
+  { key: 'cashier', path: '/cashier/index.html', role: 'cashier' },
+  { key: 'maintenance', path: '/maint/index.html', role: 'maintenance' },
+  { key: 'live_feed', path: '/cashier/live-feed.html', permission: 'live_feed' },
+  { key: 'slideshow', path: '/slideshow/index.html', role: 'slideshow' }
+]);
 
 function normaliseUsername(value) {
   if (typeof value !== 'string') return '';
@@ -17,7 +30,7 @@ function isValidUsername(value) {
   return USERNAME_REGEX.test(normaliseUsername(value));
 }
 
-function parseRoles(raw) {
+function parseJsonOrDelimitedList(raw) {
   if (Array.isArray(raw)) return raw;
   if (typeof raw !== 'string') return [];
 
@@ -35,7 +48,7 @@ function parseRoles(raw) {
 }
 
 function normaliseRoles(inputRoles) {
-  const source = Array.isArray(inputRoles) ? inputRoles : parseRoles(inputRoles);
+  const source = Array.isArray(inputRoles) ? inputRoles : parseJsonOrDelimitedList(inputRoles);
   const result = [];
   const seen = new Set();
 
@@ -49,17 +62,95 @@ function normaliseRoles(inputRoles) {
   return result;
 }
 
+function normalisePermissions(inputPermissions, roles = []) {
+  const source = Array.isArray(inputPermissions) ? inputPermissions : parseJsonOrDelimitedList(inputPermissions);
+  const result = [];
+  const seen = new Set();
+  const normalizedRoles = normaliseRoles(roles);
+  const canBid = normalizedRoles.includes('admin');
+  const canManageUsers = normalizedRoles.includes('maintenance');
+
+  for (const permission of source) {
+    const normalized = String(permission || '').trim().toLowerCase();
+    if (!PERMISSION_SET.has(normalized) || seen.has(normalized)) continue;
+    if (normalized === 'admin_bidding' && !canBid) continue;
+    if (normalized === 'manage_users' && !canManageUsers) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+
+  return result;
+}
+
+function shapeUserAccess({ roles, permissions, is_root: isRoot }) {
+  const root = Number(isRoot) === 1 || isRoot === true;
+  if (root) {
+    return {
+      roles: [...ROLE_LIST],
+      permissions: [...PERMISSION_LIST],
+      is_root: 1
+    };
+  }
+
+  const normalizedRoles = normaliseRoles(roles);
+  const normalizedPermissions = normalisePermissions(permissions, normalizedRoles);
+
+  return {
+    roles: normalizedRoles,
+    permissions: normalizedPermissions,
+    is_root: 0
+  };
+}
+
+function getPrimaryRole(access) {
+  const roles = Array.isArray(access?.roles) ? access.roles : [];
+  const firstAllowed = VIEW_PRIORITY.find((view) => view.role && roles.includes(view.role));
+  return firstAllowed?.role || roles[0] || null;
+}
+
+function userCanAccessView(user, viewKey) {
+  if (!user) return false;
+  const access = shapeUserAccess(user);
+  const view = VIEW_PRIORITY.find((entry) => entry.key === viewKey);
+  if (!view) return false;
+  if (view.role) return access.roles.includes(view.role);
+  if (view.permission) return access.permissions.includes(view.permission);
+  return false;
+}
+
+function getLandingPath(user) {
+  const target = VIEW_PRIORITY.find((view) => userCanAccessView(user, view.key));
+  return target?.path || '/login.html';
+}
+
+function getSessionInvalidBeforeValue(user) {
+  const rawValue = Number(user?.session_invalid_before);
+  return Number.isFinite(rawValue) && rawValue > 0 ? Math.trunc(rawValue) : 0;
+}
+
+function isSessionTokenCurrent(user, tokenPayload) {
+  const currentValue = getSessionInvalidBeforeValue(user);
+  const tokenValue = getSessionInvalidBeforeValue(tokenPayload);
+  return tokenValue >= currentValue;
+}
+
 function asUser(row, { includePassword = false } = {}) {
   if (!row) return null;
 
   const username = normaliseUsername(row.username || '');
   const isRoot = Number(row.is_root) === 1 || username === ROOT_USERNAME;
-  const roles = isRoot ? [...ROLE_LIST] : normaliseRoles(row.roles);
+  const access = shapeUserAccess({
+    roles: row.roles,
+    permissions: row.permissions,
+    is_root: isRoot ? 1 : 0
+  });
 
   const mapped = {
     username: row.username,
-    roles,
-    is_root: isRoot ? 1 : 0,
+    roles: access.roles,
+    permissions: access.permissions,
+    session_invalid_before: getSessionInvalidBeforeValue(row),
+    is_root: access.is_root,
     created_at: row.created_at,
     updated_at: row.updated_at
   };
@@ -73,7 +164,7 @@ function getUserByUsername(username) {
   if (!normalized) return null;
 
   const row = db.prepare(`
-    SELECT username, password, roles, is_root, created_at, updated_at
+    SELECT username, password, roles, permissions, session_invalid_before, is_root, created_at, updated_at
     FROM users
     WHERE lower(username) = lower(?)
   `).get(normalized);
@@ -83,7 +174,7 @@ function getUserByUsername(username) {
 
 function listUsers() {
   const rows = db.prepare(`
-    SELECT username, roles, is_root, created_at, updated_at
+    SELECT username, roles, permissions, session_invalid_before, is_root, created_at, updated_at
     FROM users
     ORDER BY is_root DESC, username COLLATE NOCASE ASC
   `).all();
@@ -93,7 +184,7 @@ function listUsers() {
 
 function listUsersWithPasswords() {
   const rows = db.prepare(`
-    SELECT username, password, roles, is_root, created_at, updated_at
+    SELECT username, password, roles, permissions, session_invalid_before, is_root, created_at, updated_at
     FROM users
     ORDER BY username COLLATE NOCASE ASC
   `).all();
@@ -105,52 +196,77 @@ function userHasRole(user, role) {
   const normalizedRole = String(role || '').trim().toLowerCase();
   if (!ROLE_SET.has(normalizedRole)) return false;
   if (!user) return false;
-  if (Number(user.is_root) === 1) return true;
-  return Array.isArray(user.roles) && user.roles.includes(normalizedRole);
+  return shapeUserAccess(user).roles.includes(normalizedRole);
 }
 
-function createUser({ username, passwordHash, roles, isRoot = false }) {
+function userHasPermission(user, permission) {
+  const normalizedPermission = String(permission || '').trim().toLowerCase();
+  if (!PERMISSION_SET.has(normalizedPermission)) return false;
+  if (!user) return false;
+  return shapeUserAccess(user).permissions.includes(normalizedPermission);
+}
+
+function createUser({ username, passwordHash, roles, permissions = [], isRoot = false }) {
   const normalizedUsername = normaliseUsername(username);
   if (!isValidUsername(normalizedUsername)) {
     throw new Error('invalid_username');
   }
 
   const isRootUser = Boolean(isRoot) || normalizedUsername === ROOT_USERNAME;
-  const normalizedRoles = isRootUser ? [...ROLE_LIST] : normaliseRoles(roles);
-  if (!isRootUser && normalizedRoles.length === 0) {
-    throw new Error('roles_required');
+  const access = shapeUserAccess({
+    roles: isRootUser ? ROLE_LIST : roles,
+    permissions: isRootUser ? PERMISSION_LIST : permissions,
+    is_root: isRootUser ? 1 : 0
+  });
+  const normalizedRoles = access.roles;
+  if (!isRootUser && normalizedRoles.length === 0 && access.permissions.length === 0) {
+    throw new Error('access_required');
   }
 
   const info = db.prepare(`
-    INSERT INTO users (username, password, roles, is_root, created_at, updated_at)
-    VALUES (?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'), strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
-  `).run(normalizedUsername, passwordHash, JSON.stringify(normalizedRoles), isRootUser ? 1 : 0);
+    INSERT INTO users (username, password, roles, permissions, session_invalid_before, is_root, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 0, ?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'), strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
+  `).run(
+    normalizedUsername,
+    passwordHash,
+    JSON.stringify(normalizedRoles),
+    JSON.stringify(access.permissions),
+    isRootUser ? 1 : 0
+  );
 
   return info;
 }
 
 function updateUserRoles(username, roles) {
+  const existing = getUserByUsername(username);
+  return updateUserAccess(username, {
+    roles,
+    permissions: existing?.permissions || []
+  });
+}
+
+function updateUserAccess(username, { roles, permissions = [] }) {
   const normalizedUsername = normaliseUsername(username);
   if (!normalizedUsername) return { changes: 0 };
 
   if (normalizedUsername === ROOT_USERNAME) {
     return db.prepare(`
       UPDATE users
-      SET roles = ?, is_root = 1, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
+      SET roles = ?, permissions = ?, is_root = 1, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
       WHERE lower(username) = lower(?)
-    `).run(JSON.stringify(ROLE_LIST), ROOT_USERNAME);
+    `).run(JSON.stringify(ROLE_LIST), JSON.stringify(PERMISSION_LIST), ROOT_USERNAME);
   }
 
-  const normalizedRoles = normaliseRoles(roles);
-  if (normalizedRoles.length === 0) {
-    throw new Error('roles_required');
+  const access = shapeUserAccess({ roles, permissions, is_root: 0 });
+  if (access.roles.length === 0 && access.permissions.length === 0) {
+    throw new Error('access_required');
   }
 
   return db.prepare(`
     UPDATE users
-    SET roles = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
+    SET roles = ?, permissions = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
     WHERE lower(username) = lower(?)
-  `).run(JSON.stringify(normalizedRoles), normalizedUsername);
+  `).run(JSON.stringify(access.roles), JSON.stringify(access.permissions), normalizedUsername);
 }
 
 function setUserPassword(username, passwordHash) {
@@ -162,6 +278,17 @@ function setUserPassword(username, passwordHash) {
     SET password = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
     WHERE lower(username) = lower(?)
   `).run(passwordHash, normalizedUsername);
+}
+
+function invalidateUserSessions(username) {
+  const normalizedUsername = normaliseUsername(username);
+  if (!normalizedUsername) return { changes: 0 };
+
+  return db.prepare(`
+    UPDATE users
+    SET session_invalid_before = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
+    WHERE lower(username) = lower(?)
+  `).run(Date.now(), normalizedUsername);
 }
 
 function deleteUser(username) {
@@ -192,16 +319,29 @@ module.exports = {
   ROLE_LIST,
   ROLE_SET,
   ROOT_USERNAME,
+  PERMISSION_LIST,
+  PERMISSION_SET,
+  VIEW_PRIORITY,
   normaliseUsername,
   isValidUsername,
   normaliseRoles,
+  normalisePermissions,
+  shapeUserAccess,
+  getPrimaryRole,
+  userCanAccessView,
+  getLandingPath,
   getUserByUsername,
   listUsers,
   createUser,
   updateUserRoles,
+  updateUserAccess,
   setUserPassword,
+  invalidateUserSessions,
   deleteUser,
   userHasRole,
+  userHasPermission,
+  getSessionInvalidBeforeValue,
+  isSessionTokenCurrent,
   getUsersForRole,
   getAuditActor
 };

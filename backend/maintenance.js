@@ -34,15 +34,19 @@ const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('.
 const { checkAuctionState } = require('./middleware/checkAuctionState');
 const {
   ROLE_LIST,
+  PERMISSION_LIST,
   ROOT_USERNAME,
   normaliseUsername,
   isValidUsername,
   normaliseRoles,
+  normalisePermissions,
   getUserByUsername,
   listUsers,
   createUser,
   updateUserRoles,
+  updateUserAccess,
   setUserPassword,
+  invalidateUserSessions,
   deleteUser,
   getAuditActor
 } = require('./users');
@@ -52,6 +56,15 @@ const {
 // );
 
 const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
+
+function requireManageUsers(req, res, next) {
+  if (Array.isArray(req.user?.permissions) && req.user.permissions.includes("manage_users")) {
+    return next();
+  }
+
+  logFromRequest(req, logLevels.WARN, `Rejected user-management access for ${req.user?.username || 'unknown'} without manage_users permission`);
+  return res.status(403).json({ error: "Unauthorized" });
+}
 
 function normaliseAuctionShortName(shortName) {
   if (!shortName) {
@@ -745,12 +758,13 @@ router.get("/check-integrity", (req, res) => {
 // User management
 //--------------------------------------------------------------------------
 
-router.get("/users", (req, res) => {
+router.get("/users", requireManageUsers, (req, res) => {
   try {
     const users = listUsers();
     return res.json({
       users,
       roles: ROLE_LIST,
+      permissions: PERMISSION_LIST,
       current_user: req.user?.username || null
     });
   } catch (err) {
@@ -759,10 +773,11 @@ router.get("/users", (req, res) => {
   }
 });
 
-router.post("/users", (req, res) => {
-  const { username, password, roles } = req.body || {};
+router.post("/users", requireManageUsers, (req, res) => {
+  const { username, password, roles, permissions } = req.body || {};
   const normalizedUsername = normaliseUsername(username);
   const normalizedRoles = normaliseRoles(roles);
+  const normalizedPermissions = normalisePermissions(permissions, normalizedRoles);
 
   if (!isValidUsername(normalizedUsername)) {
     return res.status(400).json({ error: "Invalid username. Use 3-64 chars: a-z, 0-9, ., _, -" });
@@ -772,15 +787,28 @@ router.post("/users", (req, res) => {
     return res.status(400).json({ error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters.` });
   }
 
-  if (normalizedRoles.length === 0) {
-    return res.status(400).json({ error: "At least one role is required." });
+  if (normalizedRoles.length === 0 && normalizedPermissions.length === 0) {
+    return res.status(400).json({ error: "Assign at least one role or permission." });
   }
 
   try {
     const hashed = bcrypt.hashSync(password, 12);
-    createUser({ username: normalizedUsername, passwordHash: hashed, roles: normalizedRoles });
-    audit(getAuditActor(req), 'create user', 'server', null, { username: normalizedUsername, roles: normalizedRoles });
-    logFromRequest(req, logLevels.INFO, `Created user ${normalizedUsername} with roles: ${normalizedRoles.join(", ")}`);
+    createUser({
+      username: normalizedUsername,
+      passwordHash: hashed,
+      roles: normalizedRoles,
+      permissions: normalizedPermissions
+    });
+    audit(getAuditActor(req), 'create user', 'server', null, {
+      username: normalizedUsername,
+      roles: normalizedRoles,
+      permissions: normalizedPermissions
+    });
+    logFromRequest(
+      req,
+      logLevels.INFO,
+      `Created user ${normalizedUsername} with roles: ${normalizedRoles.join(", ")} and permissions: ${normalizedPermissions.join(", ")}`
+    );
     return res.status(201).json({ message: `User "${normalizedUsername}" created.` });
   } catch (err) {
     if (String(err.message || '').includes('UNIQUE')) {
@@ -789,15 +817,55 @@ router.post("/users", (req, res) => {
     if (err.message === 'invalid_username') {
       return res.status(400).json({ error: "Invalid username." });
     }
-    if (err.message === 'roles_required') {
-      return res.status(400).json({ error: "At least one role is required." });
+    if (err.message === 'roles_required' || err.message === 'access_required') {
+      return res.status(400).json({ error: "Assign at least one role or permission." });
     }
     logFromRequest(req, logLevels.ERROR, `Failed to create user: ${err.message}`);
     return res.status(500).json({ error: "Failed to create user." });
   }
 });
 
-router.patch("/users/:username/roles", (req, res) => {
+router.patch("/users/:username/access", requireManageUsers, (req, res) => {
+  const target = normaliseUsername(req.params.username);
+  const roles = normaliseRoles(req.body?.roles);
+  const permissions = normalisePermissions(req.body?.permissions, roles);
+
+  if (!isValidUsername(target)) {
+    return res.status(400).json({ error: "Invalid username." });
+  }
+
+  if (roles.length === 0 && permissions.length === 0) {
+    return res.status(400).json({ error: "Assign at least one role or permission." });
+  }
+
+  try {
+    const result = updateUserAccess(target, { roles, permissions });
+    if (!result || result.changes === 0) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    const updated = getUserByUsername(target);
+    audit(getAuditActor(req), 'update user access', 'server', null, {
+      username: target,
+      roles: updated?.roles || roles,
+      permissions: updated?.permissions || permissions
+    });
+    logFromRequest(
+      req,
+      logLevels.INFO,
+      `Updated access for user ${target}: roles=${updated?.roles.join(", ") || roles.join(", ")}, permissions=${updated?.permissions.join(", ") || permissions.join(", ")}`
+    );
+    return res.json({ message: `Permissions updated for "${target}".`, user: updated });
+  } catch (err) {
+    if (err.message === 'roles_required' || err.message === 'access_required') {
+      return res.status(400).json({ error: "Assign at least one role or permission." });
+    }
+    logFromRequest(req, logLevels.ERROR, `Failed to update user roles for ${target}: ${err.message}`);
+    return res.status(500).json({ error: "Failed to update user permissions." });
+  }
+});
+
+router.patch("/users/:username/roles", requireManageUsers, (req, res) => {
   const target = normaliseUsername(req.params.username);
   const roles = normaliseRoles(req.body?.roles);
 
@@ -818,7 +886,8 @@ router.patch("/users/:username/roles", (req, res) => {
     const updated = getUserByUsername(target);
     audit(getAuditActor(req), 'update user roles', 'server', null, {
       username: target,
-      roles: updated?.roles || roles
+      roles: updated?.roles || roles,
+      permissions: updated?.permissions || []
     });
     logFromRequest(req, logLevels.INFO, `Updated roles for user ${target}: ${updated?.roles.join(", ") || roles.join(", ")}`);
     return res.json({ message: `Permissions updated for "${target}".`, user: updated });
@@ -831,7 +900,7 @@ router.patch("/users/:username/roles", (req, res) => {
   }
 });
 
-router.post("/users/:username/password", (req, res) => {
+router.post("/users/:username/password", requireManageUsers, (req, res) => {
   const target = normaliseUsername(req.params.username);
   const { newPassword } = req.body || {};
 
@@ -868,7 +937,38 @@ router.post("/users/:username/password", (req, res) => {
   }
 });
 
-router.delete("/users/:username", (req, res) => {
+router.post("/users/:username/logout-now", requireManageUsers, (req, res) => {
+  const target = normaliseUsername(req.params.username);
+  const currentUser = normaliseUsername(req.user?.username || '');
+
+  if (!isValidUsername(target)) {
+    return res.status(400).json({ error: "Invalid username." });
+  }
+
+  const existing = getUserByUsername(target);
+  if (!existing) {
+    return res.status(404).json({ error: "User not found." });
+  }
+
+  try {
+    const result = invalidateUserSessions(target);
+    if (!result || result.changes === 0) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    audit(getAuditActor(req), 'logout user sessions', 'server', null, {
+      username: target,
+      requestor: currentUser
+    });
+    logFromRequest(req, logLevels.INFO, `Invalidated sessions for ${target} by ${currentUser}`);
+    return res.json({ message: `User "${target}" logged out from all sessions.` });
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Failed to invalidate sessions for ${target}: ${err.message}`);
+    return res.status(500).json({ error: "Failed to log out user." });
+  }
+});
+
+router.delete("/users/:username", requireManageUsers, (req, res) => {
   const target = normaliseUsername(req.params.username);
   const currentUser = normaliseUsername(req.user?.username || '');
 

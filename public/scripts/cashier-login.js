@@ -4,6 +4,9 @@
   const API = "/api";
   const REFRESH_MS = 10000;
   const SELECTED_AUCTION_KEY = "cashierSelectedAuctionId";
+  const BUYER_DISPLAY_STATE_KEY = "cashierBuyerDisplayState";
+  const SHOW_PICTURES_KEY = "cashierShowPictures";
+  const CASHIER_ASSET_VERSION = window.__CASHIER_ASSET_VERSION__ || "2026-04-10-buyer-display-1";
 
   const $ = (id) => document.getElementById(id);
   const els = {
@@ -22,6 +25,8 @@
     csvBtn: $("csv"),
     goPublicBtn: $("go-public"),
     goLiveFeedBtn: $("go-livefeed"),
+    openBuyerDisplayBtn: $("open-buyer-display"),
+    toggleShowPictures: $("toggle-show-pictures"),
     currentAuctionPill: $("current-auction-pill"),
     currentStatePill: $("current-state-pill"),
     connectionPill: $("cashier-connection-pill"),
@@ -42,11 +47,13 @@
   const menuGroups = Array.from(document.querySelectorAll(".menu-group"));
   const query = new URLSearchParams(window.location.search);
 
-  let authToken = localStorage.getItem("cashierToken");
+  let authToken = window.AppAuth?.getToken?.() || localStorage.getItem("cashierToken");
   let auctions = [];
   let refreshTimer = null;
   let settlementScriptLoaded = false;
   let cashierRefreshConnected = null;
+  let buyerDisplayWindow = null;
+  let showPictures = localStorage.getItem(SHOW_PICTURES_KEY) !== "0";
 
   const showError = (message) => {
     if (els.error) els.error.textContent = message || "";
@@ -99,12 +106,19 @@
 
   function setCashierSessionMeta(user = null, versions = null) {
     const username = user?.username || "unknown";
-    const roleLabel = formatRoleLabel(user?.role);
+    const roleLabel = window.AppAuth?.describeAccess
+      ? window.AppAuth.describeAccess(user)
+      : formatRoleLabel(user?.role);
     if (els.userDisplay) els.userDisplay.textContent = username;
     if (els.roleDisplay) els.roleDisplay.textContent = roleLabel;
     if (els.userMenuBtn) els.userMenuBtn.textContent = username;
     updateAboutBox(versions);
   }
+
+  window.addEventListener(window.AppAuth?.SESSION_EVENT || "appauth:session", (event) => {
+    const session = event.detail || null;
+    setCashierSessionMeta(session?.user, session?.versions);
+  });
 
   function getRequestedAuctionId() {
     const raw = Number(query.get("auctionId"));
@@ -139,6 +153,225 @@
     params.set("auctionStatus", auction.status || "");
     return `/cashier/index.html?${params.toString()}`;
   }
+
+  function getBuyerDisplayFallbackState() {
+    const selectedAuction = getSelectedAuction() || getAuctionById(getRequestedAuctionId());
+    return {
+      auctionId: selectedAuction?.id || getRequestedAuctionId() || null,
+      auctionName: selectedAuction?.full_name || "none selected",
+      showPictures,
+      selectedBidder: null
+    };
+  }
+
+  function persistBuyerDisplayState(state) {
+    try {
+      localStorage.setItem(BUYER_DISPLAY_STATE_KEY, JSON.stringify(state));
+    } catch (_) {
+      // ignore storage failures
+    }
+  }
+
+  function renderBuyerDisplayWindow(state) {
+    if (!buyerDisplayWindow || buyerDisplayWindow.closed) return;
+    try {
+      if (typeof buyerDisplayWindow.__renderBuyerDisplayState__ === "function") {
+        buyerDisplayWindow.__renderBuyerDisplayState__(state);
+      }
+    } catch (_) {
+      // ignore popup render failures
+    }
+  }
+
+  function pushBuyerDisplayState(state) {
+    window.__cashierBuyerDisplayStateCurrent__ = state;
+    persistBuyerDisplayState(state);
+    renderBuyerDisplayWindow(state);
+  }
+
+  function getBuyerDisplayState() {
+    if (typeof window.__getCashierBuyerDisplayStateImpl__ === "function") {
+      const liveState = window.__getCashierBuyerDisplayStateImpl__();
+      if (liveState) return liveState;
+    }
+    if (window.__cashierBuyerDisplayStateCurrent__) {
+      return window.__cashierBuyerDisplayStateCurrent__;
+    }
+    return getBuyerDisplayFallbackState();
+  }
+
+  function buildBuyerDisplayHtml() {
+    const currencySymbol = localStorage.getItem("currencySymbol") || "£";
+    const uploadBase = "/api/uploads";
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Buyer Display</title>
+  <link rel="stylesheet" href="/styles/settlement.css?v=${encodeURIComponent(CASHIER_ASSET_VERSION)}">
+</head>
+<body class="buyer-display-page">
+  <main class="buyer-display-shell">
+    <section class="buyer-display-card">
+      <header class="buyer-display-head">
+        <h1 id="buyer-display-auction" class="buyer-display-auction">Auction</h1>
+      </header>
+      <div class="buyer-display-body">
+        <div id="buyer-display-content"></div>
+      </div>
+    </section>
+  </main>
+  <script>
+    (() => {
+      const money = (value) => ${JSON.stringify(currencySymbol)} + Number(value || 0).toFixed(2);
+      const escapeHtml = (value) => String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+      const contentEl = document.getElementById('buyer-display-content');
+      const auctionEl = document.getElementById('buyer-display-auction');
+      const THUMBNAIL_LIMIT = 6;
+      let lastRenderedKey = null;
+
+      function getState() {
+        try {
+          if (window.opener && !window.opener.closed && typeof window.opener.__getCashierBuyerDisplayState__ === 'function') {
+            const liveState = window.opener.__getCashierBuyerDisplayState__();
+            if (liveState) return liveState;
+          }
+          const raw = localStorage.getItem(${JSON.stringify(BUYER_DISPLAY_STATE_KEY)});
+          if (raw) return JSON.parse(raw);
+          return null;
+        } catch (_) {
+          return null;
+        }
+      }
+
+      function renderEmpty(message) {
+        contentEl.innerHTML = '<div class="buyer-display-empty">' + escapeHtml(message) + '</div>';
+      }
+
+      function render(state) {
+        if (auctionEl) {
+          auctionEl.textContent = state?.auctionName || 'Buyer Display';
+        }
+
+        if (!state) {
+          renderEmpty('Cashier page unavailable. Keep this window open and return to the cashier screen.');
+          return;
+        }
+
+        const bidder = state.selectedBidder;
+        if (!bidder) {
+          renderEmpty('Select a paddle on the cashier screen to show the buyer review here.');
+          return;
+        }
+
+        const lots = Array.isArray(bidder.lots) ? bidder.lots : [];
+        const pictureLots = lots.filter((lot) => lot.photo_url);
+        const visibleThumbs = state.showPictures ? pictureLots.slice(0, THUMBNAIL_LIMIT) : [];
+        const extraThumbs = state.showPictures ? Math.max(0, pictureLots.length - visibleThumbs.length) : 0;
+        const rows = lots.length
+          ? lots.map((lot) => \`
+              <tr>
+                <td>\${escapeHtml(lot.item_number)}</td>
+                <td>\${escapeHtml(lot.description)}</td>
+                <td>\${escapeHtml(money(lot.hammer_price))}</td>
+              </tr>\`).join('')
+          : '<tr><td colspan="3">No lots won</td></tr>';
+        const thumbnails = visibleThumbs.length
+          ? \`
+            <section class="buyer-display-section">
+              <h3 class="detail-heading">Item previews</h3>
+              <div class="buyer-display-thumbnails">
+                \${visibleThumbs.map((lot) => \`
+                  <figure class="buyer-display-thumb">
+                    <img src="${uploadBase}/preview_\${escapeHtml(lot.photo_url)}" alt="Lot \${escapeHtml(lot.item_number)} preview" loading="eager">
+                    <figcaption>Lot \${escapeHtml(lot.item_number)}</figcaption>
+                  </figure>\`).join('')}
+                \${extraThumbs > 0 ? \`<div class="buyer-display-thumb buyer-display-thumb-more">+\${escapeHtml(extraThumbs)} more</div>\` : ''}
+              </div>
+            </section>\`
+          : '';
+
+        contentEl.innerHTML = \`
+          <section class="buyer-display-section">
+            <h2 class="buyer-display-paddle">Paddle #\${escapeHtml(bidder.paddle_number)}</h2>
+          </section>
+          <section class="buyer-display-section">
+            <h3 class="detail-heading">Lots won</h3>
+            <div class="table-wrap buyer-display-table">
+              <table>
+                <thead>
+                  <tr><th>Lot</th><th>Title</th><th>Price</th></tr>
+                </thead>
+                <tbody>\${rows}</tbody>
+              </table>
+            </div>
+            <div class="section-total">Total lots: \${escapeHtml(money(bidder.lots_total))}</div>
+          </section>
+          \${thumbnails}
+          <section class="buyer-display-section">
+            <h3 class="detail-heading">Summary</h3>
+            <div class="buyer-display-summary">
+              <div class="summary-card">
+                <span class="summary-card-label">Paid</span>
+                <span class="summary-card-value">\${escapeHtml(money(bidder.payments_total))}</span>
+              </div>
+              <div class="summary-card">
+                <span class="summary-card-label">Donations</span>
+                <span class="summary-card-value">\${escapeHtml(money(bidder.donations_total))}</span>
+              </div>
+              <div class="summary-card">
+                <span class="summary-card-label">Balance</span>
+                <span class="summary-card-value">\${escapeHtml(money(bidder.balance))}</span>
+              </div>
+            </div>
+          </section>\`;
+      }
+
+      function sync() {
+        const nextState = getState();
+        const nextKey = JSON.stringify(nextState);
+        if (nextKey === lastRenderedKey) return;
+        lastRenderedKey = nextKey;
+        render(nextState);
+      }
+
+      window.__renderBuyerDisplayState__ = (state) => {
+        lastRenderedKey = JSON.stringify(state);
+        render(state);
+      };
+
+      sync();
+      window.setInterval(sync, 3000);
+    })();
+  </script>
+</body>
+</html>`;
+  }
+
+  function openBuyerDisplay() {
+    buyerDisplayWindow = window.open("", "cashierBuyerDisplayWindow", "popup=yes,width=980,height=760,resizable=yes,scrollbars=yes");
+    if (!buyerDisplayWindow) {
+      showMessage("Buyer display popup was blocked. Allow popups for this site and try again.", "error");
+      return;
+    }
+
+    buyerDisplayWindow.document.open();
+    buyerDisplayWindow.document.write(buildBuyerDisplayHtml());
+    buyerDisplayWindow.document.close();
+    buyerDisplayWindow.focus();
+    window.setTimeout(() => {
+      pushBuyerDisplayState(getBuyerDisplayState());
+    }, 50);
+  }
+
+  window.__getCashierBuyerDisplayState__ = getBuyerDisplayState;
+  window.__cashierPushBuyerDisplayState__ = pushBuyerDisplayState;
 
   function setAuctionActionAvailability(selectedAuction = null) {
     const hasAuction = Boolean(selectedAuction);
@@ -177,6 +410,7 @@
     if (els.cashierEmptyPanel) els.cashierEmptyPanel.hidden = false;
     if (els.cashierEmptyTitle) els.cashierEmptyTitle.textContent = title;
     if (els.cashierEmptyCopy) els.cashierEmptyCopy.textContent = copy;
+    pushBuyerDisplayState(getBuyerDisplayFallbackState());
     setAuctionActionAvailability(null);
     updateAuctionStatusPills();
   }
@@ -195,7 +429,7 @@
 
     settlementScriptLoaded = true;
     const script = document.createElement("script");
-    script.src = "/scripts/settlement.js";
+    script.src = `/scripts/settlement.js?v=${encodeURIComponent(CASHIER_ASSET_VERSION)}`;
     document.body.appendChild(script);
   }
 
@@ -211,9 +445,9 @@
   }
 
   function logout() {
-    localStorage.removeItem("cashierToken");
+    window.AppAuth?.clearAllSessions?.({ broadcast: true });
     closeAboutModal();
-    window.location.replace("/cashier/index.html");
+    window.location.replace("/login.html?reason=signed_out");
   }
 
   function promptPasswordChange() {
@@ -320,8 +554,8 @@
 
     if (res.status === 403) {
       showMessage("Session expired. Please log in again.", "info");
-      localStorage.removeItem("cashierToken");
-      window.setTimeout(() => window.location.replace("/cashier/index.html"), 1500);
+      window.AppAuth?.clearSharedSession?.({ broadcast: false });
+      window.setTimeout(() => window.location.replace("/login.html"), 1500);
       return [];
     }
 
@@ -425,32 +659,7 @@
   }
 
   async function doLogin() {
-    const username = els.userInput?.value.trim() || "";
-    const password = els.pwInput?.value.trim() || "";
-
-    if (!username || !password) {
-      showError("Username and password are required");
-      return;
-    }
-
-    try {
-      const res = await fetch(`${API}/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password, role: "cashier" })
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || "Auth failed");
-
-      authToken = data.token;
-      localStorage.setItem("cashierToken", data.token);
-      localStorage.setItem("currencySymbol", data.currency || "£");
-
-      await startDashboard(data);
-    } catch (error) {
-      showError(`Login failed: ${error.message}`);
-    }
+    window.location.replace("/login.html");
   }
 
   async function handlePasswordChange() {
@@ -504,14 +713,16 @@
       return;
     }
 
-    window.open(
-      `/cashier/live-feed.html?auctionId=${selectedAuction.id}&auctionStatus=${selectedAuction.status || ""}`,
-      "_blank",
-      "noopener"
-    )?.focus();
+    window.location.assign(
+      `/cashier/live-feed.html?auctionId=${selectedAuction.id}&auctionStatus=${selectedAuction.status || ""}`
+    );
   }
 
   function bindEvents() {
+    if (els.toggleShowPictures) {
+      els.toggleShowPictures.checked = showPictures;
+    }
+
     els.loginBtn?.addEventListener("click", doLogin);
 
     [els.userInput, els.pwInput].forEach((input) => {
@@ -535,6 +746,16 @@
     });
     els.goPublicBtn?.addEventListener("click", openSelectedAuctionPublicPage);
     els.goLiveFeedBtn?.addEventListener("click", openSelectedAuctionLiveFeed);
+    els.openBuyerDisplayBtn?.addEventListener("click", openBuyerDisplay);
+    els.toggleShowPictures?.addEventListener("change", () => {
+      showPictures = Boolean(els.toggleShowPictures.checked);
+      localStorage.setItem(SHOW_PICTURES_KEY, showPictures ? "1" : "0");
+      pushBuyerDisplayState(getBuyerDisplayState());
+      window.dispatchEvent(new CustomEvent("cashier:show-pictures-changed", {
+        detail: { showPictures }
+      }));
+      closeMenuGroups();
+    });
     els.openAboutModalBtn?.addEventListener("click", openAboutModal);
     els.closeAboutModalBtn?.addEventListener("click", closeAboutModal);
     els.aboutModal?.addEventListener("click", (event) => {
@@ -566,7 +787,7 @@
     validateSession(authToken)
       .then((data) => startDashboard(data))
       .catch(() => {
-        localStorage.removeItem("cashierToken");
+        window.AppAuth?.clearSharedSession?.({ broadcast: false });
       });
   }
 })();

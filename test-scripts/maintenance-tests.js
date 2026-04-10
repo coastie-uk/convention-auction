@@ -39,6 +39,11 @@ const managedUsers = {
     username: `mt_user_${userSeed}`,
     password: `MtUser_${userSeed}_U1!`,
     roles: ["cashier"]
+  },
+  limitedMaintenance: {
+    username: `mt_limited_${userSeed}`,
+    password: `MtLimited_${userSeed}_M1!`,
+    roles: ["maintenance"]
   }
 };
 
@@ -334,11 +339,79 @@ addTest("M-021","maintenance/users list success", async () => {
   await expectStatus(res, 200);
   assert.ok(Array.isArray(json?.users), `Unexpected users response: ${text}`);
   assert.ok(Array.isArray(json?.roles), "Roles metadata missing");
+  assert.ok(Array.isArray(json?.permissions), "Permissions metadata missing");
+  assert.ok(json.permissions.includes("manage_users"), "manage_users permission missing from catalog");
+  assert.ok(json.users.every((user) => Array.isArray(user.permissions)), "Expected each user to include permissions");
 });
 
 addTest("M-021a","maintenance/users list failure unauthenticated", async () => {
   const res = await fetch(`${baseUrl}/maintenance/users`);
   await expectStatus(res, 403);
+});
+
+addTest("M-021aa","maintenance user without manage_users is denied all user-management routes", async () => {
+  const createLimited = await fetchJson(`${baseUrl}/maintenance/users`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      username: managedUsers.limitedMaintenance.username,
+      password: managedUsers.limitedMaintenance.password,
+      roles: managedUsers.limitedMaintenance.roles
+    })
+  });
+  if (createLimited.res.status !== 201 && createLimited.res.status !== 409) {
+    throw new Error(`Failed to prepare limited maintenance user: ${createLimited.text || createLimited.res.status}`);
+  }
+
+  const limitedLogin = await fetchJson(`${baseUrl}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: managedUsers.limitedMaintenance.username,
+      password: managedUsers.limitedMaintenance.password
+    })
+  });
+  await expectStatus(limitedLogin.res, 200);
+  const limitedToken = limitedLogin.json?.token;
+  assert.ok(limitedToken, "Expected limited maintenance token");
+
+  const checks = [
+    fetchJson(`${baseUrl}/maintenance/users`, {
+      headers: authHeaders(limitedToken)
+    }),
+    fetchJson(`${baseUrl}/maintenance/users`, {
+      method: "POST",
+      headers: authHeaders(limitedToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        username: `blocked_${userSeed}`,
+        password: "BlockedUser_123!",
+        roles: ["cashier"]
+      })
+    }),
+    fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(bootstrapUsername)}/access`, {
+      method: "PATCH",
+      headers: authHeaders(limitedToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ roles: ["maintenance"], permissions: ["manage_users"] })
+    }),
+    fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(bootstrapUsername)}/password`, {
+      method: "POST",
+      headers: authHeaders(limitedToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ newPassword: "BlockedPassword_123!" })
+    }),
+    fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(bootstrapUsername)}/logout-now`, {
+      method: "POST",
+      headers: authHeaders(limitedToken)
+    }),
+    fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(bootstrapUsername)}`, {
+      method: "DELETE",
+      headers: authHeaders(limitedToken)
+    })
+  ];
+
+  const results = await Promise.all(checks);
+  for (const result of results) {
+    await expectStatus(result.res, 403);
+  }
 });
 
 addTest("M-021b","maintenance/users create failure invalid username", async () => {
@@ -435,6 +508,59 @@ addTest("M-021j","maintenance/users/:username/roles success", async () => {
   await expectStatus(res, 200);
   assert.ok(json && Array.isArray(json.user?.roles), `Unexpected role update response: ${text}`);
   assert.ok(json.user.roles.includes("maintenance"), "Expected maintenance role after update");
+});
+
+addTest("M-021ja","maintenance/users/:username/access success with permission normalization", async () => {
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(context.managedUser.username)}/access`, {
+    method: "PATCH",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      roles: ["cashier"],
+      permissions: ["live_feed", "manage_users", "admin_bidding"]
+    })
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && Array.isArray(json.user?.permissions), `Unexpected access update response: ${text}`);
+  assert.deepEqual(json.user.roles, ["cashier"]);
+  assert.deepEqual(json.user.permissions, ["live_feed"]);
+});
+
+addTest("M-021jb","maintenance/users/:username/logout-now success invalidates active token", async () => {
+  const activeLogin = await fetchJson(`${baseUrl}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: context.managedUser.username,
+      password: context.managedUser.password
+    })
+  });
+  await expectStatus(activeLogin.res, 200);
+  assert.ok(activeLogin.json?.token, "Expected managed user token");
+
+  const logoutNow = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(context.managedUser.username)}/logout-now`, {
+    method: "POST",
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(logoutNow.res, 200);
+
+  const validateAfter = await fetchJson(`${baseUrl}/validate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: activeLogin.json.token })
+  });
+  await expectStatus(validateAfter.res, 403);
+  assert.equal(validateAfter.json?.reason, "remote_logout");
+
+  const relogin = await fetchJson(`${baseUrl}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: context.managedUser.username,
+      password: context.managedUser.password
+    })
+  });
+  await expectStatus(relogin.res, 200);
+  assert.ok(relogin.json?.token, "Expected user to reauthenticate after logout-now");
 });
 
 addTest("M-021k","maintenance/users/:username/password failure short password", async () => {

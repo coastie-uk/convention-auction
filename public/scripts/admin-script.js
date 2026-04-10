@@ -166,7 +166,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     function getTokenOrLogout() {
-        const token = localStorage.getItem("token");
+        const token = window.AppAuth?.getToken?.() || localStorage.getItem("token");
         if (!token) {
             logout();
             return null;
@@ -1066,13 +1066,20 @@ document.addEventListener("DOMContentLoaded", function () {
 
     function setAdminSessionMeta(user = null, versions = null) {
         const username = user?.username || "unknown";
-        const roleLabel = formatRoleLabel(user?.role);
+        const roleLabel = window.AppAuth?.describeAccess
+            ? window.AppAuth.describeAccess(user)
+            : formatRoleLabel(user?.role);
 
         if (loggedInUserEl) loggedInUserEl.textContent = username;
         if (loggedInRoleEl) loggedInRoleEl.textContent = roleLabel;
         if (userMenuButton) userMenuButton.textContent = username;
         updateAboutBox(user, versions);
     }
+
+    window.addEventListener(window.AppAuth?.SESSION_EVENT || "appauth:session", (event) => {
+        const session = event.detail || null;
+        setAdminSessionMeta(session?.user, session?.versions);
+    });
 
     function updateHeaderAuctionStatus() {
         const selectedAuction = auctions.find((auction) => auction.id === selectedAuctionId);
@@ -1323,9 +1330,9 @@ document.addEventListener("DOMContentLoaded", function () {
                 if (!suppressErrors) {
                     showMessage("Session expired. Please log in again.", "info");
                 }
-                localStorage.removeItem("token");
+                window.AppAuth?.clearSharedSession?.({ broadcast: false });
                 setTimeout(() => {
-                    window.location.href = "/admin";
+                    window.location.href = "/login.html";
                 }, 1500);
                 throw new Error("Session expired");
             }
@@ -1457,32 +1464,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
     loginButton.addEventListener("click", async function login() {
-        const username = document.getElementById("admin-username").value.trim();
-        const password = document.getElementById("admin-password").value;
-        if (!username || !password) {
-            showMessage("Username and password are required.", "error");
-            return;
-        }
-        const response = await fetch(`${API}/login`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username, password, role: "admin" })
-        });
-        document.getElementById("admin-username").value = "";
-        document.getElementById("admin-password").value = "";
-        const data = await response.json();
-        if (response.ok) {
-            localStorage.setItem("token", data.token);
-            currencySymbol = data.currency || "£";
-            localStorage.setItem("currencySymbol", currencySymbol);
-            setAdminSessionMeta(data.user || { username, role: "admin" }, data.versions);
-            showSection("admin-section");
-            await refreshAdminData({ showErrors: true, announceConnectivity: false });
-            startAutoRefresh();
-        } else {
-            showMessage("Login failed: " + data.error, "error");
-            document.getElementById("error-message").innerText = data.error;
-        }
+        window.location.replace("/login.html");
     })
 
     logoutButton.addEventListener("click", function () {
@@ -1653,14 +1635,14 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
     function logout() {
-        localStorage.removeItem("token");
+        window.AppAuth?.clearAllSessions?.({ broadcast: true });
         stopPptxStatusPolling();
         latestPptxJob = null;
         autoDownloadJobId = null;
         sessionStorage.removeItem(OPEN_MOVE_PANEL_KEY);
         closeAboutModal();
         setAdminSessionMeta();
-        showSection("login-section");
+        window.location.replace("/login.html?reason=signed_out");
     }
 
     function getStoredMovePanelItemId() {
@@ -1763,9 +1745,9 @@ document.addEventListener("DOMContentLoaded", function () {
                 if (!suppressErrors) {
                     showMessage("Session expired. Please log in again.", "info");
                 }
-                localStorage.removeItem("token");
+                window.AppAuth?.clearSharedSession?.({ broadcast: false });
                 setTimeout(() => {
-                    window.location.href = "/admin";
+                    window.location.href = "/login.html";
                 }, 1500);
                 throw new Error("Session expired");
             }
@@ -2462,7 +2444,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const status = selectedAuction?.status;
 
 
-        window.open(`/cashier/live-feed.html?auctionId=${selectedAuctionId}&auctionStatus=${status}`, '_blank').focus();
+        window.location.assign(`/cashier/live-feed.html?auctionId=${selectedAuctionId}&auctionStatus=${status}`);
 
     })
 
@@ -2482,7 +2464,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const selectedAuction = auctions.find(a => a.id === selectedAuctionId);
         if (!selectedAuction) return;
         const status = selectedAuction?.status || "";
-        window.open(`/cashier/index.html?auctionId=${selectedAuctionId}&auctionStatus=${encodeURIComponent(status)}`, '_blank').focus();
+        window.location.assign(`/cashier/index.html?auctionId=${selectedAuctionId}&auctionStatus=${encodeURIComponent(status)}`);
     });
 
     document.addEventListener("visibilitychange", () => {

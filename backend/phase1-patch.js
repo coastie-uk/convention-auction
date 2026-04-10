@@ -12,7 +12,10 @@ const express = require('express');
 const crypto = require('node:crypto');
 const db       = require('./db');
 const { checkAuctionState } = require('./middleware/checkAuctionState');
-const { authenticateRole } = require('./middleware/authenticateRole');
+const {
+  authenticateRole,
+  authenticatePermission
+} = require('./middleware/authenticateRole');
 const { CASH_ENABLED, MANUAL_CARD_ENABLED, PAYPAL_ENABLED, SUMUP_WEB_ENABLED, SUMUP_CARD_PRESENT_ENABLED, CURRENCY, SUMUP_CALLBACK_SUCCESS, SUMUP_RETURN_URL, SECRET_KEY } = require('./config');
 
 const { logLevels, logFromRequest, log } = require('./logger');
@@ -271,7 +274,7 @@ module.exports = function phase1Patch (app) {
     };
   };
 
-   liveFeed.get('/live/:auctionId', authenticateRole(["admin", "cashier"]), (req, res) => {
+   liveFeed.get('/live/:auctionId', authenticatePermission("live_feed"), (req, res) => {
    const id   = Number(req.params.auctionId);
  const include_unsold  = req.query.unsold === 'true';
     if (!Number.isInteger(id) || id <= 0) {
@@ -285,7 +288,7 @@ module.exports = function phase1Patch (app) {
   }
   });
 
-  liveFeed.post('/live/:auctionId/bidders/:bidderId/ready', authenticateRole(["admin", "cashier"]), (req, res) => {
+  liveFeed.post('/live/:auctionId/bidders/:bidderId/ready', authenticatePermission("live_feed"), (req, res) => {
     const auctionId = Number(req.params.auctionId);
     const bidderId = Number(req.params.bidderId);
     const ready = Boolean(req.body?.ready);
@@ -322,7 +325,7 @@ module.exports = function phase1Patch (app) {
     });
   });
 
-  liveFeed.post('/live/:auctionId/items/:itemId/collection', authenticateRole(["admin", "cashier"]), (req, res) => {
+  liveFeed.post('/live/:auctionId/items/:itemId/collection', authenticatePermission("live_feed"), (req, res) => {
     const auctionId = Number(req.params.auctionId);
     const itemId = Number(req.params.itemId);
     const collected = Boolean(req.body?.collected);
@@ -381,7 +384,7 @@ module.exports = function phase1Patch (app) {
     res.json({ ok: true, item_id: itemId, collected });
   });
 
-  liveFeed.post('/live/:auctionId/bidders/:bidderId/collect-all', authenticateRole(["admin", "cashier"]), (req, res) => {
+  liveFeed.post('/live/:auctionId/bidders/:bidderId/collect-all', authenticatePermission("live_feed"), (req, res) => {
     const auctionId = Number(req.params.auctionId);
     const bidderId = Number(req.params.bidderId);
 
@@ -431,7 +434,7 @@ module.exports = function phase1Patch (app) {
     res.json({ ok: true, bidder_id: bidderId });
   });
 
-  liveFeed.get('/live/:auctionId/uncollected.csv', authenticateRole(["admin", "cashier"]), (req, res) => {
+  liveFeed.get('/live/:auctionId/uncollected.csv', authenticatePermission("live_feed"), (req, res) => {
     const auctionId = Number(req.params.auctionId);
     if (!Number.isInteger(auctionId) || auctionId <= 0) {
       return res.status(400).json({ error: 'auctionId required' });
@@ -849,7 +852,7 @@ logFromRequest(req, logLevels.DEBUG, `Reversal inserted with id=${info.lastInser
   //--------------------------------------------------------------------------
   const sales = express.Router();
 
-  sales.post('/:itemid/finalize', authenticateRole('admin'), checkAuctionState(['live', 'settlement']), (req, res) => {
+  sales.post('/:itemid/finalize', authenticateRole('admin'), authenticatePermission('admin_bidding'), checkAuctionState(['live', 'settlement']), (req, res) => {
     const itemId = Number(req.params.itemid);
     const { paddle, price, auctionId } = req.body;
     if (!Number.isInteger(itemId) || itemId <= 0) return res.status(400).json({ error: 'Invalid item id' });
@@ -936,7 +939,7 @@ if (info.changes === 0) {
   //--------------------------------------------------------------------------
 
 
-  sales.post('/:id/undo', authenticateRole('admin'), checkAuctionState(['live', 'settlement']), (req, res) => {
+  sales.post('/:id/undo', authenticateRole('admin'), authenticatePermission('admin_bidding'), checkAuctionState(['live', 'settlement']), (req, res) => {
     const itemId = Number(req.params.id);
 
     if (!itemId || isNaN(itemId)) return res.status(400).json({ error: 'item # required' });

@@ -71,6 +71,10 @@ h2 {
     align-items: center;
 }
 
+.menu-group--right {
+    margin-left: auto;
+}
+
 .menu-group {
     position: relative;
     margin: 0;
@@ -171,6 +175,22 @@ h2 {
     box-shadow: 0 6px 14px rgba(15, 98, 254, 0.08);
 }
 
+.menu-item-button.is-current-page,
+.menu-item-link.is-current-page {
+    background: #e6f0ff;
+    border-color: #8fb4ef;
+    box-shadow: inset 0 0 0 1px rgba(15, 98, 254, 0.12);
+    color: #0b4ecc;
+    cursor: default;
+}
+
+.menu-item-button.is-current-page:hover,
+.menu-item-link.is-current-page:hover {
+    background: #e6f0ff;
+    border-color: #8fb4ef;
+    box-shadow: inset 0 0 0 1px rgba(15, 98, 254, 0.12);
+}
+
 .menu-item-button:disabled,
 .menu-field select:disabled {
     box-shadow: none;
@@ -235,6 +255,18 @@ h2 {
 .menu-field {
     display: grid;
     gap: 6px;
+}
+
+.menu-checkbox-field {
+    align-items: center;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+}
+
+.menu-checkbox-field input[type="checkbox"] {
+    height: 16px;
+    margin: 0;
+    width: 16px;
 }
 
 .menu-label {
@@ -892,6 +924,10 @@ form button:hover {
         width: 100%;
     }
 
+    .menu-group--right {
+        margin-left: 0;
+    }
+
     .export-panel-header,
     .export-job-actions {
         align-items: stretch;
@@ -1176,4 +1212,10 @@ footer {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.is-disabled-access {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
 }

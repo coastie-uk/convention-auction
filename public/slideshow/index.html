@@ -86,7 +86,7 @@
             <label><input type="checkbox" id="show-artist" checked> Show Creator</label>
             <label>Refresh Interval (s): <input type="number" id="refresh-interval" min="10" value="60"></label>
             <label><input type="checkbox" id="shuffle-items" checked> Shuffle Items</label>
-            <button id="change-auction">Change auction / Logout</button>
+            <button id="change-auction">Change auction</button>
             <button id="pause-button">Pause</button>
             <button id="resume-button">Resume</button>
             <button id="restart-button">Reload slideshow</button>
@@ -94,11 +94,24 @@
             
         </div>
     </div>
+    <script src="/scripts/session-auth.js"></script>
+    <script>
+        window.__APP_PAGE_AUTH__ = {
+            viewKey: "slideshow",
+            access: { role: "slideshow" },
+            allowKiosk: true
+        };
+    </script>
+    <script src="/scripts/auth-bootstrap.js"></script>
     <script>
             let items = [], shownItems = [], upcomingItems = [], index = 0;
             let slideshowRunning = false, config = {}, refreshTimer, slideTimer, paused = false;
             let configHideTimeout;
+            let sessionScope = "shared";
             const API = "/api";
+            let auctionId = localStorage.getItem("slideshowAuctionId");
+            let auctionName = localStorage.getItem("slideshowFullName");
+            let selectorOverlay = null;
             // const urlParam = new URLSearchParams(window.location.search).get("admin");
 
 
@@ -108,23 +121,22 @@
             //       const startButton = document.getElementById("start-button");
 
             document.addEventListener("DOMContentLoaded", async function () {
+                const authSession = window.__APP_AUTH_READY__ ? await window.__APP_AUTH_READY__ : null;
+                if (!authSession) return;
+                sessionScope = authSession.scope || "shared";
+                setupChangeAuctionButton();
 
-                let auctionId = localStorage.getItem("slideshowAuctionId");
-                let auctionName = localStorage.getItem("slideshowFullName");
-
-                if (auctionId && auctionName) {
-                    if (fetchItems()) {
+                if (sessionScope === "kiosk" && auctionId && auctionName) {
+                    if (await fetchItems()) {
                         setupChangeAuctionButton();
-                        await fetchItems();
                         items = [...shownItems, ...upcomingItems];
                         startSlideshow();
                         document.documentElement.requestFullscreen?.();
                         triggerConfigPanel();
-
-
+                        return;
                     }
                 }
-                else { showAuctionInputForm(); }
+                showAuctionSelector();
             })
 
 
@@ -164,7 +176,11 @@
 
             async function fetchItems() {
 
-                const token = localStorage.getItem("slideshowtoken");
+                const token = window.AppAuth?.getToken?.();
+                if (!token) {
+                    logout();
+                    return false;
+                }
 
                 try {
                     const res = await fetch(`${API}/auctions/${auctionId}/slideshow-items`, { headers: { Authorization: token } })
@@ -196,8 +212,9 @@
 
             function logout() {
                 localStorage.removeItem("slideshowAuctionId");
-                localStorage.removeItem("slideshowtoken");
-                location.reload();
+                localStorage.removeItem("slideshowFullName");
+                window.AppAuth?.clearAllSessions?.({ broadcast: true });
+                location.replace("/login.html?reason=signed_out");
             }
 
             function showNextSlide() {
@@ -386,14 +403,69 @@
                 }
             })
 
-            let auctionId = localStorage.getItem("slideshowAuctionId");
-            let auctionName = localStorage.getItem("slideshowFullName");
+            async function loadAuctionOptions() {
+                const slideshowToken = window.AppAuth?.getToken?.();
+                if (!slideshowToken) throw new Error("Session expired");
 
-            const elevated = localStorage.getItem("token") || localStorage.getItem("maintenanceToken") || localStorage.getItem("cashierToken");
+                const res = await fetch(`${API}/slideshow/auctions`, {
+                    headers: { Authorization: slideshowToken }
+                });
+                const data = await res.json().catch(() => ([]));
 
+                if (!res.ok) {
+                    throw new Error(data?.error || "Unable to load auctions");
+                }
 
-            function showAuctionInputForm() {
+                return Array.isArray(data) ? data : [];
+            }
+
+            async function startSelectedAuction(selection) {
+                if (!selection?.public_id) {
+                    throw new Error("Select an auction");
+                }
+
+                if (sessionScope === "shared") {
+                    const kioskSession = window.AppAuth?.startSlideshowKiosk?.();
+                    if (!kioskSession) {
+                        throw new Error("Unable to start slideshow session");
+                    }
+                    sessionScope = kioskSession.scope || "kiosk";
+                }
+
+                stopSlideshow();
+                shownItems = [];
+                upcomingItems = [];
+                items = [];
+                overlayText.innerHTML = "";
+
+                auctionId = selection.public_id;
+                auctionName = selection.full_name || "";
+                localStorage.setItem("slideshowAuctionId", auctionId);
+                localStorage.setItem("slideshowFullName", auctionName);
+
+                if (!await fetchItems()) {
+                    throw new Error("Unable to load slideshow items for that auction");
+                }
+
+                items = [...shownItems, ...upcomingItems];
+                startSlideshow();
+                document.documentElement.requestFullscreen?.();
+                triggerConfigPanel();
+            }
+
+            async function showAuctionSelector() {
+                stopSlideshow();
+                shownItems = [];
+                upcomingItems = [];
+                items = [];
+
+                if (selectorOverlay) {
+                    selectorOverlay.remove();
+                    selectorOverlay = null;
+                }
+
                 const container = document.createElement("div");
+                selectorOverlay = container;
                 container.style.position = "fixed";
                 container.style.top = "0";
                 container.style.left = "0";
@@ -405,108 +477,105 @@
                 container.style.justifyContent = "center";
                 container.style.alignItems = "center";
                 container.style.zIndex = "10000";
+                container.style.padding = "24px";
+                container.style.boxSizing = "border-box";
+
+                const panel = document.createElement("div");
+                panel.style.display = "grid";
+                panel.style.gap = "14px";
+                panel.style.width = "min(480px, 100%)";
+                panel.style.padding = "24px";
+                panel.style.background = "rgba(15, 15, 15, 0.92)";
+                panel.style.borderRadius = "14px";
+                panel.style.boxShadow = "0 24px 60px rgba(0, 0, 0, 0.35)";
+
+                const title = document.createElement("div");
+                title.textContent = "Choose slideshow auction";
+                title.style.color = "white";
+                title.style.fontSize = "1.5rem";
+                title.style.fontWeight = "700";
 
                 const notice = document.createElement("div");
-                notice.textContent = `Elevated login detected - For security, starting a slideshow will log this browser out of any non-public pages`;
-                notice.style.color = "yellow";
-                notice.style.marginBottom = "10px";
-                notice.style.textAlign = "center";
-                notice.style.fontSize = "1rem";
+                notice.textContent = "Starting slideshow uses kiosk mode and signs this browser out of other operator pages.";
+                notice.style.color = "#f5d66b";
+                notice.style.lineHeight = "1.4";
 
-                const auctionInput = document.createElement("input");
-                auctionInput.type = "text";
-                auctionInput.placeholder = "Enter Auction Short Name";
-                auctionInput.style.padding = "10px";
-                auctionInput.style.fontSize = "1.2rem";
-                auctionInput.style.borderRadius = "6px";
-                auctionInput.style.border = "1px solid #ccc";
-                auctionInput.style.marginBottom = "10px";
-
-                const slideshowUsername = document.createElement("input");
-                slideshowUsername.type = "text";
-                slideshowUsername.placeholder = "Slideshow Username";
-                slideshowUsername.style.padding = "10px";
-                slideshowUsername.style.fontSize = "1.2rem";
-                slideshowUsername.style.borderRadius = "6px";
-                slideshowUsername.style.border = "1px solid #ccc";
-                slideshowUsername.style.marginBottom = "10px";
-
-                const slideshowPassword = document.createElement("input");
-                slideshowPassword.type = "password";
-                slideshowPassword.placeholder = "Enter Slideshow Password";
-                slideshowPassword.style.padding = "10px";
-                slideshowPassword.style.fontSize = "1.2rem";
-                slideshowPassword.style.borderRadius = "6px";
-                slideshowPassword.style.border = "1px solid #ccc";
-                slideshowPassword.style.marginBottom = "10px";
+                const select = document.createElement("select");
+                select.style.padding = "12px";
+                select.style.fontSize = "1rem";
+                select.style.borderRadius = "8px";
+                select.style.border = "1px solid #ccc";
+                select.style.width = "100%";
 
                 const button = document.createElement("button");
-                button.textContent = "Submit";
-                button.style.padding = "10px 20px";
-                button.style.fontSize = "1.2rem";
+                button.textContent = "Start slideshow";
+                button.style.padding = "12px 20px";
+                button.style.fontSize = "1rem";
                 button.style.border = "none";
-                button.style.borderRadius = "6px";
+                button.style.borderRadius = "8px";
                 button.style.backgroundColor = "#007bff";
                 button.style.color = "white";
                 button.style.cursor = "pointer";
 
                 const message = document.createElement("div");
                 message.style.color = "white";
-                message.style.marginTop = "10px";
+                message.style.minHeight = "1.4em";
 
-                button.addEventListener("click", async () => {
+                async function populateOptions() {
+                    const auctions = await loadAuctionOptions();
+                    select.innerHTML = "";
+
+                    const placeholder = document.createElement("option");
+                    placeholder.value = "";
+                    placeholder.textContent = auctions.length ? "Select auction" : "No auctions available";
+                    select.appendChild(placeholder);
+
+                    auctions.forEach((auction) => {
+                        const option = document.createElement("option");
+                        option.value = auction.public_id;
+                        option.textContent = auction.full_name || auction.public_id;
+                        if (auction.public_id === auctionId) {
+                            option.selected = true;
+                        }
+                        select.appendChild(option);
+                    });
+
+                    button.disabled = auctions.length === 0;
+                    return auctions;
+                }
+
+                const auctions = await populateOptions().catch((error) => {
+                    message.textContent = error.message || "Unable to load auctions";
+                    button.disabled = true;
+                    return [];
+                });
+
+                async function submitSelection() {
                     try {
                         message.textContent = "";
-                        const loginRes = await fetch(`${API}/login`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                                username: slideshowUsername.value.trim(),
-                                password: slideshowPassword.value.trim(),
-                                role: "slideshow"
-                            })
-                        });
-
-                        const loginData = await loginRes.json();
-                        if (!loginRes.ok) throw new Error(loginData.error || "Slideshow login failed");
-                        const slideshowToken = loginData.token;
-
-                        // const shortName = auctionInput.value.trim();
-
-                        const id = await validateAuctionShortName(auctionInput.value.trim(), slideshowToken);
-                        auctionId = id;
-
-
-                        localStorage.setItem("slideshowAuctionId", auctionId);
-                        localStorage.setItem("slideshowtoken", slideshowToken);
-
-                        // This is expected to be left unattended, so we're going to log out any other elevated users
-                        localStorage.removeItem("token");
-                        localStorage.removeItem("maintenanceToken");
-                        localStorage.removeItem("cashierToken");
-
+                        const selectedAuction = auctions.find((auction) => auction.public_id === select.value);
+                        await startSelectedAuction(selectedAuction);
                         container.remove();
-                        setupChangeAuctionButton();
-                        await fetchItems();
-                        items = [...shownItems, ...upcomingItems];
-                        startSlideshow();
-                        document.documentElement.requestFullscreen?.();
-                        triggerConfigPanel();
-
+                        selectorOverlay = null;
                     } catch (err) {
-                        message.textContent = err.message;
+                        message.textContent = err.message || "Unable to start slideshow";
+                    }
+                }
+
+                button.addEventListener("click", submitSelection);
+                select.addEventListener("keydown", (event) => {
+                    if (event.key === "Enter") {
+                        event.preventDefault();
+                        void submitSelection();
                     }
                 });
 
-
-                if (elevated) {
-                    container.appendChild(notice);
-                }
-                container.appendChild(auctionInput);
-                container.appendChild(slideshowUsername);
-                container.appendChild(slideshowPassword);
-                container.appendChild(button);
-                container.appendChild(message);
+                panel.appendChild(title);
+                panel.appendChild(notice);
+                panel.appendChild(select);
+                panel.appendChild(button);
+                panel.appendChild(message);
+                container.appendChild(panel);
 
                 document.body.appendChild(container);
             }
@@ -515,37 +584,18 @@
             function setupChangeAuctionButton() {
                 const changeBtn = document.getElementById("change-auction");
                 if (changeBtn) {
-                    changeBtn.addEventListener("click", () => {
+                    changeBtn.onclick = () => {
                         if (confirm("Are you sure you want to select a different auction? ")) {
-                            logout();
-
+                            localStorage.removeItem("slideshowAuctionId");
+                            localStorage.removeItem("slideshowFullName");
+                            auctionId = null;
+                            auctionName = null;
+                            slideImage.removeAttribute("src");
+                            overlayText.innerHTML = "";
+                            void showAuctionSelector();
                         }
-                    });
+                    };
                 }
-            }
-
-            async function validateAuctionShortName(shortName, token) {
-                
-                if (!shortName) throw new Error("Auction name required");
-
-                const res = await fetch(`${API}/validate-auction`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json",
-                             Authorization: token
-                    },
-                    body: JSON.stringify({ short_name: shortName })
-                });
-
-                const data = await res.json();
-                
-                if (res.ok && data.public_id) {
-                    localStorage.setItem("slideshowAuctionId", data.public_id);
-                    localStorage.setItem("slideshowFullName", data.full_name);
-                    return data.public_id;
-                } else {
-                    throw new Error(data.error || "Name not found");
-                }
-
             }
 
 </script>

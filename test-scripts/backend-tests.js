@@ -37,27 +37,50 @@ const managedUsers = {
   admin: {
     username: `bt_admin_${userSeed}`,
     password: `BtAdmin_${userSeed}_A1!`,
-    roles: ["admin"]
+    roles: ["admin"],
+    permissions: ["admin_bidding", "live_feed"]
   },
   maintenance: {
     username: `bt_maint_${userSeed}`,
     password: `BtMaint_${userSeed}_M1!`,
-    roles: ["maintenance"]
+    roles: ["maintenance"],
+    permissions: ["manage_users"]
   },
   cashier: {
     username: `bt_cash_${userSeed}`,
     password: `BtCash_${userSeed}_C1!`,
-    roles: ["cashier"]
+    roles: ["cashier"],
+    permissions: ["live_feed"]
   },
   slideshow: {
     username: `bt_show_${userSeed}`,
     password: `BtShow_${userSeed}_L1!`,
-    roles: ["slideshow"]
+    roles: ["slideshow"],
+    permissions: []
+  },
+  adminNoBid: {
+    username: `bt_admin_plain_${userSeed}`,
+    password: `BtAdminPlain_${userSeed}_P1!`,
+    roles: ["admin"],
+    permissions: []
+  },
+  liveFeedOnly: {
+    username: `bt_live_${userSeed}`,
+    password: `BtLive_${userSeed}_L2!`,
+    roles: [],
+    permissions: ["live_feed"]
+  },
+  maintenanceNoUsers: {
+    username: `bt_maint_limited_${userSeed}`,
+    password: `BtMaintLimited_${userSeed}_M2!`,
+    roles: ["maintenance"],
+    permissions: []
   },
   selfService: {
     username: `bt_self_${userSeed}`,
     password: `BtSelf_${userSeed}_S1!`,
-    roles: ["cashier"]
+    roles: ["cashier"],
+    permissions: []
   }
 };
 
@@ -87,10 +110,12 @@ if (!FormData || !Blob) {
 const tokens = {
   bootstrap: null,
   admin: null,
+  adminNoBid: null,
   maintenance: null,
   cashier: null,
   selfService: null,
-  slideshow: null
+  slideshow: null,
+  liveFeedOnly: null
 };
 
 const testData = {
@@ -108,9 +133,15 @@ const testData = {
 };
 
   // Sleep function that returns a promise
-  function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function decodeJwtPayload(token) {
+  const parts = String(token || "").split(".");
+  assert.ok(parts.length >= 2, "Expected JWT token format");
+  return JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+}
 
 async function fetchPptxJobStatus() {
   return fetchJson(`${baseUrl}/export-jobs/pptx/status`, {
@@ -178,7 +209,8 @@ async function ensureManagedUser(user) {
   const create = await maintenanceRequest("/maintenance/users", {
     username: user.username,
     password: user.password,
-    roles: user.roles
+    roles: user.roles,
+    permissions: user.permissions || []
   });
 
   if (create.res.status === 201) return;
@@ -187,10 +219,10 @@ async function ensureManagedUser(user) {
     throw new Error(`Unable to create ${user.username}: ${create.text || create.res.status}`);
   }
 
-  const roleUpdate = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(user.username)}/roles`, {
+  const roleUpdate = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(user.username)}/access`, {
     method: "PATCH",
     headers: authHeaders(tokens.maintenance || context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ roles: user.roles })
+    body: JSON.stringify({ roles: user.roles, permissions: user.permissions || [] })
   });
   await expectStatus(roleUpdate.res, 200);
 
@@ -238,15 +270,20 @@ addTest("B-001","setup: login all roles", async () => {
   tokens.maintenance = context.token;
 
   await ensureManagedUser(managedUsers.admin);
+  await ensureManagedUser(managedUsers.adminNoBid);
   await ensureManagedUser(managedUsers.maintenance);
   await ensureManagedUser(managedUsers.cashier);
   await ensureManagedUser(managedUsers.slideshow);
+  await ensureManagedUser(managedUsers.liveFeedOnly);
+  await ensureManagedUser(managedUsers.maintenanceNoUsers);
   await ensureManagedUser(managedUsers.selfService);
 
   tokens.maintenance = await loginAs("maintenance", managedUsers.maintenance.password, managedUsers.maintenance.username);
   tokens.cashier = await loginAs("cashier", managedUsers.cashier.password, managedUsers.cashier.username);
   tokens.slideshow = await loginAs("slideshow", managedUsers.slideshow.password, managedUsers.slideshow.username);
+  tokens.liveFeedOnly = await loginAs("maintenance", managedUsers.liveFeedOnly.password, managedUsers.liveFeedOnly.username);
   tokens.selfService = await loginAs("cashier", managedUsers.selfService.password, managedUsers.selfService.username);
+  tokens.adminNoBid = await loginAs("admin", managedUsers.adminNoBid.password, managedUsers.adminNoBid.username);
   tokens.admin = await loginAs("admin", managedUsers.admin.password, managedUsers.admin.username);
   context.token = tokens.admin;
 });
@@ -264,6 +301,43 @@ addTest("B-001a","setup: login slideshow role directly", async () => {
   await expectStatus(res, 200);
   assert.ok(json && json.token, "Slideshow login failed");
   tokens.slideshow = json.token;
+});
+
+addTest("B-001b","maintenance without manage_users cannot list users", async () => {
+  const limitedToken = await loginAs("maintenance", managedUsers.maintenanceNoUsers.password, managedUsers.maintenanceNoUsers.username);
+  const { res } = await fetchJson(`${baseUrl}/maintenance/users`, {
+    headers: authHeaders(limitedToken)
+  });
+  await expectStatus(res, 403);
+});
+
+addTest("B-001c","logout-now invalidates existing token", async () => {
+  const loginBefore = await fetchJson(`${baseUrl}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: managedUsers.cashier.username,
+      password: managedUsers.cashier.password
+    })
+  });
+  await expectStatus(loginBefore.res, 200);
+  assert.ok(loginBefore.json?.token, "Expected cashier token before logout-now");
+
+  const logoutNow = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(managedUsers.cashier.username)}/logout-now`, {
+    method: "POST",
+    headers: authHeaders(tokens.maintenance)
+  });
+  await expectStatus(logoutNow.res, 200);
+
+  const validateAfter = await fetchJson(`${baseUrl}/validate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: loginBefore.json.token })
+  });
+  await expectStatus(validateAfter.res, 403);
+  assert.equal(validateAfter.json?.reason, "remote_logout");
+
+  tokens.cashier = await loginAs("cashier", managedUsers.cashier.password, managedUsers.cashier.username);
 });
 
 addTest("B-002","setup: create auction and items", async () => {
@@ -345,6 +419,38 @@ addTest("B-003","POST /login success admin", async () => {
   });
   await expectStatus(res, 200);
   assert.ok(json && json.token, "Missing token");
+  assert.ok(Array.isArray(json?.user?.permissions), "Expected permissions array");
+  assert.equal(json?.landing_path, "/admin/index.html");
+});
+
+addTest("B-003a","POST /login success live_feed permission only lands on live feed", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: managedUsers.liveFeedOnly.username,
+      password: managedUsers.liveFeedOnly.password
+    })
+  });
+  await expectStatus(res, 200);
+  assert.equal(json?.landing_path, "/cashier/live-feed.html");
+  assert.deepEqual(json?.user?.roles || [], []);
+  assert.deepEqual(json?.user?.permissions || [], ["live_feed"]);
+});
+
+addTest("B-003b","POST /login success slideshow-only user lands on slideshow", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: managedUsers.slideshow.username,
+      password: managedUsers.slideshow.password
+    })
+  });
+  await expectStatus(res, 200);
+  assert.equal(json?.landing_path, "/slideshow/index.html");
+  assert.deepEqual(json?.user?.roles || [], ["slideshow"]);
+  assert.deepEqual(json?.user?.permissions || [], []);
 });
 
 addTest("B-004","POST /login failure missing password", async () => {
@@ -365,20 +471,21 @@ addTest("B-005","POST /login failure invalid password", async () => {
   await expectStatus(res, 403);
 });
 
-addTest("B-006","POST /login failure missing role", async () => {
-  const { res } = await fetchJson(`${baseUrl}/login`, {
+addTest("B-006","POST /login success missing role", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username: managedUsers.admin.username, password: managedUsers.admin.password })
   });
-  await expectStatus(res, 400);
+  await expectStatus(res, 200);
+  assert.ok(json?.token, "Expected token without explicit role");
 });
 
 addTest("B-006a","POST /login failure missing username", async () => {
   const { res } = await fetchJson(`${baseUrl}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ role: "admin", password: managedUsers.admin.password })
+    body: JSON.stringify({ password: managedUsers.admin.password })
   });
   await expectStatus(res, 400);
 });
@@ -392,19 +499,20 @@ addTest("B-006b","POST /login failure invalid username format", async () => {
   await expectStatus(res, 400);
 });
 
-addTest("B-006c","POST /login failure invalid role value", async () => {
-  const { res } = await fetchJson(`${baseUrl}/login`, {
+addTest("B-006c","POST /login success invalid legacy role value ignored", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username: managedUsers.admin.username, role: "nope", password: managedUsers.admin.password })
   });
-  await expectStatus(res, 400);
+  await expectStatus(res, 200);
+  assert.ok(json?.token, "Expected token when legacy role is ignored");
 });
 
-addTest("B-006d","POST /login failure valid user with unassigned role", async () => {
+addTest("B-006d","POST /login success even when legacy role mismatches user access", async () => {
   const { res, json } = await attemptLoginWith(managedUsers.admin.username, "maintenance", managedUsers.admin.password);
-  await expectStatus(res, 403);
-  assert.equal(json?.error, "Role not assigned to this user");
+  await expectStatus(res, 200);
+  assert.ok(json?.token, "Expected token when legacy role is ignored");
 });
 
 addTest("B-006e","POST /change-password failure wrong current password", async () => {
@@ -458,6 +566,13 @@ addTest("B-007","POST /validate success", async () => {
   });
   await expectStatus(res, 200);
   assert.ok(json && json.token, "Missing token");
+  assert.equal(json?.user?.username, managedUsers.admin.username);
+  assert.deepEqual(json?.user?.roles || [], ["admin"]);
+  assert.deepEqual(json?.user?.permissions || [], ["admin_bidding", "live_feed"]);
+  assert.equal(json?.landing_path, "/admin/index.html");
+  const payload = decodeJwtPayload(json.token);
+  assert.equal(payload.username, managedUsers.admin.username);
+  assert.ok(Number.isFinite(payload.session_invalid_before), "Expected session_invalid_before claim");
 });
 
 addTest("B-008","POST /validate failure missing token", async () => {
@@ -1394,6 +1509,28 @@ addTest("B-050a","GET /auctions/:publicId/slideshow-items failure invalid auctio
   await expectStatus(res, 400);
 });
 
+addTest("B-050b","GET /slideshow/auctions success", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/slideshow/auctions`, {
+    headers: authHeaders(tokens.slideshow)
+  });
+  await expectStatus(res, 200);
+  assert.ok(Array.isArray(json), "Expected auction list array");
+  assert.ok(json.some((auction) => auction.public_id === testData.auctionPublicId), "Expected current auction in slideshow list");
+  assert.ok(json.every((auction) => typeof auction.full_name === "string"), "Expected full auction names");
+});
+
+addTest("B-050c","GET /slideshow/auctions failure unauthenticated", async () => {
+  const res = await fetch(`${baseUrl}/slideshow/auctions`);
+  await expectStatus(res, 403);
+});
+
+addTest("B-050d","GET /slideshow/auctions failure wrong role", async () => {
+  const res = await fetch(`${baseUrl}/slideshow/auctions`, {
+    headers: authHeaders(tokens.cashier)
+  });
+  await expectStatus(res, 403);
+});
+
 
 // /validate-auction
 addTest("B-058","POST /validate-auction success", async () => {
@@ -1491,6 +1628,43 @@ addTest("B-062","POST /list-auctions success", async () => {
   });
   await expectStatus(res, 200);
   assert.ok(Array.isArray(json), "Expected array");
+});
+
+addTest("B-062a","POST /list-auctions success live_feed permission only", async () => {
+  const { res, json } = await fetchJson(`${baseUrl}/list-auctions`, {
+    method: "POST",
+    headers: authHeaders(tokens.liveFeedOnly, { "Content-Type": "application/json" }),
+    body: JSON.stringify({})
+  });
+  await expectStatus(res, 200);
+  assert.ok(Array.isArray(json), "Expected array");
+});
+
+addTest("B-062b","POST /validate refreshes access after maintenance update", async () => {
+  const update = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(managedUsers.liveFeedOnly.username)}/access`, {
+    method: "PATCH",
+    headers: authHeaders(tokens.maintenance, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ roles: ["slideshow"], permissions: [] })
+  });
+  await expectStatus(update.res, 200);
+
+  const validateUpdated = await fetchJson(`${baseUrl}/validate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: tokens.liveFeedOnly })
+  });
+  await expectStatus(validateUpdated.res, 200);
+  assert.deepEqual(validateUpdated.json?.user?.roles || [], ["slideshow"]);
+  assert.deepEqual(validateUpdated.json?.user?.permissions || [], []);
+  assert.equal(validateUpdated.json?.landing_path, "/slideshow/index.html");
+
+  const restore = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(managedUsers.liveFeedOnly.username)}/access`, {
+    method: "PATCH",
+    headers: authHeaders(tokens.maintenance, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ roles: [], permissions: ["live_feed"] })
+  });
+  await expectStatus(restore.res, 200);
+  tokens.liveFeedOnly = await loginAs("maintenance", managedUsers.liveFeedOnly.password, managedUsers.liveFeedOnly.username);
 });
 
 addTest("B-063","POST /list-auctions failure unauthenticated", async () => {

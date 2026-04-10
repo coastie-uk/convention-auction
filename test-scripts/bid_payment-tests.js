@@ -36,17 +36,26 @@ const managedUsers = {
   admin: {
     username: `pt_admin_${userSeed}`,
     password: `PtAdmin_${userSeed}_A1!`,
-    roles: ["admin"]
+    roles: ["admin"],
+    permissions: ["admin_bidding", "live_feed"]
   },
   maintenance: {
     username: `pt_maint_${userSeed}`,
     password: `PtMaint_${userSeed}_M1!`,
-    roles: ["maintenance"]
+    roles: ["maintenance"],
+    permissions: ["manage_users"]
   },
   cashier: {
     username: `pt_cash_${userSeed}`,
     password: `PtCash_${userSeed}_C1!`,
-    roles: ["cashier"]
+    roles: ["cashier"],
+    permissions: ["live_feed"]
+  },
+  adminNoBid: {
+    username: `pt_admin_plain_${userSeed}`,
+    password: `PtAdminPlain_${userSeed}_P1!`,
+    roles: ["admin"],
+    permissions: []
   }
 };
 
@@ -76,6 +85,7 @@ if (!FormData || !Blob) {
 
 const tokens = {
   admin: null,
+  adminNoBid: null,
   maintenance: null,
   cashier: null
 };
@@ -128,7 +138,8 @@ async function ensureManagedUser(user) {
   const create = await maintenanceRequest("/maintenance/users", {
     username: user.username,
     password: user.password,
-    roles: user.roles
+    roles: user.roles,
+    permissions: user.permissions || []
   });
 
   if (create.res.status === 201) return;
@@ -137,10 +148,10 @@ async function ensureManagedUser(user) {
     throw new Error(`Unable to create ${user.username}: ${create.text || create.res.status}`);
   }
 
-  const roleUpdate = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(user.username)}/roles`, {
+  const roleUpdate = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(user.username)}/access`, {
     method: "PATCH",
     headers: authHeaders(tokens.maintenance || context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ roles: user.roles })
+    body: JSON.stringify({ roles: user.roles, permissions: user.permissions || [] })
   });
   await expectStatus(roleUpdate.res, 200);
 
@@ -279,10 +290,12 @@ async function createItem(auctionPublicId, description) {
 addTest("P-001","setup: login other roles", async () => {
   tokens.maintenance = context.token;
   await ensureManagedUser(managedUsers.admin);
+  await ensureManagedUser(managedUsers.adminNoBid);
   await ensureManagedUser(managedUsers.maintenance);
   await ensureManagedUser(managedUsers.cashier);
 
   tokens.admin = await loginAs("admin", managedUsers.admin.password, managedUsers.admin.username);
+  tokens.adminNoBid = await loginAs("admin", managedUsers.adminNoBid.password, managedUsers.adminNoBid.username);
   tokens.maintenance = await loginAs("maintenance", managedUsers.maintenance.password, managedUsers.maintenance.username);
   tokens.cashier = await loginAs("cashier", managedUsers.cashier.password, managedUsers.cashier.username);
   context.token = tokens.cashier;
@@ -470,6 +483,16 @@ addTest("P-016d","POST /lots/:itemid/finalize failure price with more than 2dp",
     body: JSON.stringify({ paddle: 102, price: 50.123, auctionId: testData.auctionId })
   });
   await expectStatus(res, 400);
+});
+
+addTest("P-016e","POST /lots/:itemid/finalize failure missing admin_bidding permission", async () => {
+  await setAuctionStatusFor(testData.auctionId, "live");
+  const { res } = await fetchJson(`${baseUrl}/lots/${testData.item2}/finalize`, {
+    method: "POST",
+    headers: authHeaders(tokens.adminNoBid, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ paddle: 102, price: 50, auctionId: testData.auctionId })
+  });
+  await expectStatus(res, 403);
 });
 
 addTest("P-017","POST /lots/:itemid/finalize success", async () => {

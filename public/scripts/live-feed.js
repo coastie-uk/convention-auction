@@ -8,20 +8,18 @@
 (async () => {
   const API_ROOT = '/api';
   const API = `${API_ROOT}/cashier/live`;
-  const VALIDATE = `${API_ROOT}/validate`;
   const LIST_AUCTIONS = `${API_ROOT}/list-auctions`;
   const CHANGE_PASSWORD = `${API_ROOT}/change-password`;
   const params = new URLSearchParams(location.search);
-  const AUCTION_ID = Number(params.get('auctionId'));
+  const REQUESTED_AUCTION_ID = Number(params.get('auctionId'));
   const REQUESTED_AUCTION_STATUS = (params.get('auctionStatus') || '').toLowerCase();
   const currencySymbol = localStorage.getItem('currencySymbol') || '£';
   const REFRESH_MS = 5000;
   const RECENT_ACTIVITY_LIMIT = 12;
-
-  if (!Number.isInteger(AUCTION_ID) || AUCTION_ID <= 0) {
-    alert('This page must be opened with ?auctionId=<number>');
-    return;
-  }
+  const SHOW_PICTURES_KEY = 'liveFeedShowPictures';
+  const INITIAL_AUCTION_ID = Number.isInteger(REQUESTED_AUCTION_ID) && REQUESTED_AUCTION_ID > 0
+    ? REQUESTED_AUCTION_ID
+    : null;
 
   const $ = id => document.getElementById(id);
   const els = {
@@ -34,6 +32,7 @@
     filterInput: $('filter'),
     changePersistInput: $('changePersistSeconds'),
     bucketSortOrderInput: $('bucketSortOrder'),
+    showPicturesInput: $('showPictures'),
     showMultiItemBucketsOnlyInput: $('showMultiItemBucketsOnly'),
     recentBody: document.querySelector('#recentFeed tbody'),
     bidderGroups: $('bidderGroups'),
@@ -64,11 +63,10 @@
   const menuGroups = Array.from(document.querySelectorAll('.menu-group'));
 
   let authToken = null;
-  let authStorageKey = null;
   let auctions = [];
   let currentAuction = {
-    id: AUCTION_ID,
-    full_name: `Auction ${AUCTION_ID}`,
+    id: INITIAL_AUCTION_ID,
+    full_name: INITIAL_AUCTION_ID ? `Auction ${INITIAL_AUCTION_ID}` : 'No auction selected',
     short_name: '',
     status: REQUESTED_AUCTION_STATUS || 'unknown'
   };
@@ -85,6 +83,7 @@
   let lastPayload = { sold: [], unsold: [], bidders: [], auction_status: '' };
   let changePersistMs = loadChangePersistMs();
   let bucketSortOrder = loadBucketSortOrder();
+  let showPictures = loadShowPictures();
   let showMultiItemBucketsOnly = loadShowMultiItemBucketsOnly();
 
   const money = value => `${currencySymbol}${Number(value || 0).toFixed(2)}`;
@@ -117,6 +116,11 @@
     return auctions.find(auction => Number(auction.id) === Number(auctionId)) || null;
   }
 
+  function getActiveAuctionId() {
+    const auctionId = Number(currentAuction?.id);
+    return Number.isInteger(auctionId) && auctionId > 0 ? auctionId : null;
+  }
+
   function updateAboutBox(versions = null) {
     if (els.aboutVersionBackend) els.aboutVersionBackend.textContent = versions?.backend || 'Unknown';
     if (els.aboutVersionSchema) els.aboutVersionSchema.textContent = versions?.schema || 'Unknown';
@@ -125,15 +129,22 @@
 
   function setSessionMeta(user = null, versions = null) {
     const username = user?.username || 'unknown';
-    const roleLabel = formatRoleLabel(user?.role);
+    const roleLabel = window.AppAuth?.describeAccess
+      ? window.AppAuth.describeAccess(user)
+      : formatRoleLabel(user?.role);
     if (els.userDisplay) els.userDisplay.textContent = username;
     if (els.roleDisplay) els.roleDisplay.textContent = roleLabel;
     if (els.userMenuBtn) els.userMenuBtn.textContent = username;
     updateAboutBox(versions);
   }
 
+  window.addEventListener(window.AppAuth?.SESSION_EVENT || 'appauth:session', (event) => {
+    const session = event.detail || null;
+    setSessionMeta(session?.user, session?.versions);
+  });
+
   function updateAuctionStatusPills(statusOverride = '') {
-    const auctionLabel = currentAuction?.full_name || `Auction ${AUCTION_ID}`;
+    const auctionLabel = currentAuction?.full_name || 'No auction selected';
     const state = statusOverride || currentAuction?.status || REQUESTED_AUCTION_STATUS || 'unknown';
     const stateLabel = formatRoleLabel(state);
 
@@ -179,14 +190,20 @@
       els.auctionSelect.add(option);
     });
 
-    const matchedAuction = getAuctionById(AUCTION_ID);
+    const matchedAuction = getAuctionById(INITIAL_AUCTION_ID);
     if (matchedAuction) {
       currentAuction = matchedAuction;
       els.auctionSelect.value = String(matchedAuction.id);
+    } else if (auctions[0]) {
+      currentAuction = auctions[0];
+      els.auctionSelect.value = String(auctions[0].id);
     } else {
-      const fallbackOption = new Option(buildAuctionOptionLabel(currentAuction), currentAuction.id, true, true);
-      els.auctionSelect.add(fallbackOption);
-      els.auctionSelect.value = String(currentAuction.id);
+      currentAuction = {
+        id: null,
+        full_name: 'No auction selected',
+        short_name: '',
+        status: 'unknown'
+      };
     }
 
     updateAuctionStatusPills();
@@ -247,10 +264,19 @@
     window.open(url, '_blank', 'noopener')?.focus();
   }
 
+  function openUrlInSameWindow(url) {
+    if (!url) {
+      notify('Please select an auction first', 'error');
+      return;
+    }
+    closeMenuGroups();
+    window.location.assign(url);
+  }
+
   function logout() {
-    if (authStorageKey) localStorage.removeItem(authStorageKey);
+    window.AppAuth?.clearAllSessions?.({ broadcast: true });
     closeAboutModal();
-    window.location.replace(authStorageKey === 'token' ? '/admin/index.html' : '/cashier/index.html');
+    window.location.replace('/login.html?reason=signed_out');
   }
 
   function promptPasswordChange() {
@@ -370,33 +396,10 @@
     }
   }
 
-  async function validateStoredToken(storageKey) {
-    const token = localStorage.getItem(storageKey);
-    if (!token) return null;
-
-    try {
-      const res = await fetch(VALIDATE, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        localStorage.removeItem(storageKey);
-        return null;
-      }
-      return { token, storageKey, data };
-    } catch {
-      return null;
-    }
-  }
-
   async function getSessionToken() {
-    for (const storageKey of ['cashierToken', 'token']) {
-      const session = await validateStoredToken(storageKey);
-      if (session) return session;
-    }
-    return null;
+    const session = window.__APP_AUTH_BOOTSTRAP__ || await window.AppAuth?.refreshSession?.();
+    if (!session) return null;
+    return { token: session.token, storageKey: 'shared', data: session };
   }
 
   async function fetchAuctions() {
@@ -469,6 +472,10 @@
     return localStorage.getItem('live-feed-show-multi-item-buckets-only') === 'true';
   }
 
+  function loadShowPictures() {
+    return localStorage.getItem(SHOW_PICTURES_KEY) !== '0';
+  }
+
   function saveChangePersistMs() {
     localStorage.setItem('live-feed-change-persist-seconds', String(Math.round(changePersistMs / 1000)));
   }
@@ -481,9 +488,14 @@
     localStorage.setItem('live-feed-show-multi-item-buckets-only', String(showMultiItemBucketsOnly));
   }
 
+  function saveShowPictures() {
+    localStorage.setItem(SHOW_PICTURES_KEY, showPictures ? '1' : '0');
+  }
+
   function syncInputs() {
     if (els.changePersistInput) els.changePersistInput.value = String(Math.round(changePersistMs / 1000));
     if (els.bucketSortOrderInput) els.bucketSortOrderInput.value = bucketSortOrder;
+    if (els.showPicturesInput) els.showPicturesInput.checked = showPictures;
     if (els.showMultiItemBucketsOnlyInput) els.showMultiItemBucketsOnlyInput.checked = showMultiItemBucketsOnly;
   }
 
@@ -656,7 +668,12 @@
   }
 
   async function downloadUncollectedCsv() {
-    const res = await fetch(`${API}/${AUCTION_ID}/uncollected.csv`, {
+    const auctionId = getActiveAuctionId();
+    if (!auctionId) {
+      throw new Error('Please select an auction first');
+    }
+
+    const res = await fetch(`${API}/${auctionId}/uncollected.csv`, {
       headers: { Authorization: authToken }
     });
     if (!res.ok) {
@@ -667,7 +684,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `uncollected-auction-${AUCTION_ID}.csv`;
+    a.download = `uncollected-auction-${auctionId}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -675,7 +692,10 @@
   }
 
   async function setBidderReady(summary, ready, fingerprint) {
-    await apiPost(`${API}/${AUCTION_ID}/bidders/${summary.bidder_id}/ready`, {
+    const auctionId = getActiveAuctionId();
+    if (!auctionId) throw new Error('Please select an auction first');
+
+    await apiPost(`${API}/${auctionId}/bidders/${summary.bidder_id}/ready`, {
       ready,
       fingerprint
     });
@@ -684,12 +704,18 @@
   }
 
   async function setItemCollected(item, collected) {
-    await apiPost(`${API}/${AUCTION_ID}/items/${item.id}/collection`, { collected });
+    const auctionId = getActiveAuctionId();
+    if (!auctionId) throw new Error('Please select an auction first');
+
+    await apiPost(`${API}/${auctionId}/items/${item.id}/collection`, { collected });
     void poll({ force: true, reschedule: true });
   }
 
   async function collectAll(summary) {
-    await apiPost(`${API}/${AUCTION_ID}/bidders/${summary.bidder_id}/collect-all`, {});
+    const auctionId = getActiveAuctionId();
+    if (!auctionId) throw new Error('Please select an auction first');
+
+    await apiPost(`${API}/${auctionId}/bidders/${summary.bidder_id}/collect-all`, {});
     invalidatedChangesByBidder.delete(String(summary.bidder_id));
     void poll({ force: true, reschedule: true });
   }
@@ -948,6 +974,32 @@
 
     table.append(thead, tbody);
     group.appendChild(table);
+
+    const pictureItems = liveItems.filter(item => item.photo);
+    if (showPictures && pictureItems.length) {
+      const previewStrip = document.createElement('div');
+      previewStrip.className = 'bucket-preview-strip';
+
+      pictureItems.slice(0, 8).forEach(item => {
+        const figure = document.createElement('figure');
+        figure.className = 'bucket-preview-thumb';
+        figure.innerHTML = `
+          <img src="${API_ROOT}/uploads/preview_${item.photo}" alt="Lot ${item.lot} preview" loading="lazy">
+          <figcaption>Lot ${item.lot}</figcaption>`;
+        previewStrip.appendChild(figure);
+      });
+
+      const extraCount = pictureItems.length - Math.min(pictureItems.length, 8);
+      if (extraCount > 0) {
+        const more = document.createElement('div');
+        more.className = 'bucket-preview-thumb bucket-preview-thumb-more';
+        more.textContent = `+${extraCount} more`;
+        previewStrip.appendChild(more);
+      }
+
+      group.appendChild(previewStrip);
+    }
+
     return group;
   }
 
@@ -1110,6 +1162,12 @@
   }
 
   async function poll({ force = false, reschedule = false } = {}) {
+    const auctionId = getActiveAuctionId();
+    if (!auctionId) {
+      setStatus(false);
+      return;
+    }
+
     if (pollInFlight) {
       if (force) setNextRefresh(1000);
       return;
@@ -1122,7 +1180,7 @@
     updateCountdown();
 
     try {
-      const res = await fetch(`${API}/${AUCTION_ID}?unsold=${els.chkUnsold.checked}`, {
+      const res = await fetch(`${API}/${auctionId}?unsold=${els.chkUnsold.checked}`, {
         headers: { 'Content-Type': 'application/json', Authorization: authToken }
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1214,6 +1272,13 @@
       render();
     });
 
+    els.showPicturesInput?.addEventListener('change', () => {
+      showPictures = Boolean(els.showPicturesInput.checked);
+      saveShowPictures();
+      syncInputs();
+      render();
+    });
+
     els.showMultiItemBucketsOnlyInput?.addEventListener('change', () => {
       showMultiItemBucketsOnly = Boolean(els.showMultiItemBucketsOnlyInput.checked);
       saveShowMultiItemBucketsOnly();
@@ -1234,11 +1299,11 @@
     });
 
     els.goAdminBtn?.addEventListener('click', () => {
-      openUrlInNewTab(buildAdminUrl(currentAuction));
+      openUrlInSameWindow(buildAdminUrl(currentAuction));
     });
 
     els.goCashierBtn?.addEventListener('click', () => {
-      openUrlInNewTab(buildCashierUrl(currentAuction));
+      openUrlInSameWindow(buildCashierUrl(currentAuction));
     });
 
     els.changePwBtn?.addEventListener('click', () => {
@@ -1295,7 +1360,6 @@
   }
 
   authToken = session.token;
-  authStorageKey = session.storageKey;
   setSessionMeta(session.data.user, session.data.versions);
   await loadAuctions();
 

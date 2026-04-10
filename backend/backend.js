@@ -21,13 +21,17 @@ const { audit, auditTypes } = require('./middleware/audit');
 const { sanitiseText } = require('./middleware/sanitiseText');
 const {
   ROLE_LIST,
-  ROLE_SET,
+  PERMISSION_LIST,
   normaliseUsername,
   isValidUsername,
   getUserByUsername,
-  userHasRole,
+  shapeUserAccess,
+  getPrimaryRole,
+  getLandingPath,
   setUserPassword,
-  getAuditActor
+  getAuditActor,
+  getSessionInvalidBeforeValue,
+  isSessionTokenCurrent
 } = require('./users');
 
 
@@ -56,7 +60,12 @@ const {
 
 const allowedExtensionsSet = new Set(allowedExtensions.map((ext) => ext.toLowerCase()));
 
-const { authenticateRole } = require('./middleware/authenticateRole');
+const {
+  authenticateSession,
+  authenticateRole,
+  authenticateAccess,
+  attachDecodedUser
+} = require('./middleware/authenticateRole');
 
 const maintenanceRoutes = require('./maintenance');
 const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
@@ -96,13 +105,13 @@ function checkRateLimit(req) {
   return { limited: false };
 }
 
-function getLockoutKey(req, username, role) {
-  return `${getClientIp(req)}::${username || 'unknown'}::${role || 'unknown'}`;
+function getLockoutKey(req, username) {
+  return `${getClientIp(req)}::${username || 'unknown'}`;
 }
 
-function isLoginLockedOut(req, username, role) {
+function isLoginLockedOut(req, username) {
   const now = Date.now();
-  const key = getLockoutKey(req, username, role);
+  const key = getLockoutKey(req, username);
   const entry = loginLockoutState.get(key);
 
   if (!entry) return { locked: false };
@@ -117,9 +126,9 @@ function isLoginLockedOut(req, username, role) {
   return { locked: false };
 }
 
-function recordLoginFailure(req, username, role) {
+function recordLoginFailure(req, username) {
   const now = Date.now();
-  const key = getLockoutKey(req, username, role);
+  const key = getLockoutKey(req, username);
   let entry = loginLockoutState.get(key);
 
   if (!entry || (entry.lockedUntil && entry.lockedUntil <= now)) {
@@ -136,8 +145,42 @@ function recordLoginFailure(req, username, role) {
   loginLockoutState.set(key, entry);
 }
 
-function clearLoginFailures(req, username, role) {
-  loginLockoutState.delete(getLockoutKey(req, username, role));
+function clearLoginFailures(req, username) {
+  loginLockoutState.delete(getLockoutKey(req, username));
+}
+
+function buildSessionUser(user) {
+  const access = shapeUserAccess(user || {});
+  return {
+    username: user?.username || null,
+    role: getPrimaryRole(access),
+    roles: access.roles,
+    permissions: access.permissions,
+    session_invalid_before: getSessionInvalidBeforeValue(user),
+    is_root: access.is_root
+  };
+}
+
+function issueSessionToken(user) {
+  const sessionUser = buildSessionUser(user);
+  return jwt.sign({
+    username: user?.username || sessionUser.username,
+    role: sessionUser.role,
+    roles: sessionUser.roles,
+    permissions: sessionUser.permissions,
+    session_invalid_before: sessionUser.session_invalid_before,
+    is_root: sessionUser.is_root
+  }, SECRET_KEY, { expiresIn: sessionTime });
+}
+
+function buildSessionResponse(user, token) {
+  return {
+    token,
+    currency: CURRENCY_SYMBOL,
+    landing_path: getLandingPath(user),
+    versions: { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer },
+    user: buildSessionUser(user)
+  };
 }
 
 
@@ -262,15 +305,29 @@ app.post('/validate', async (req, res) => {
             logFromRequest(req, logLevels.INFO, `Token invalid. session expired`);
             return res.status(403).json({ error: "Session expired" });
         }
-        req.user = decoded;
-        res.json({ token, versions: 
-            { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer },
-            user: {
-              username: decoded.username || decoded.role || null,
-              role: decoded.role || null,
-              roles: Array.isArray(decoded.roles) ? decoded.roles : (decoded.role ? [decoded.role] : [])
-            } });
-        logFromRequest(req, logLevels.DEBUG, `Token validated successfully`);
+        const normalizedUsername = normaliseUsername(decoded?.username || '');
+        const currentUser = normalizedUsername ? getUserByUsername(normalizedUsername) : null;
+        if (!currentUser) {
+            logFromRequest(req, logLevels.WARN, `Validated token for missing user "${normalizedUsername || 'unknown'}"`);
+            return res.status(403).json({ error: "Session expired" });
+        }
+        if (!isSessionTokenCurrent(currentUser, decoded)) {
+            logFromRequest(req, logLevels.INFO, `Remote logout applied to ${currentUser.username}`);
+            return res.status(403).json({ error: "Session invalidated", reason: "remote_logout" });
+        }
+
+        const refreshedToken = issueSessionToken(currentUser);
+        const sessionUser = attachDecodedUser(req, {
+          username: currentUser.username,
+          ...buildSessionUser(currentUser)
+        });
+        res.json({
+            token: refreshedToken,
+            landing_path: getLandingPath(sessionUser),
+            versions: { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer },
+            user: buildSessionUser(sessionUser)
+        });
+        logFromRequest(req, logLevels.DEBUG, `Token validated successfully for user ${currentUser.username} `);
 
 
     });
@@ -282,18 +339,12 @@ app.post('/validate', async (req, res) => {
 // Also returns currency symbol + version data (as this route is the entry point to all users)
 //--------------------------------------------------------------------------
 app.post('/login', (req, res) => {
-    const { username, password, role } = req.body || {};
-    const normalizedRole = String(role || '').trim().toLowerCase();
+    const { username, password } = req.body || {};
     const normalizedUsername = normaliseUsername(username);
 
-    if (!normalizedUsername || !password || !normalizedRole) {
+    if (!normalizedUsername || !password) {
         logFromRequest(req, logLevels.ERROR, `Missing login fields`);
-        return res.status(400).json({ error: "Username, password and role are required" });
-    }
-
-    if (!ROLE_SET.has(normalizedRole)) {
-        logFromRequest(req, logLevels.WARN, `Invalid login role requested: ${normalizedRole}`);
-        return res.status(400).json({ error: "Invalid role" });
+        return res.status(400).json({ error: "Username and password are required" });
     }
 
     if (!isValidUsername(normalizedUsername)) {
@@ -301,18 +352,18 @@ app.post('/login', (req, res) => {
         return res.status(400).json({ error: "Invalid username format" });
     }
 
-    const lockout = isLoginLockedOut(req, normalizedUsername, normalizedRole);
+    const lockout = isLoginLockedOut(req, normalizedUsername);
     if (lockout.locked) {
         const retryAfterSeconds = Math.ceil(lockout.retryAfterMs / 1000);
         res.set('Retry-After', retryAfterSeconds.toString());
-        logFromRequest(req, logLevels.WARN, `Login locked out for ${normalizedUsername}/${normalizedRole} from ${getClientIp(req)}`);
+        logFromRequest(req, logLevels.WARN, `Login locked out for ${normalizedUsername} from ${getClientIp(req)}`);
         return res.status(429).json({ error: "Too many failed attempts. Please try again later." });
     }
 
     const user = getUserByUsername(normalizedUsername);
     if (!user || !user.password) {
-      logFromRequest(req, logLevels.WARN, `Invalid credentials for ${normalizedUsername}/${normalizedRole}`);
-      recordLoginFailure(req, normalizedUsername, normalizedRole);
+      logFromRequest(req, logLevels.WARN, `Invalid credentials for ${normalizedUsername}`);
+      recordLoginFailure(req, normalizedUsername);
       return res.status(403).json({ error: "Invalid username or password" });
     }
 
@@ -320,21 +371,11 @@ app.post('/login', (req, res) => {
     const isHash = typeof stored === 'string' && stored.startsWith('$2');
 
     const handleSuccess = () => {
-      const token = jwt.sign({
-        username: user.username,
-        role: normalizedRole,
-        roles: user.roles,
-        is_root: Number(user.is_root) === 1
-      }, SECRET_KEY, { expiresIn: sessionTime });
+      const token = issueSessionToken(user);
 
-      res.json({
-        token,
-        currency: CURRENCY_SYMBOL,
-        versions: { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer },
-        user: { username: user.username, role: normalizedRole, roles: user.roles }
-      });
+      res.json(buildSessionResponse(user, token));
 
-      logFromRequest(req, logLevels.INFO, `User "${user.username}" logged in with role "${normalizedRole}"`);
+      logFromRequest(req, logLevels.INFO, `User "${user.username}" logged in`);
       logFromRequest(req, logLevels.DEBUG, `full Token: ${token}....`);
     };
 
@@ -342,15 +383,11 @@ app.post('/login', (req, res) => {
       bcrypt.compare(password, stored, (bErr, match) => {
         if (bErr) return res.status(500).json({ error: bErr.message });
         if (!match) {
-          logFromRequest(req, logLevels.WARN, `Invalid credentials for ${normalizedUsername}/${normalizedRole}`);
-          recordLoginFailure(req, normalizedUsername, normalizedRole);
+          logFromRequest(req, logLevels.WARN, `Invalid credentials for ${normalizedUsername}`);
+          recordLoginFailure(req, normalizedUsername);
           return res.status(403).json({ error: "Invalid username or password" });
         }
-        if (!userHasRole(user, normalizedRole)) {
-          logFromRequest(req, logLevels.WARN, `User "${normalizedUsername}" attempted unassigned role "${normalizedRole}"`);
-          return res.status(403).json({ error: "Role not assigned to this user" });
-        }
-        clearLoginFailures(req, normalizedUsername, normalizedRole);
+        clearLoginFailures(req, normalizedUsername);
         return handleSuccess();
       });
       return;
@@ -358,8 +395,8 @@ app.post('/login', (req, res) => {
 
     // Legacy plaintext user entries are upgraded after successful login.
     if (stored !== password) {
-      logFromRequest(req, logLevels.WARN, `Invalid credentials for ${normalizedUsername}/${normalizedRole}`);
-      recordLoginFailure(req, normalizedUsername, normalizedRole);
+      logFromRequest(req, logLevels.WARN, `Invalid credentials for ${normalizedUsername}`);
+      recordLoginFailure(req, normalizedUsername);
       return res.status(403).json({ error: "Invalid username or password" });
     }
 
@@ -371,12 +408,7 @@ app.post('/login', (req, res) => {
       logFromRequest(req, logLevels.ERROR, `Failed to upgrade plaintext password for ${user.username}: ${uErr.message}`);
     }
 
-    if (!userHasRole(user, normalizedRole)) {
-      logFromRequest(req, logLevels.WARN, `User "${normalizedUsername}" attempted unassigned role "${normalizedRole}"`);
-      return res.status(403).json({ error: "Role not assigned to this user" });
-    }
-
-    clearLoginFailures(req, normalizedUsername, normalizedRole);
+    clearLoginFailures(req, normalizedUsername);
     return handleSuccess();
 });
 
@@ -384,7 +416,7 @@ app.post('/login', (req, res) => {
 // POST /change-password
 // Authenticated users can change their own password.
 //--------------------------------------------------------------------------
-app.post('/change-password', authenticateRole(ROLE_LIST), async (req, res) => {
+app.post('/change-password', authenticateAccess({ roles: ROLE_LIST, permissions: PERMISSION_LIST }), async (req, res) => {
   const username = req.user?.username;
   const { currentPassword, newPassword } = req.body || {};
 
@@ -1095,6 +1127,20 @@ app.get('/auctions/:publicId/slideshow-items', authenticateRole("slideshow"), ch
     }
 });
 
+app.get('/slideshow/auctions', authenticateRole("slideshow"), (req, res) => {
+    try {
+        const auctions = db.prepare(`
+          SELECT public_id, full_name
+          FROM auctions
+          ORDER BY full_name COLLATE NOCASE ASC
+        `).all();
+        return res.json(auctions);
+    } catch (err) {
+        logFromRequest(req, logLevels.ERROR, `Failed to list slideshow auctions: ${err.message}`);
+        return res.status(500).json({ error: "Failed to retrieve auctions" });
+    }
+});
+
 //--------------------------------------------------------------------------
 // POST /validate-auction
 // API to check whether the publically entered auction short name exists and is active
@@ -1178,7 +1224,7 @@ app.post("/validate-auction", async (req, res) => {
 // – If `status` is omitted, returm all
 // – If `status` is supplied, only auctions with that status are returned.
 // -----------------------------------------------------------------------------
-app.post("/list-auctions", authenticateRole(["maintenance", "admin", "cashier"]), async (req, res) => {
+app.post("/list-auctions", authenticateAccess({ roles: ["maintenance", "admin", "cashier"], permissions: ["live_feed"] }), async (req, res) => {
     //    logFromRequest(req, logLevels.DEBUG, "Auction list (admin) requested");
 
     const status = req.body?.status;             // undefined if not sent

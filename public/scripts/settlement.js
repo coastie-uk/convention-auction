@@ -4,10 +4,14 @@ const API = "/api"
 
 const API_ROOT = `${API}/settlement`;
   const POLL_MS  = 5000;
+  const BUYER_DISPLAY_STATE_KEY = 'cashierBuyerDisplayState';
+  const SHOW_PICTURES_KEY = 'cashierShowPictures';
   let token = localStorage.getItem('cashierToken');
 
   let bidders = [];
   let selBidder = null;
+  let selectedBidderId = null;
+  let showPictures = localStorage.getItem(SHOW_PICTURES_KEY) !== '0';
 
   const bidderBody = document.querySelector('#bidderTable tbody');
   const lotsBody   = document.querySelector('#lotsTable tbody');
@@ -15,6 +19,7 @@ const API_ROOT = `${API}/settlement`;
   const detailBox  = document.getElementById('detail');
   const emptyDetailEl = document.getElementById('emptyDetail');
   const lotsTotalEl = document.getElementById('lotsTotal');
+  const lotsPreviewStripEl = document.getElementById('lotsPreviewStrip');
   const titleEl    = document.getElementById('title');
   const fingerprintDisplay = document.getElementById('fingerprintDisplay');
   const toggleFingerprintBtn = document.getElementById('toggleFingerprintBtn');
@@ -107,6 +112,56 @@ const API_ROOT = `${API}/settlement`;
         return String(method ?? '').replace(/-/g, ' ') || 'Payment';
     }
   };
+
+  function getCashierAuctionName() {
+    const currentAuctionPill = document.getElementById('current-auction-pill');
+    const rawLabel = currentAuctionPill?.textContent || '';
+    const label = rawLabel.replace(/^Auction:\s*/i, '').trim();
+    if (label && label.toLowerCase() !== 'none selected') return label;
+    return selBidder?.auction_name || selBidder?.auction_short_name || `Auction ${AUCTION_ID}`;
+  }
+
+  function getBuyerDisplayState() {
+    return {
+      auctionId: AUCTION_ID,
+      auctionName: getCashierAuctionName(),
+      showPictures,
+      selectedBidder: selBidder
+        ? {
+            paddle_number: selBidder.paddle_number,
+            lots_total: Number(selBidder.lots_total || 0),
+            payments_total: Number(selBidder.payments_total || 0),
+            donations_total: Number(selBidder.donations_total || 0),
+            balance: Number(selBidder.balance || 0),
+            lots: Array.isArray(selBidder.lots)
+              ? selBidder.lots.map((lot) => ({
+                  item_number: lot.item_number,
+                  description: lot.description,
+                  hammer_price: Number(lot.hammer_price || 0),
+                  photo_url: lot.photo_url || lot.photoUrl || lot.photo || ''
+                }))
+              : []
+          }
+        : null
+    };
+  }
+
+  function persistBuyerDisplayState() {
+    const state = getBuyerDisplayState();
+    window.__cashierBuyerDisplayStateCurrent__ = state;
+    if (typeof window.__cashierPushBuyerDisplayState__ === 'function') {
+      window.__cashierPushBuyerDisplayState__(state);
+      return;
+    }
+    try {
+      localStorage.setItem(BUYER_DISPLAY_STATE_KEY, JSON.stringify(state));
+    } catch (_) {
+      // ignore storage failures
+    }
+  }
+
+  window.__getCashierBuyerDisplayStateImpl__ = getBuyerDisplayState;
+  window.__cashierBuyerDisplayStateCurrent__ = getBuyerDisplayState();
 
   function buildReceiptHtml(bidder, printedAt) {
     const auctionName = bidder.auction_name || bidder.auction_short_name || `Auction ${AUCTION_ID}`;
@@ -280,8 +335,14 @@ const API_ROOT = `${API}/settlement`;
     renderBidders();
     if(selBidder){
       const updated = bidders.find(b=>b.id===selBidder.id);
-      if(updated) selectBidder(updated, { preserveUiState: true });
+      if(updated) {
+        await selectBidder(updated, { preserveUiState: true });
+      } else {
+        selectBidder(null, { preserveUiState: true });
+      }
+      return;
     }
+    persistBuyerDisplayState();
   }
 
 
@@ -388,7 +449,7 @@ buttons.forEach(btn => {
       tr.dataset.id=b.id;
       tr.innerHTML=`<td>${b.paddle_number}</td><td>${money(b.balance)}</td>`;
       tr.onclick=()=>selectBidder(b);
-      if(selBidder&&selBidder.id===b.id) tr.classList.add('sel');
+      if((selectedBidderId ?? selBidder?.id)===b.id) tr.classList.add('sel');
       bidderBody.appendChild(tr);
     });
 
@@ -399,6 +460,7 @@ buttons.forEach(btn => {
   async function selectBidder(b, options = {}){
     const { preserveUiState = false } = options;
     if(!b){
+      selectedBidderId = null;
       selBidder=null;
       renderBidders();
       detailBox.style.display='none';
@@ -407,10 +469,11 @@ buttons.forEach(btn => {
       fingerprintVisible = false;
       if (lotsTotalEl) lotsTotalEl.textContent = '';
       updateFingerprintDisplay();
+      persistBuyerDisplayState();
       return;
     }
 
-    selBidder = b;
+    selectedBidderId = b.id;
     renderBidders();
 
     const res = await fetch(`${API_ROOT}/bidders/${b.id}?auction_id=${AUCTION_ID}`, { headers:{ Authorization:token }});
@@ -425,8 +488,14 @@ buttons.forEach(btn => {
             return;
         }
 
-    if(!res.ok){ showMessage('Could not load bidder', 'error'); return; }
+    if(!res.ok){
+      showMessage('Could not load bidder', 'error');
+      selectedBidderId = selBidder?.id ?? null;
+      renderBidders();
+      return;
+    }
     selBidder = await res.json();
+    selectedBidderId = selBidder.id;
     if (!preserveUiState) fingerprintVisible = false;
 
     renderBidders();
@@ -455,12 +524,14 @@ updatePaymentStateTooltip(false);
   }
 
 updateTotals();
+    persistBuyerDisplayState();
 
   }
 
   function renderLots(){
     lotsBody.innerHTML='';
-    (selBidder.lots||[]).forEach(l=>{
+    const lots = selBidder.lots || [];
+    lots.forEach(l=>{
 
     const prc = l.test_bid != null ? `${money(l.hammer_price)} <b>[T]</b>` : money(l.hammer_price);
     const desc = l.test_item != null ? `${l.description} <b>[T]</b>` : l.description;
@@ -472,6 +543,33 @@ updateTotals();
       else delete tr.dataset.photoUrl;
       lotsBody.appendChild(tr);
     });
+
+    if (lotsPreviewStripEl) {
+      const pictureLots = lots.filter(l => l.photo_url || l.photoUrl || l.photo || '');
+      const previewLots = showPictures ? pictureLots.slice(0, 6) : [];
+      const remainingCount = showPictures ? Math.max(0, pictureLots.length - previewLots.length) : 0;
+      lotsPreviewStripEl.innerHTML = '';
+
+      previewLots.forEach((lot) => {
+        const photoUrl = lot.photo_url || lot.photoUrl || lot.photo || '';
+        const figure = document.createElement('figure');
+        figure.className = 'lot-preview-thumb';
+        figure.innerHTML = `
+          <img src="${uploadBase}/preview_${photoUrl}" alt="Lot ${lot.item_number} preview" loading="lazy">
+          <figcaption>Lot ${lot.item_number}</figcaption>`;
+        lotsPreviewStripEl.appendChild(figure);
+      });
+
+      if (remainingCount > 0) {
+        const more = document.createElement('div');
+        more.className = 'lot-preview-thumb lot-preview-thumb-more';
+        more.textContent = `+${remainingCount} more`;
+        lotsPreviewStripEl.appendChild(more);
+      }
+
+      lotsPreviewStripEl.hidden = previewLots.length === 0;
+    }
+
     if (lotsTotalEl) lotsTotalEl.textContent = `Total lots: ${money(selBidder.lots_total || 0)}`;
   }
 
@@ -807,6 +905,13 @@ document.getElementById('summaryBtn').onclick = async () => {
 
 
   // polling
+  window.addEventListener('cashier:show-pictures-changed', (event) => {
+    showPictures = Boolean(event.detail?.showPictures);
+    if (selBidder) {
+      renderLots();
+      persistBuyerDisplayState();
+    }
+  });
   void fetchCurrentUsername();
   fetchBidders();
   refreshPaymentButtons();

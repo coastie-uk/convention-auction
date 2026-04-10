@@ -9,10 +9,10 @@ const Database = require('better-sqlite3');
 const path     = require('path');
 const fs       = require('fs');
 const crypto   = require('crypto');
-const schemaVersion = '2.6';
+const schemaVersion = '2.8';
 const { logLevels, log } = require('./logger');
 const bcrypt = require('bcryptjs');
-const { ROLE_LIST, ROLE_SET, ROOT_USERNAME } = require('./auth-constants');
+const { ROLE_LIST, PERMISSION_LIST, ROOT_USERNAME } = require('./auth-constants');
 const {
     DB_PATH,
     DB_NAME
@@ -28,6 +28,8 @@ const {
 // 2.4  Adds username-based users with multi-role permissions
 // 2.5  Adds items.last_print for item slip print tracking, add seconds to timekstamps
 // 2.6  Adds items.last_slide_export and items.last_card_export for export tracking, Adds items.last_bid_update for authoritative bid/retract ordering. Adds bidder ready state/fingerprint and item collection tracking for live feed. Adds donation tracking columns for cashier payments and SumUp intents
+// 2.7  Adds users.permissions for shared-login capability permissions
+// 2.8  Adds users.session_invalid_before for remote session invalidation
 
  
 
@@ -120,6 +122,8 @@ if(existingSchemaVersion > schemaVersion) {
         username TEXT PRIMARY KEY COLLATE NOCASE,
         password TEXT NOT NULL,
         roles TEXT NOT NULL,
+        permissions TEXT NOT NULL DEFAULT '[]',
+        session_invalid_before INTEGER NOT NULL DEFAULT 0,
         is_root INTEGER NOT NULL DEFAULT 0,
         created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')),
         updated_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
@@ -216,6 +220,8 @@ if(existingSchemaVersion > schemaVersion) {
   try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_provider_payments_intent ON payments(provider, intent_id)`); } catch (e) { /* already exists */ }
   try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_users_single_root ON users(is_root) WHERE is_root = 1`); } catch (e) { /* already exists */ }
   try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username_nocase ON users(username COLLATE NOCASE)`); } catch (e) { /* already exists */ }
+  try { db.exec(`ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'`); } catch (e) { /* already exists */ }
+  try { db.exec(`ALTER TABLE users ADD COLUMN session_invalid_before INTEGER NOT NULL DEFAULT 0`); } catch (e) { /* already exists */ }
 
 
   // 2.0 -> 2.1 Add admin_state_change
@@ -249,14 +255,16 @@ if(existingSchemaVersion > schemaVersion) {
     // Root is canonical and unique.
     db.prepare('UPDATE users SET is_root = 0 WHERE lower(username) <> ?').run(ROOT_USERNAME);
 
+    db.prepare(`UPDATE users SET permissions = COALESCE(NULLIF(TRIM(permissions), ''), '[]')`).run();
+
     const rootRow = db.prepare('SELECT rowid, password FROM users WHERE lower(username) = ?').get(ROOT_USERNAME);
     if (!rootRow) {
       const rootPassword = crypto.randomBytes(18).toString('base64url');
       const rootHash = bcrypt.hashSync(rootPassword, 12);
       db.prepare(`
-        INSERT INTO users (username, password, roles, is_root, created_at, updated_at)
-        VALUES (?, ?, ?, 1, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'), strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
-      `).run(ROOT_USERNAME, rootHash, JSON.stringify(ROLE_LIST));
+        INSERT INTO users (username, password, roles, permissions, session_invalid_before, is_root, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 0, 1, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'), strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
+      `).run(ROOT_USERNAME, rootHash, JSON.stringify(ROLE_LIST), JSON.stringify(PERMISSION_LIST));
 
       log('General', logLevels.WARN, 'Created default root account with full permissions.');
       log('General', logLevels.WARN, `Initial root password (shown once): ${rootPassword}`);
@@ -266,9 +274,9 @@ if(existingSchemaVersion > schemaVersion) {
       if (rootHash) {
         db.prepare(`
           UPDATE users
-          SET username = ?, password = ?, roles = ?, is_root = 1, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
+          SET username = ?, password = ?, roles = ?, permissions = ?, is_root = 1, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
           WHERE rowid = ?
-        `).run(ROOT_USERNAME, rootHash, JSON.stringify(ROLE_LIST), rootRow.rowid);
+        `).run(ROOT_USERNAME, rootHash, JSON.stringify(ROLE_LIST), JSON.stringify(PERMISSION_LIST), rootRow.rowid);
       }
     }
   } catch (e) {

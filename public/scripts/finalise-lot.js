@@ -40,8 +40,15 @@ const API = "/api"
 
 
   function getToken() {
-    return localStorage.getItem("token");
-}
+    return window.AppAuth?.getToken?.() || localStorage.getItem("token");
+  }
+
+  function canManageBids() {
+    const session = window.__APP_AUTH_BOOTSTRAP__ || window.AppAuth?.getSharedSession?.();
+    return window.AppAuth?.canAccess
+      ? window.AppAuth.canAccess(session?.user, { permission: "admin_bidding" })
+      : true;
+  }
      // --------------- fetch auction status (POST body) ----------
     async function syncStatus() {
         try {
@@ -69,9 +76,12 @@ const API = "/api"
 
   // --------------- inject buttons ----------------------------
   function enhanceRows() {
+    if (!canManageBids()) {
+      TABLE_BODY.querySelectorAll('.btn-finalize, .btn-undo').forEach((button) => button.remove());
+      return;
+    }
 
-//    if (auctionStatus !== 'live') return; // active only in live phase
-    if (hideFinaliseStates.includes(auctionStatus)) return
+    if (hideFinaliseStates.includes(auctionStatus)) return;
 
     TABLE_BODY.querySelectorAll('tr').forEach(tr => {
 
@@ -364,6 +374,11 @@ window.addEventListener("load", () => {
         localStorage.removeItem("token");
         window.location.href = "/admin"; // or logout()
     });
+});
+
+window.addEventListener(window.AppAuth?.SESSION_EVENT || "appauth:session", () => {
+    enhanceRows();
+    lockEditingUI();
 });
 
 
