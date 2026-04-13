@@ -4,6 +4,24 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Live Feed - Auction</title>
+  <script>
+    (function bootstrapOperatorTheme() {
+      const getBrowserPreferredTheme = () => window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light";
+      try {
+        const session = JSON.parse(localStorage.getItem("operatorSession") || "null");
+        const savedMode = String(session?.user?.preferences?.theme?.mode || "").toLowerCase();
+        const mode = savedMode === "dark" || savedMode === "light"
+          ? savedMode
+          : getBrowserPreferredTheme();
+        document.documentElement.dataset.theme = mode;
+        document.documentElement.style.colorScheme = mode;
+      } catch (_error) {
+        const mode = getBrowserPreferredTheme();
+        document.documentElement.dataset.theme = mode;
+        document.documentElement.style.colorScheme = mode;
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="/styles/admin-styles.css" />
   <link rel="icon" type="image/png" href="/images/favicon.png" />
   <style>
@@ -112,6 +130,30 @@
     .compact-table th,
     .compact-table td {
       padding: 8px 10px;
+    }
+    .datatable {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    .datatable th,
+    .datatable td {
+      border-top: 1px solid #e7ebf0;
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .datatable thead th {
+      border-top: 0;
+      background: #fbfcfe;
+      color: #5f6b7a;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .datatable tbody tr:hover {
+      background: #f8fbff;
     }
     .compact-table tbody tr:first-child td {
       border-top: 0;
@@ -256,6 +298,112 @@
       background: #fff0f0;
       color: #8d2020;
       font-weight: 600;
+    }
+    :root[data-theme="dark"] #status.ok {
+      color: #9fe3bc;
+    }
+    :root[data-theme="dark"] #status.stale {
+      color: #f2d387;
+    }
+    :root[data-theme="dark"] #status.connecting {
+      color: #dfeaff;
+    }
+    :root[data-theme="dark"] tr.unsold-row {
+      color: #8ea0b8;
+    }
+    :root[data-theme="dark"] .menu-field input[type="number"],
+    :root[data-theme="dark"] .menu-static-value,
+    :root[data-theme="dark"] .menu-checkbox-row,
+    :root[data-theme="dark"] .panel,
+    :root[data-theme="dark"] .bidder-group,
+    :root[data-theme="dark"] .action-btn {
+      background: #142032;
+      border-color: #31425c;
+      color: var(--admin-text);
+    }
+    :root[data-theme="dark"] .panel-head {
+      background: #162234;
+      border-color: #253349;
+    }
+    :root[data-theme="dark"] .panel-subtle,
+    :root[data-theme="dark"] .bidder-group-meta,
+    :root[data-theme="dark"] .empty-cell,
+    :root[data-theme="dark"] .empty-state {
+      color: var(--admin-muted);
+    }
+    :root[data-theme="dark"] .datatable th,
+    :root[data-theme="dark"] .datatable td {
+      border-color: #253349;
+    }
+    :root[data-theme="dark"] .datatable thead th {
+      background: #162234;
+      color: var(--admin-muted);
+    }
+    :root[data-theme="dark"] .recent-sale-row,
+    :root[data-theme="dark"] .recent-sale-row td {
+      background: #142032;
+      color: var(--admin-text);
+    }
+    :root[data-theme="dark"] .datatable tbody tr:hover {
+      background: rgba(95, 159, 255, 0.08);
+    }
+    :root[data-theme="dark"] .bidder-group.is-ready {
+      background: #13251e;
+      border-left-color: #2d6b50;
+    }
+    :root[data-theme="dark"] .bidder-group.is-invalidated {
+      background: #2b1719;
+      border-left-color: #b95b60;
+      box-shadow: 0 0 0 2px rgba(185, 91, 96, 0.16);
+    }
+    :root[data-theme="dark"] .bidder-group.has-added-change {
+      background: #18281f;
+      box-shadow: 0 0 0 2px rgba(84, 170, 111, 0.2);
+    }
+    :root[data-theme="dark"] .bidder-group.has-retracted-change {
+      background: #2a2115;
+      box-shadow: 0 0 0 2px rgba(196, 124, 18, 0.18);
+    }
+    :root[data-theme="dark"] .badge-ready,
+    :root[data-theme="dark"] .badge-paid {
+      background: #173123;
+      color: #9fe3bc;
+    }
+    :root[data-theme="dark"] .badge-part-paid {
+      background: #302710;
+      color: #f2d387;
+    }
+    :root[data-theme="dark"] .badge-not-paid {
+      background: #1b2a41;
+      color: var(--admin-muted);
+    }
+    :root[data-theme="dark"] .badge-collected {
+      background: #152a39;
+      color: #8fd4ff;
+    }
+    :root[data-theme="dark"] .badge-invalid {
+      background: #3a1d22;
+      color: #ffb3ae;
+    }
+    :root[data-theme="dark"] .badge-recent {
+      background: #1b2a41;
+      color: #aecdff;
+    }
+    :root[data-theme="dark"] .badge-added {
+      background: #173123;
+      color: #9fe3bc;
+    }
+    :root[data-theme="dark"] .badge-retracted {
+      background: #302710;
+      color: #f2d387;
+    }
+    :root[data-theme="dark"] .action-btn:hover {
+      background: #1b2a41;
+    }
+    :root[data-theme="dark"] .bidder-alert {
+      background: #2b1719;
+      border-color: #7e3a40;
+      color: #ffb3ae;
     }
     .bidder-table {
       width: 100%;
@@ -547,6 +695,7 @@
   <script src="/scripts/hover-photo.js"></script>
   <script src="/scripts/banner.js"></script>
   <script src="/scripts/session-auth.js"></script>
+  <script src="/scripts/theme.js"></script>
   <script>
     window.__APP_PAGE_AUTH__ = {
       viewKey: "live_feed",

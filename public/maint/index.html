@@ -4,6 +4,24 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Maintenance Panel - Charity Auction</title>
+  <script>
+    (function bootstrapOperatorTheme() {
+      const getBrowserPreferredTheme = () => window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light";
+      try {
+        const session = JSON.parse(localStorage.getItem("operatorSession") || "null");
+        const savedMode = String(session?.user?.preferences?.theme?.mode || "").toLowerCase();
+        const mode = savedMode === "dark" || savedMode === "light"
+          ? savedMode
+          : getBrowserPreferredTheme();
+        document.documentElement.dataset.theme = mode;
+        document.documentElement.style.colorScheme = mode;
+      } catch (_error) {
+        const mode = getBrowserPreferredTheme();
+        document.documentElement.dataset.theme = mode;
+        document.documentElement.style.colorScheme = mode;
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="/styles/admin-styles.css" />
   <link rel="stylesheet" href="/styles/maintenance.css" />
   <link rel="icon" type="image/png" href="/images/favicon.png" />
@@ -580,6 +598,7 @@
 
   <script src="/scripts/banner.js"></script>
   <script src="/scripts/session-auth.js"></script>
+  <script src="/scripts/theme.js"></script>
   <script>
     window.__APP_PAGE_AUTH__ = {
       viewKey: "maintenance",

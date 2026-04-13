@@ -3,9 +3,7 @@
 
   const API = "/api";
   const REFRESH_MS = 10000;
-  const SELECTED_AUCTION_KEY = "cashierSelectedAuctionId";
   const BUYER_DISPLAY_STATE_KEY = "cashierBuyerDisplayState";
-  const SHOW_PICTURES_KEY = "cashierShowPictures";
   const CASHIER_ASSET_VERSION = window.__CASHIER_ASSET_VERSION__ || "2026-04-10-buyer-display-1";
 
   const $ = (id) => document.getElementById(id);
@@ -46,6 +44,8 @@
 
   const menuGroups = Array.from(document.querySelectorAll(".menu-group"));
   const query = new URLSearchParams(window.location.search);
+  const cashierPreferenceController = window.AppAuth?.createPreferenceController?.({ pageKey: "cashier" }) || null;
+  const cashierPreferences = cashierPreferenceController?.getPagePreferences?.() || {};
 
   let authToken = window.AppAuth?.getToken?.() || localStorage.getItem("cashierToken");
   let auctions = [];
@@ -53,7 +53,11 @@
   let settlementScriptLoaded = false;
   let cashierRefreshConnected = null;
   let buyerDisplayWindow = null;
-  let showPictures = localStorage.getItem(SHOW_PICTURES_KEY) !== "0";
+  let showPictures = typeof cashierPreferences.show_pictures === "boolean" ? cashierPreferences.show_pictures : true;
+
+  function saveCashierPreferences(partial) {
+    cashierPreferenceController?.patchPagePreferences?.(partial);
+  }
 
   const showError = (message) => {
     if (els.error) els.error.textContent = message || "";
@@ -130,7 +134,7 @@
   }
 
   function getStoredAuctionId() {
-    const raw = Number(localStorage.getItem(SELECTED_AUCTION_KEY));
+    const raw = Number(cashierPreferenceController?.getPagePreferences?.().selected_auction_id);
     return Number.isInteger(raw) && raw > 0 ? raw : null;
   }
 
@@ -587,7 +591,7 @@
     const selectedAuction = getAuctionById(preferredId) || nextAuctions[0] || null;
     if (selectedAuction) {
       els.auctionSelect.value = String(selectedAuction.id);
-      localStorage.setItem(SELECTED_AUCTION_KEY, String(selectedAuction.id));
+      saveCashierPreferences({ selected_auction_id: selectedAuction.id });
     }
   }
 
@@ -605,7 +609,7 @@
     }
 
     if (els.auctionSelect) els.auctionSelect.value = String(activeAuction.id);
-    localStorage.setItem(SELECTED_AUCTION_KEY, String(activeAuction.id));
+    saveCashierPreferences({ selected_auction_id: activeAuction.id });
 
     const requestedId = getRequestedAuctionId();
     const requestedStatus = getRequestedAuctionStatus();
@@ -735,7 +739,7 @@
       closeMenuGroups();
       const selectedAuction = getSelectedAuction();
       if (!selectedAuction) return;
-      localStorage.setItem(SELECTED_AUCTION_KEY, String(selectedAuction.id));
+      saveCashierPreferences({ selected_auction_id: selectedAuction.id });
       window.location.assign(buildCashierUrl(selectedAuction));
     });
 
@@ -749,7 +753,7 @@
     els.openBuyerDisplayBtn?.addEventListener("click", openBuyerDisplay);
     els.toggleShowPictures?.addEventListener("change", () => {
       showPictures = Boolean(els.toggleShowPictures.checked);
-      localStorage.setItem(SHOW_PICTURES_KEY, showPictures ? "1" : "0");
+      saveCashierPreferences({ show_pictures: showPictures });
       pushBuyerDisplayState(getBuyerDisplayState());
       window.dispatchEvent(new CustomEvent("cashier:show-pictures-changed", {
         detail: { showPictures }

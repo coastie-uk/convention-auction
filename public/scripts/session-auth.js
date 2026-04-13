@@ -8,6 +8,8 @@
   const KIOSK_KEY = "slideshowKioskSession";
   const SESSION_EVENT = "appauth:session";
   const SESSION_REFRESH_MS = 60000;
+  const PREFERENCES_API = `${API}/preferences`;
+  const PREFERENCE_SAVE_MS = 180000;
   const LEGACY_TOKEN_KEYS = ["token", "cashierToken", "maintenanceToken"];
   const ACCESS_LABELS = Object.freeze({
     admin: "Manage Items",
@@ -44,6 +46,18 @@
     }
   }
 
+  function cloneJson(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function isPlainObject(value) {
+    return value && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function normalisePreferences(preferences) {
+    return isPlainObject(preferences) ? cloneJson(preferences) : {};
+  }
+
   function normaliseStringList(values) {
     if (!Array.isArray(values)) return [];
     return values
@@ -60,6 +74,7 @@
       role: user?.role || roles[0] || null,
       roles,
       permissions,
+      preferences: normalisePreferences(user?.preferences),
       is_root: Number(user?.is_root) === 1 ? 1 : 0
     };
   }
@@ -98,13 +113,29 @@
     return normaliseSession(safeParse(sessionStorage.getItem(KIOSK_KEY)));
   }
 
-  function saveSharedSession(payload) {
-    const session = normaliseSession(payload);
+  function writeStoredSession(session) {
     if (!session) return null;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
     setLegacyTokenMirrors(session.token);
     global.__APP_SESSION__ = session;
     return session;
+  }
+
+  function saveSharedSession(payload) {
+    const existing = getSharedSession();
+    let nextPayload = payload;
+    if (payload?.user && payload.user.preferences === undefined && existing?.user?.preferences) {
+      nextPayload = {
+        ...payload,
+        user: {
+          ...payload.user,
+          preferences: existing.user.preferences
+        }
+      };
+    }
+    const session = normaliseSession(nextPayload);
+    if (!session) return null;
+    return writeStoredSession(session);
   }
 
   function saveKioskSession(payload) {
@@ -134,6 +165,27 @@
     clearSharedSession({ broadcast });
   }
 
+  function getAppliedPreferences() {
+    const session = global.__APP_SESSION__ || getSharedSession();
+    return normalisePreferences(session?.user?.preferences);
+  }
+
+  function setAppliedPreferences(preferences) {
+    const session = global.__APP_SESSION__ || getSharedSession();
+    const normalized = normalisePreferences(preferences);
+    if (!session?.token) return normalized;
+
+    const updatedSession = {
+      ...session,
+      user: {
+        ...session.user,
+        preferences: normalized
+      }
+    };
+    writeStoredSession(updatedSession);
+    return normalized;
+  }
+
   function getLegacyTokenSession() {
     for (const key of LEGACY_TOKEN_KEYS) {
       const token = localStorage.getItem(key);
@@ -157,12 +209,46 @@
     return data;
   }
 
+  async function fetchPreferences(token) {
+    const response = await fetch(PREFERENCES_API, {
+      method: "GET",
+      headers: { Authorization: token }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(data?.error || "Failed to load preferences");
+      error.reason = data?.reason || "";
+      throw error;
+    }
+    return normalisePreferences(data?.preferences);
+  }
+
+  async function hydrateSharedPreferences(session) {
+    if (!session?.token) return session;
+    if (global.__APP_SHARED_PREFERENCES_HYDRATED__) return session;
+
+    global.__APP_SHARED_PREFERENCES_HYDRATED__ = true;
+    try {
+      const preferences = await fetchPreferences(session.token);
+      return saveSharedSession({
+        ...session,
+        user: {
+          ...session.user,
+          preferences
+        }
+      });
+    } catch (_error) {
+      return session;
+    }
+  }
+
   async function refreshSession({ allowKiosk = false, propagateError = false } = {}) {
     const shared = getSharedSession() || getLegacyTokenSession();
     if (shared?.token) {
       try {
         const validated = await validateToken(shared.token);
-        const session = saveSharedSession(validated);
+        let session = saveSharedSession(validated);
+        session = await hydrateSharedPreferences(session);
         return session ? { ...session, scope: "shared" } : null;
       } catch (error) {
         clearSharedSession({ broadcast: false });
@@ -444,6 +530,141 @@
       || null;
   }
 
+  function createPreferenceController({ pageKey, saveIntervalMs = PREFERENCE_SAVE_MS } = {}) {
+    const normalisedPageKey = String(pageKey || "").trim();
+    if (!normalisedPageKey) {
+      throw new Error("Preference controller requires a pageKey");
+    }
+
+    let documentState = getAppliedPreferences();
+    let lastSavedJson = JSON.stringify(documentState);
+    let flushPromise = null;
+
+    function getDocumentJson() {
+      return JSON.stringify(documentState);
+    }
+
+    function syncSession() {
+      setAppliedPreferences(documentState);
+    }
+
+    function updateDirtyTracking() {
+      return getDocumentJson() !== lastSavedJson;
+    }
+
+    function setDocument(nextDocument) {
+      documentState = normalisePreferences(nextDocument);
+      syncSession();
+      return cloneJson(documentState);
+    }
+
+    function getDocument() {
+      return cloneJson(documentState);
+    }
+
+    function getPagePreferences() {
+      return cloneJson(isPlainObject(documentState[normalisedPageKey]) ? documentState[normalisedPageKey] : {});
+    }
+
+    function replacePagePreferences(nextValue) {
+      const nextPage = isPlainObject(nextValue) ? cloneJson(nextValue) : {};
+      const nextDocument = {
+        ...documentState,
+        [normalisedPageKey]: nextPage
+      };
+      setDocument(nextDocument);
+      return getPagePreferences();
+    }
+
+    function patchPagePreferences(partialValue) {
+      const partial = isPlainObject(partialValue) ? partialValue : {};
+      return replacePagePreferences({
+        ...getPagePreferences(),
+        ...partial
+      });
+    }
+
+    async function flush({ keepalive = false, useBeacon = false } = {}) {
+      if (flushPromise) return flushPromise;
+      if (!updateDirtyTracking()) return false;
+
+      const snapshot = getDocument();
+      const snapshotJson = JSON.stringify(snapshot);
+      const token = getToken();
+      if (!token) return false;
+
+      const payload = { preferences: snapshot };
+      flushPromise = (async () => {
+        let saved = false;
+        try {
+          if (useBeacon && global.navigator?.sendBeacon) {
+            const beaconPayload = JSON.stringify({ token, ...payload });
+            const blob = new Blob([beaconPayload], { type: "application/json" });
+            saved = global.navigator.sendBeacon(PREFERENCES_API, blob);
+          }
+
+          if (!saved) {
+            const response = await fetch(PREFERENCES_API, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: token
+              },
+              body: JSON.stringify(payload),
+              keepalive: Boolean(keepalive)
+            });
+            saved = response.ok;
+          }
+        } catch (_error) {
+          saved = false;
+        }
+
+        if (saved) {
+          lastSavedJson = snapshotJson;
+        }
+
+        return saved;
+      })();
+
+      try {
+        return await flushPromise;
+      } finally {
+        flushPromise = null;
+      }
+    }
+
+    const saveTimer = global.setInterval(() => {
+      void flush();
+    }, Math.max(30000, Number(saveIntervalMs) || PREFERENCE_SAVE_MS));
+
+    function handleVisibilityChange() {
+      if (global.document.visibilityState === "hidden") {
+        void flush({ keepalive: true, useBeacon: true });
+      }
+    }
+
+    function handlePageHide() {
+      void flush({ keepalive: true, useBeacon: true });
+    }
+
+    global.document.addEventListener("visibilitychange", handleVisibilityChange);
+    global.addEventListener("pagehide", handlePageHide);
+
+    return {
+      getDocument,
+      getPagePreferences,
+      replacePagePreferences,
+      patchPagePreferences,
+      flush,
+      isDirty: updateDirtyTracking,
+      destroy() {
+        global.clearInterval(saveTimer);
+        global.document.removeEventListener("visibilitychange", handleVisibilityChange);
+        global.removeEventListener("pagehide", handlePageHide);
+      }
+    };
+  }
+
   global.AppAuth = {
     API,
     STORAGE_KEY,
@@ -476,6 +697,11 @@
     redirectToLogin,
     protectPage,
     startSlideshowKiosk,
-    getToken
+    getToken,
+    getAppliedPreferences,
+    setAppliedPreferences,
+    createPreferenceController,
+    PREFERENCES_API,
+    PREFERENCE_SAVE_MS
   };
 })(window);

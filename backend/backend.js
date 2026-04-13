@@ -29,9 +29,11 @@ const {
   getPrimaryRole,
   getLandingPath,
   setUserPassword,
+  setUserPreferences,
   getAuditActor,
   getSessionInvalidBeforeValue,
-  isSessionTokenCurrent
+  isSessionTokenCurrent,
+  normaliseUserPreferences
 } = require('./users');
 
 
@@ -69,6 +71,7 @@ const {
 
 const maintenanceRoutes = require('./maintenance');
 const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
+const { roundCurrency, SETTLEMENT_AMOUNT_SQL } = require('./payment-utils');
 
 log('General', logLevels.INFO, '~~ Starting up Auction backend ~~');
 log('Logger', logLevels.INFO, `Logging framework initialized. `);
@@ -107,6 +110,53 @@ function checkRateLimit(req) {
 
 function getLockoutKey(req, username) {
   return `${getClientIp(req)}::${username || 'unknown'}`;
+}
+
+const ADMIN_ITEM_STATUS_LABELS = Object.freeze({
+  not_sold: 'Not sold',
+  sold_unpaid: 'Sold and not paid',
+  part_paid: 'Part paid',
+  paid_in_full: 'Paid in full',
+  collected: 'Item collected'
+});
+
+function getAdminItemStatus(item) {
+  const isSold = item?.hammer_price != null && item?.winning_bidder_id != null;
+  if (!isSold) {
+    return {
+      status_code: 'not_sold',
+      status_label: ADMIN_ITEM_STATUS_LABELS.not_sold
+    };
+  }
+
+  if (item?.collected_at) {
+    return {
+      status_code: 'collected',
+      status_label: ADMIN_ITEM_STATUS_LABELS.collected
+    };
+  }
+
+  const lotsTotal = roundCurrency(item?.bidder_lots_total || 0) || 0;
+  const paymentsTotal = roundCurrency(item?.payments_total || 0) || 0;
+
+  if (!(lotsTotal > 0) || paymentsTotal <= 0) {
+    return {
+      status_code: 'sold_unpaid',
+      status_label: ADMIN_ITEM_STATUS_LABELS.sold_unpaid
+    };
+  }
+
+  if (paymentsTotal >= lotsTotal) {
+    return {
+      status_code: 'paid_in_full',
+      status_label: ADMIN_ITEM_STATUS_LABELS.paid_in_full
+    };
+  }
+
+  return {
+    status_code: 'part_paid',
+    status_label: ADMIN_ITEM_STATUS_LABELS.part_paid
+  };
 }
 
 function isLoginLockedOut(req, username) {
@@ -149,9 +199,9 @@ function clearLoginFailures(req, username) {
   loginLockoutState.delete(getLockoutKey(req, username));
 }
 
-function buildSessionUser(user) {
+function buildSessionUser(user, { includePreferences = false } = {}) {
   const access = shapeUserAccess(user || {});
-  return {
+  const sessionUser = {
     username: user?.username || null,
     role: getPrimaryRole(access),
     roles: access.roles,
@@ -159,6 +209,12 @@ function buildSessionUser(user) {
     session_invalid_before: getSessionInvalidBeforeValue(user),
     is_root: access.is_root
   };
+
+  if (includePreferences) {
+    sessionUser.preferences = normaliseUserPreferences(user?.preferences);
+  }
+
+  return sessionUser;
 }
 
 function issueSessionToken(user) {
@@ -179,8 +235,35 @@ function buildSessionResponse(user, token) {
     currency: CURRENCY_SYMBOL,
     landing_path: getLandingPath(user),
     versions: { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer },
-    user: buildSessionUser(user)
+    user: buildSessionUser(user, { includePreferences: true })
   };
+}
+
+function authenticatePreferencesRequest(req, res, next) {
+  const token = req.headers.authorization || req.body?.token;
+  if (!token || typeof token !== 'string') {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  jwt.verify(token, SECRET_KEY, (err, decoded) => {
+    if (err) {
+      return res.status(403).json({ error: 'Session expired' });
+    }
+
+    const currentUser = getUserByUsername(decoded?.username || '');
+    if (!currentUser) {
+      return res.status(403).json({ error: 'Session expired' });
+    }
+    if (!isSessionTokenCurrent(currentUser, decoded)) {
+      return res.status(403).json({ error: 'Session invalidated', reason: 'remote_logout' });
+    }
+
+    attachDecodedUser(req, {
+      username: currentUser.username,
+      ...buildSessionUser(currentUser)
+    });
+    return next();
+  });
 }
 
 
@@ -410,6 +493,43 @@ app.post('/login', (req, res) => {
 
     clearLoginFailures(req, normalizedUsername);
     return handleSuccess();
+});
+
+app.post('/preferences', authenticatePreferencesRequest, (req, res) => {
+  const username = req.user?.username;
+  if (!username) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  try {
+    const preferences = normaliseUserPreferences(req.body?.preferences);
+    const result = setUserPreferences(username, preferences);
+    if (!result || result.changes === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    return res.json({ preferences });
+  } catch (error) {
+    logFromRequest(req, logLevels.ERROR, `Failed to save preferences for ${username}: ${error.message}`);
+    return res.status(500).json({ error: 'Failed to save preferences' });
+  }
+});
+
+app.get('/preferences', authenticatePreferencesRequest, (req, res) => {
+  const username = req.user?.username;
+  if (!username) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  try {
+    const user = getUserByUsername(username);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    return res.json({ preferences: normaliseUserPreferences(user.preferences) });
+  } catch (error) {
+    logFromRequest(req, logLevels.ERROR, `Failed to read preferences for ${username}: ${error.message}`);
+    return res.status(500).json({ error: 'Failed to load preferences' });
+  }
 });
 
 //--------------------------------------------------------------------------
@@ -673,7 +793,11 @@ app.get('/auctions/:auctionId/items', authenticateRole("admin"), (req, res) => {
            i.notes,
            i.photo,
            i.hammer_price,
+           i.winning_bidder_id,
+           i.collected_at,
            b.paddle_number AS paddle_no,
+           IFNULL(lots.lots_total, 0) AS bidder_lots_total,
+           IFNULL(payments.payments_total, 0) AS payments_total,
            i.test_item,
            i.test_bid,
            i.date,
@@ -682,13 +806,32 @@ app.get('/auctions/:auctionId/items', authenticateRole("admin"), (req, res) => {
            i.last_print
     FROM items   i
     LEFT JOIN bidders b ON b.id = i.winning_bidder_id
+    LEFT JOIN (
+      SELECT sold.winning_bidder_id AS bidder_id,
+             SUM(sold.hammer_price) AS lots_total
+        FROM items sold
+       WHERE sold.auction_id = ?
+         AND sold.hammer_price IS NOT NULL
+         AND sold.winning_bidder_id IS NOT NULL
+       GROUP BY sold.winning_bidder_id
+    ) lots ON lots.bidder_id = i.winning_bidder_id
+    LEFT JOIN (
+      SELECT bidder_id,
+             SUM(${SETTLEMENT_AMOUNT_SQL}) AS payments_total
+        FROM payments
+       GROUP BY bidder_id
+    ) payments ON payments.bidder_id = i.winning_bidder_id
     WHERE i.auction_id = ?
     ORDER BY ${sortField} COLLATE NOCASE ${sortOrder}, item_number ${sortOrder}
   `;
 
     try {
         const stmt = db.prepare(LIST_ITEMS_SQL);
-        const items = stmt.all(auction_id);
+        const items = stmt.all(auction_id, auction_id).map((item) => ({
+            ...item,
+            ...getAdminItemStatus(item)
+        }));
+        let totals;
 
         try {
             totals = db.prepare(`

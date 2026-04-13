@@ -5,13 +5,13 @@ const API = "/api"
 const API_ROOT = `${API}/settlement`;
   const POLL_MS  = 5000;
   const BUYER_DISPLAY_STATE_KEY = 'cashierBuyerDisplayState';
-  const SHOW_PICTURES_KEY = 'cashierShowPictures';
   let token = localStorage.getItem('cashierToken');
+  const cashierPreferences = window.AppAuth?.getAppliedPreferences?.().cashier || {};
 
   let bidders = [];
   let selBidder = null;
   let selectedBidderId = null;
-  let showPictures = localStorage.getItem(SHOW_PICTURES_KEY) !== '0';
+  let showPictures = typeof cashierPreferences.show_pictures === 'boolean' ? cashierPreferences.show_pictures : true;
 
   const bidderBody = document.querySelector('#bidderTable tbody');
   const lotsBody   = document.querySelector('#lotsTable tbody');
@@ -696,14 +696,17 @@ function openRefundModal(id){
     amtIn.value=0.00;
 
 overlay.querySelector('#amt').focus();
+    const cancelButton = overlay.querySelector('#cancel');
+    const okButton = overlay.querySelector('#ok');
 
     overlay.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { e.preventDefault(); cancel.click(); }
-  if (e.key === 'Enter')  { e.preventDefault(); ok.click();     }
-});
-    
-    overlay.querySelector('#cancel').onclick=()=>overlay.remove();
-    overlay.querySelector('#ok').onclick=async()=>{
+      if (e.key === 'Escape') { e.preventDefault(); cancelButton.click(); }
+      if (e.key === 'Enter')  { e.preventDefault(); okButton.click(); }
+    });
+
+    cancelButton.onclick=()=>overlay.remove();
+    okButton.textContent = 'Apply Refund';
+    okButton.onclick=async()=>{
       const amt=Number(amtIn.value);
       const reason=overlay.querySelector('#note').value;
         if(!amt){ showMessage('Amount?', 'error'); return; }
@@ -758,14 +761,17 @@ overlay.querySelector('#amt').focus();
     donationIn.value='0.00';
 
 overlay.querySelector('#amt').focus();
+    const cancelButton = overlay.querySelector('#cancel');
+    const okButton = overlay.querySelector('#ok');
+    okButton.textContent = 'Make Payment';
 
     overlay.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { e.preventDefault(); cancel.click(); }
-  if (e.key === 'Enter')  { e.preventDefault(); ok.click();     }
-});
-    
-    overlay.querySelector('#cancel').onclick=()=>overlay.remove();
-    overlay.querySelector('#ok').onclick=async()=>{
+      if (e.key === 'Escape') { e.preventDefault(); cancelButton.click(); }
+      if (e.key === 'Enter')  { e.preventDefault(); okButton.click(); }
+    });
+
+    cancelButton.onclick=()=>overlay.remove();
+    okButton.onclick=async()=>{
       const amt=roundCurrency(amtIn.value);
       const donation=roundCurrency(donationIn.value);
       const outstanding = Math.max(0, roundCurrency(selBidder.balance || 0));
@@ -879,27 +885,35 @@ document.getElementById('summaryBtn').onclick = async () => {
   const s = await res.json();
 
   const overlay = document.createElement('div');
-  overlay.style = 'position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;justify-content:center;align-items:center;z-index:9999;';
+  overlay.className = 'modal-overlay';
   overlay.innerHTML = `
-    <div style="background:#fff;padding:22px 26px;border-radius:8px;width:460px;max-width:calc(100vw - 24px);">
-      <h3>Auction Summary</h3>
-      <table style="width:100%;border-collapse:collapse;font-size:0.95rem;">
-        <tr><td>Total lots</td>         <td colspan="2" style="text-align:right;">${currencySymbol}${s.lots_total.toFixed(2)}</td></tr>
-        <tr><td>Paid total</td>         <td colspan="2" style="text-align:right;">${currencySymbol}${s.payments_total.toFixed(2)}</td></tr>
-        <tr><td>Donations total</td>    <td colspan="2" style="text-align:right;">${currencySymbol}${s.donations_total.toFixed(2)}</td></tr>
-        <tr><td>Expected grand total</td><td colspan="2" style="text-align:right;">${currencySymbol}${Number(s.expected_grand_total || 0).toFixed(2)}</td></tr>
-        <tr><td>Current grand total</td><td colspan="2" style="text-align:right;">${currencySymbol}${Number(s.current_grand_total || 0).toFixed(2)}</td></tr>
-        <tr><tr>
-        <tr><td style="padding-top:4px;" colspan="3"><strong>By method</strong></td></tr>
-        <tr><th style="text-align:left;">Method</th><th style="text-align:right;">Paid</th><th style="text-align:right;">Donation</th></tr>
-        ${Object.entries(s.breakdown).map(([m,v])=>`<tr><td>${m}</td><td style="text-align:right;">${currencySymbol}${Number(v.payments_total || 0).toFixed(2)}</td><td style="text-align:right;">${currencySymbol}${Number(v.donations_total || 0).toFixed(2)}</td></tr>`).join('')}
-        <tr><td style="padding-top:6px;"><strong>Balance due</strong></td>
-            <td colspan="2" style="text-align:right;"><strong>${currencySymbol}${s.balance.toFixed(2)}</strong></td></tr>
+    <div class="modal-card summary-modal-card" role="dialog" aria-modal="true" aria-labelledby="cashier-summary-title">
+      <h3 id="cashier-summary-title" class="modal-title">Auction Summary</h3>
+      <table class="summary-breakdown-table">
+        <tbody>
+          <tr><td>Total lots</td><td colspan="2">${currencySymbol}${s.lots_total.toFixed(2)}</td></tr>
+          <tr><td>Paid total</td><td colspan="2">${currencySymbol}${s.payments_total.toFixed(2)}</td></tr>
+          <tr><td>Donations total</td><td colspan="2">${currencySymbol}${s.donations_total.toFixed(2)}</td></tr>
+          <tr><td>Expected grand total</td><td colspan="2">${currencySymbol}${Number(s.expected_grand_total || 0).toFixed(2)}</td></tr>
+          <tr><td>Current grand total</td><td colspan="2">${currencySymbol}${Number(s.current_grand_total || 0).toFixed(2)}</td></tr>
+          <tr class="summary-modal-group-title"><td colspan="3">By method</td></tr>
+          <tr class="summary-column-headings"><th>Method</th><th>Paid</th><th>Donation</th></tr>
+          ${Object.entries(s.breakdown).map(([m,v])=>`<tr><td>${m}</td><td>${currencySymbol}${Number(v.payments_total || 0).toFixed(2)}</td><td>${currencySymbol}${Number(v.donations_total || 0).toFixed(2)}</td></tr>`).join('')}
+          <tr class="summary-modal-total"><td>Balance due</td><td colspan="2">${currencySymbol}${s.balance.toFixed(2)}</td></tr>
+        </tbody>
       </table>
-      <div style="text-align:right;margin-top:10px;"><button id="closeSum">Close</button></div>
+      <div class="summary-modal-actions"><button id="closeSum" class="secondary-button" type="button">Close</button></div>
     </div>`;
   document.body.appendChild(overlay);
-  overlay.querySelector('#closeSum').onclick = ()=>overlay.remove();
+  const closeButton = overlay.querySelector('#closeSum');
+  overlay.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeButton.click();
+    }
+  });
+  closeButton.onclick = ()=>overlay.remove();
+  closeButton.focus();
 };
 
 

@@ -86,6 +86,18 @@ module.exports = function phase1Patch (app) {
     if (paid >= lots && lots > 0) return 'paid_in_full';
     return 'part_paid';
   };
+
+  const getPaymentStatusLabel = (status) => {
+    switch (status) {
+      case 'paid_in_full':
+        return 'Paid in full';
+      case 'part_paid':
+        return 'Part paid';
+      case 'not_paid':
+      default:
+        return 'Not paid';
+    }
+  };
 // Build a fingerprint for the bidder's ready for collection status, based on their current items and payments.
 // This is used to detect changes that would require the auctioneer to re-confirm the bidder's readiness
 // after marking them ready or after marking items as collected.
@@ -938,29 +950,98 @@ if (info.changes === 0) {
   // Original version simply blocked undos if payment existed
   //--------------------------------------------------------------------------
 
+  const buildUndoPreview = (itemId) => {
+    const item = db.get(`
+      SELECT i.id,
+             i.item_number,
+             i.description,
+             i.auction_id,
+             i.winning_bidder_id,
+             i.hammer_price,
+             b.paddle_number
+        FROM items i
+        LEFT JOIN bidders b ON b.id = i.winning_bidder_id
+       WHERE i.id = ?
+    `, [itemId]);
+
+    if (!item) {
+      const error = new Error('Item not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (item.winning_bidder_id == null || item.hammer_price == null) {
+      const error = new Error('Item does not currently have a recorded bid');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const bidderTotals = getBidderPaymentTotals(db, item.winning_bidder_id, item.auction_id);
+    const paymentStatus = derivePaymentStatus(bidderTotals.lots_total, bidderTotals.payments_total);
+    const lotsTotalAfterRetract = roundCurrency((bidderTotals.lots_total || 0) - (item.hammer_price || 0)) || 0;
+    const balanceAfterRetract = roundCurrency(lotsTotalAfterRetract - (bidderTotals.payments_total || 0)) || 0;
+    const canRetract = balanceAfterRetract >= 0;
+    const refundRequired = canRetract ? 0 : Math.abs(balanceAfterRetract);
+
+    return {
+      item: {
+        id: item.id,
+        item_number: item.item_number,
+        description: item.description || '',
+        hammer_price: roundCurrency(item.hammer_price || 0) || 0
+      },
+      bidder: {
+        id: item.winning_bidder_id,
+        paddle_number: item.paddle_number ?? null
+      },
+      current: {
+        lots_total: bidderTotals.lots_total,
+        payments_total: bidderTotals.payments_total,
+        balance: bidderTotals.balance,
+        payment_status: paymentStatus,
+        payment_status_label: getPaymentStatusLabel(paymentStatus)
+      },
+      projected: {
+        lots_total_after_retract: lotsTotalAfterRetract,
+        balance_after_retract: balanceAfterRetract
+      },
+      can_retract: canRetract,
+      guidance: canRetract
+        ? 'This retraction will not cause the bidder to be owed money.'
+        : `Refund ${CURRENCY} ${refundRequired.toFixed(2)} before retracting this bid.`
+    };
+  };
+
+  sales.get('/:id/undo-preview', authenticateRole('admin'), authenticatePermission('admin_bidding'), checkAuctionState(['live', 'settlement']), (req, res) => {
+    const itemId = Number(req.params.id);
+
+    if (!itemId || Number.isNaN(itemId)) return res.status(400).json({ error: 'item # required' });
+
+    try {
+      const preview = buildUndoPreview(itemId);
+      return res.json(preview);
+    } catch (error) {
+      if (error.statusCode) {
+        return res.status(error.statusCode).json({ error: error.message });
+      }
+      logFromRequest(req, logLevels.ERROR, `Failed to load retract preview for item ${itemId}: ${error.message}`);
+      return res.status(500).json({ error: `Failed to load retract preview for item ${itemId}: ${error.message}` });
+    }
+  });
+
 
   sales.post('/:id/undo', authenticateRole('admin'), authenticatePermission('admin_bidding'), checkAuctionState(['live', 'settlement']), (req, res) => {
     const itemId = Number(req.params.id);
 
     if (!itemId || isNaN(itemId)) return res.status(400).json({ error: 'item # required' });
     try {
-      const row = db.get(`SELECT winning_bidder_id, hammer_price FROM items WHERE id = ?`, [itemId]);
-      if (!row) return res.status(400).json({ error: 'Item not found' });
+      const preview = buildUndoPreview(itemId);
+      const bidderId = preview.bidder.id;
+      const paid = preview.current.payments_total > 0;
 
-      const paid = db.get(`SELECT 1 FROM payments WHERE bidder_id = ? LIMIT 1`, [row.winning_bidder_id]);
-
-      // Check if undoing the bid would result in a negative balance
-      if (paid) {
-        const sums = db.get(`
-          SELECT
-            IFNULL((SELECT SUM(hammer_price) FROM items WHERE winning_bidder_id = ?), 0) AS lots_total,
-            IFNULL((SELECT SUM(${SETTLEMENT_AMOUNT_SQL}) FROM payments WHERE bidder_id = ?), 0) AS payments_total
-        `, [row.winning_bidder_id, row.winning_bidder_id]);
-        const newBalance = (sums.lots_total || 0) - (row.hammer_price || 0) - (sums.payments_total || 0);
-        if (Number(newBalance) < 0) {
-          logFromRequest(req, logLevels.WARN, `Cannot retract bid for item ${itemId} by bidder ${row.winning_bidder_id} - would result in negative balance`);
-          return res.status(400).json({ error: `Undo would result in bidder negative balance. Issue a refund of ${CURRENCY} ${Math.abs(newBalance)} and retry` });
-        }
+      if (!preview.can_retract) {
+        logFromRequest(req, logLevels.WARN, `Cannot retract bid for item ${itemId} by bidder ${bidderId} - would result in negative balance`);
+        return res.status(400).json({ error: `Undo would result in bidder negative balance. Issue a refund of ${CURRENCY} ${Math.abs(preview.projected.balance_after_retract).toFixed(2)} and retry` });
       }
 
       db.run(`
@@ -971,15 +1052,18 @@ if (info.changes === 0) {
          WHERE id = ?
       `, [itemId]);
       if (paid) {
-        logFromRequest(req, logLevels.INFO, `Bid retracted for item ${itemId} by bidder ${row.winning_bidder_id} but payment exists`);
-        audit(getAuditActor(req), 'undo-bid', 'item', itemId, { item: itemId, bidder: row.winning_bidder_id, note: 'Payment exists for bidder' });
+        logFromRequest(req, logLevels.INFO, `Bid retracted for item ${itemId} by bidder ${bidderId} but payment exists`);
+        audit(getAuditActor(req), 'undo-bid', 'item', itemId, { item: itemId, bidder: bidderId, note: 'Payment exists for bidder' });
         return res.json({ ok: true, message: 'Bid retracted but payment exists - Verify cashier totals' });
       }
 
-      logFromRequest(req, logLevels.INFO, `Bid retracted for item ${itemId} by bidder ${row.winning_bidder_id}`);
-      audit(getAuditActor(req), 'undo-bid', 'item', itemId, { item: itemId, bidder: row.winning_bidder_id });
+      logFromRequest(req, logLevels.INFO, `Bid retracted for item ${itemId} by bidder ${bidderId}`);
+      audit(getAuditActor(req), 'undo-bid', 'item', itemId, { item: itemId, bidder: bidderId });
       return res.json({ ok: true, message: 'Bid retracted' });
     } catch (error) {
+      if (error.statusCode) {
+        return res.status(error.statusCode).json({ error: error.message });
+      }
       logFromRequest(req, logLevels.ERROR, `Failed to retract bid for item ${itemId}: ${error.message}`);
 
       res.status(500).json({ error: `Failed to retract bid for item ${itemId}: ${error.message}` });

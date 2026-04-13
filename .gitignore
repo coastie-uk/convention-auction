@@ -163,3 +163,4 @@ deploy-live.sh
 .github/copilot-instructions.md
 docs/deploy-web.sh
 public/files/
+AGENTS.md

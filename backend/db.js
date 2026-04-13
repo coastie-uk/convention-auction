@@ -9,7 +9,7 @@ const Database = require('better-sqlite3');
 const path     = require('path');
 const fs       = require('fs');
 const crypto   = require('crypto');
-const schemaVersion = '2.8';
+const schemaVersion = '2.9';
 const { logLevels, log } = require('./logger');
 const bcrypt = require('bcryptjs');
 const { ROLE_LIST, PERMISSION_LIST, ROOT_USERNAME } = require('./auth-constants');
@@ -30,6 +30,7 @@ const {
 // 2.6  Adds items.last_slide_export and items.last_card_export for export tracking, Adds items.last_bid_update for authoritative bid/retract ordering. Adds bidder ready state/fingerprint and item collection tracking for live feed. Adds donation tracking columns for cashier payments and SumUp intents
 // 2.7  Adds users.permissions for shared-login capability permissions
 // 2.8  Adds users.session_invalid_before for remote session invalidation
+// 2.9  Adds users.preferences for persisted per-user UI preferences
 
  
 
@@ -123,6 +124,7 @@ if(existingSchemaVersion > schemaVersion) {
         password TEXT NOT NULL,
         roles TEXT NOT NULL,
         permissions TEXT NOT NULL DEFAULT '[]',
+        preferences TEXT NOT NULL DEFAULT '{}',
         session_invalid_before INTEGER NOT NULL DEFAULT 0,
         is_root INTEGER NOT NULL DEFAULT 0,
         created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')),
@@ -218,9 +220,12 @@ if(existingSchemaVersion > schemaVersion) {
   // These are critical to prevent duplicate payment records for the same provider transaction - SumUp may send multiple notifications for the same payment
   try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_provider_payments_txn ON payments(provider, provider_txn_id)`); } catch (e) { /* already exists */ }
   try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_provider_payments_intent ON payments(provider, intent_id)`); } catch (e) { /* already exists */ }
+
+  
   try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_users_single_root ON users(is_root) WHERE is_root = 1`); } catch (e) { /* already exists */ }
   try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username_nocase ON users(username COLLATE NOCASE)`); } catch (e) { /* already exists */ }
   try { db.exec(`ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'`); } catch (e) { /* already exists */ }
+  try { db.exec(`ALTER TABLE users ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}'`); } catch (e) { /* already exists */ }
   try { db.exec(`ALTER TABLE users ADD COLUMN session_invalid_before INTEGER NOT NULL DEFAULT 0`); } catch (e) { /* already exists */ }
 
 

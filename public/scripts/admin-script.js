@@ -71,8 +71,10 @@ document.addEventListener("DOMContentLoaded", function () {
     let auctions = [];
     let selectedAuctionId = null;
     let selectedAuctionCanChangeState = 0;
-    let selectedOrder = sessionStorage.getItem("item_sort_order") || "asc";
-    let selectedSort = sessionStorage.getItem("item_sort_field") || "item_number";
+    const adminPreferenceController = window.AppAuth?.createPreferenceController?.({ pageKey: "admin" }) || null;
+    const adminPreferences = adminPreferenceController?.getPagePreferences?.() || {};
+    let selectedOrder = adminPreferences.sort_order || "asc";
+    let selectedSort = adminPreferences.sort_field || "item_number";
     let currencySymbol = localStorage.getItem("currencySymbol") || "£";
     let pptxStatusPollTimer = null;
     let latestPptxJob = null;
@@ -102,6 +104,20 @@ document.addEventListener("DOMContentLoaded", function () {
         asc: "Ascending",
         desc: "Descending"
     });
+    const VALID_SORT_FIELDS = new Set(Object.keys(SORT_FIELD_LABELS));
+    const VALID_SORT_ORDERS = new Set(Object.keys(SORT_ORDER_LABELS));
+
+    if (!VALID_SORT_FIELDS.has(selectedSort)) selectedSort = "item_number";
+    if (!VALID_SORT_ORDERS.has(selectedOrder)) selectedOrder = "asc";
+
+    function saveAdminPreferences(partial) {
+        adminPreferenceController?.patchPagePreferences?.(partial);
+    }
+
+    function getSavedAdminAuctionId() {
+        const savedAuctionId = Number(adminPreferenceController?.getPagePreferences?.().selected_auction_id);
+        return Number.isInteger(savedAuctionId) && savedAuctionId > 0 ? savedAuctionId : null;
+    }
 
     function setAdminConnectionStatus(isConnected, { announce = true } = {}) {
         if (connectionPill) {
@@ -154,6 +170,50 @@ document.addEventListener("DOMContentLoaded", function () {
                 <path d="m8 5-4 4 4 4"></path>
                 <path d="M4 9h10a4 4 0 0 1 0 8h-2"></path>
                 <path d="m16 13 4 4-4 4"></path>
+            </svg>
+        `
+    });
+    const ITEM_STATUS_LABELS = Object.freeze({
+        not_sold: "Not sold",
+        sold_unpaid: "Sold and not paid",
+        part_paid: "Part paid",
+        paid_in_full: "Paid in full",
+        collected: "Item collected"
+    });
+    const STATUS_ICONS = Object.freeze({
+        not_sold: `
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <circle cx="12" cy="12" r="9"></circle>
+            </svg>
+        `,
+        sold_unpaid: `
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <circle cx="12" cy="12" r="9"></circle>
+                <path d="m8.5 12 2.5 2.5 4.5-4.5"></path>
+            </svg>
+        `,
+        part_paid: `
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <circle cx="12" cy="12" r="9"></circle>
+                <path class="status-fill" d="M12 12 12 3a9 9 0 0 1 0 18Z"></path>
+                <path d="M12 3v18"></path>
+            </svg>
+        `,
+        paid_in_full: `
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <circle cx="12" cy="12" r="9"></circle>
+                <path d="M9 8.5h6"></path>
+                <path d="M9 15.5h6"></path>
+                <path d="M12 6.5v11"></path>
+                <path d="M15 10c0-1.1-1.34-2-3-2s-3 .9-3 2 1.34 2 3 2 3 .9 3 2-1.34 2-3 2-3-.9-3-2"></path>
+            </svg>
+        `,
+        collected: `
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"></path>
+                <path d="M3 7.5 12 12l9-4.5"></path>
+                <path d="M12 12v9"></path>
+                <path d="m9.5 12.5 1.75 1.75 3.75-3.75"></path>
             </svg>
         `
     });
@@ -248,6 +308,17 @@ document.addEventListener("DOMContentLoaded", function () {
             <button type="button" class="${buttonClass}" title="${safeTitle}" aria-label="${safeTitle}" ${attributes}>
                 <span class="item-action-icon" aria-hidden="true">${icon}</span>
             </button>
+        `;
+    }
+
+    function renderItemStatusIndicator(statusCode, statusLabel) {
+        const code = Object.prototype.hasOwnProperty.call(STATUS_ICONS, statusCode) ? statusCode : "not_sold";
+        const label = normalizeString(statusLabel) || ITEM_STATUS_LABELS[code];
+        const safeLabel = escapeHtml(label);
+        return `
+            <span class="item-status-indicator item-status-indicator--${code}" title="${safeLabel}" aria-label="${safeLabel}" role="img">
+                <span class="item-status-icon" aria-hidden="true">${STATUS_ICONS[code]}</span>
+            </span>
         `;
     }
 
@@ -1361,17 +1432,18 @@ document.addEventListener("DOMContentLoaded", function () {
             });
 
             const urlParam = new URLSearchParams(window.location.search).get("auction");
-            const storedAuctionId = sessionStorage.getItem("auction_id");
+            const preferredAuctionId = selectedAuctionId || getSavedAdminAuctionId();
 
             if (urlParam) {
                 const match = auctions.find(a => a.short_name === urlParam);
                 if (match) auctionSelect.value = match.id;
-            } else if (storedAuctionId) {
-                auctionSelect.value = storedAuctionId;
+            } else if (Number.isInteger(preferredAuctionId) && preferredAuctionId > 0) {
+                const match = auctions.find(a => a.id === preferredAuctionId);
+                if (match) auctionSelect.value = String(match.id);
             }
 
             selectedAuctionId = parseInt(auctionSelect.value, 10);
-            sessionStorage.setItem("auction_id", selectedAuctionId);
+            saveAdminPreferences({ selected_auction_id: selectedAuctionId });
             updateExportPanelHeader();
             updateHeaderAuctionStatus();
 
@@ -1435,7 +1507,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     auctionSelect.addEventListener("change", async () => {
         selectedAuctionId = parseInt(auctionSelect.value, 10);
-        sessionStorage.setItem("auction_id", selectedAuctionId);
+        saveAdminPreferences({ selected_auction_id: selectedAuctionId });
         setStoredMovePanelItemId(null);
         closeMenuGroups();
         updateExportPanelHeader();
@@ -1448,7 +1520,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     orderSelect.addEventListener("change", () => {
         selectedOrder = orderSelect.value;
-        sessionStorage.setItem("item_sort_order", selectedOrder);
+        saveAdminPreferences({ sort_order: selectedOrder });
         syncViewMenus();
         closeMenuGroups();
         loadItems();
@@ -1456,7 +1528,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     sortSelect.addEventListener("change", () => {
         selectedSort = sortSelect.value;
-        sessionStorage.setItem("item_sort_field", selectedSort);
+        saveAdminPreferences({ sort_field: selectedSort });
         syncViewMenus();
         closeMenuGroups();
         loadItems();
@@ -1824,6 +1896,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     <td>${item.paddle_no ?? ''}</td>
                     <td>${fmtPrice(hasBid, item.hammer_price ?? '')}</td>` : ''
                     }
+                <td class="status-cell">${renderItemStatusIndicator(item.status_code, item.status_label)}</td>
                 <td class="actions-cell">
                     <div class="item-actions">
                         ${renderPrintButton(item.id, printStatus)}

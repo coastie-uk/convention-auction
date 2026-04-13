@@ -26,6 +26,7 @@ const API = "/api"
 
     const TABLE_BODY    = document.getElementById('items-table-body');
     const STATUS_API    = `${API}/auction-status`;   // new endpoint in patch v1.2
+    const UNDO_PREVIEW_API = id => `${API}/lots/${id}/undo-preview`;
     const UNDO_API      = id => `${API}/lots/${id}/undo`;
     const FINALIZE_API = id => `${API}/lots/${id}/finalize`;
     
@@ -48,6 +49,109 @@ const API = "/api"
     return window.AppAuth?.canAccess
       ? window.AppAuth.canAccess(session?.user, { permission: "admin_bidding" })
       : true;
+  }
+
+  function getCurrencySymbol() {
+    return window.localStorage.getItem("currencySymbol") || "£";
+  }
+
+  function money(value) {
+    const amount = Number(value);
+    const normalised = Number.isFinite(amount) ? amount : 0;
+    return `${getCurrencySymbol()}${normalised.toFixed(2)}`;
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function createUndoPreviewModal(preview) {
+    const overlay = document.createElement('div');
+    const projectedBalance = Number(preview?.projected?.balance_after_retract || 0);
+    const canRetract = preview?.can_retract === true;
+    const bidderLabel = preview?.bidder?.paddle_number
+      ? `Paddle ${preview.bidder.paddle_number}`
+      : 'No bidder assigned';
+
+    overlay.className = 'app-modal retract-preview-modal';
+    overlay.innerHTML = `
+      <div class="app-modal-card retract-preview-card" role="dialog" aria-modal="true" aria-labelledby="retract-preview-title">
+        <div class="app-modal-header">
+          <div>
+            <h3 id="retract-preview-title">Retract Bid</h3>
+            <p>Review the bidder balance before removing this lot.</p>
+          </div>
+          <button type="button" class="app-modal-close js-close-retract-preview" aria-label="Close retract preview">Close</button>
+        </div>
+
+        <div class="retract-preview-lot">
+          <div class="retract-preview-lot-number">Lot #${escapeHtml(preview?.item?.item_number ?? '')}</div>
+          <div class="retract-preview-lot-description">${escapeHtml(preview?.item?.description || '')}</div>
+          <div class="retract-preview-lot-price">Item price ${money(preview?.item?.hammer_price || 0)}</div>
+        </div>
+
+        <div class="retract-preview-summary-grid">
+          <div class="retract-preview-stat">
+            <span class="retract-preview-stat-label">Bidder</span>
+            <strong class="retract-preview-stat-value">${escapeHtml(bidderLabel)}</strong>
+          </div>
+          <div class="retract-preview-stat">
+            <span class="retract-preview-stat-label">Payment status</span>
+            <strong class="retract-preview-stat-value">
+              <span class="retract-preview-badge retract-preview-badge--${escapeHtml(preview?.current?.payment_status || 'not_paid')}">${escapeHtml(preview?.current?.payment_status_label || 'Not paid')}</span>
+            </strong>
+          </div>
+          <div class="retract-preview-stat">
+            <span class="retract-preview-stat-label">Current total owed</span>
+            <strong class="retract-preview-stat-value">${money(preview?.current?.lots_total || 0)}</strong>
+          </div>
+          <div class="retract-preview-stat">
+            <span class="retract-preview-stat-label">Amount paid</span>
+            <strong class="retract-preview-stat-value">${money(preview?.current?.payments_total || 0)}</strong>
+          </div>
+        </div>
+
+        <div class="retract-preview-impact ${canRetract ? 'is-allowed' : 'is-blocked'}">
+          <div class="retract-preview-impact-label">Projected owed after retraction</div>
+          <div class="retract-preview-impact-value ${projectedBalance < 0 ? 'is-negative' : 'is-nonnegative'}">${money(projectedBalance)}</div>
+          <p class="retract-preview-impact-copy">${escapeHtml(preview?.guidance || '')}</p>
+        </div>
+
+        <div class="retract-preview-actions">
+          <button type="button" class="retract-preview-cancel js-close-retract-preview">Cancel</button>
+          ${canRetract ? '<button type="button" class="retract-preview-confirm js-confirm-retract">Confirm Retract</button>' : ''}
+        </div>
+      </div>
+    `;
+
+    const close = () => overlay.remove();
+    overlay.querySelectorAll('.js-close-retract-preview').forEach((button) => {
+      button.addEventListener('click', close);
+    });
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close();
+    });
+    overlay.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+      }
+    });
+
+    document.body.appendChild(overlay);
+    overlay.tabIndex = -1;
+    overlay.focus();
+
+    return {
+      overlay,
+      close,
+      confirmButton: overlay.querySelector('.js-confirm-retract')
+    };
   }
      // --------------- fetch auction status (POST body) ----------
     async function syncStatus() {
@@ -145,32 +249,38 @@ const API = "/api"
 
   // --------------- modal & finalize --------------------------
   function openFinalizeModal(itemId, itemNo, itemDesc, rowEl) {
-
     const wrap = document.createElement('div');
-    wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;justify-content:center;align-items:center;z-index:9999;';
+    wrap.className = 'admin-inline-modal';
     wrap.innerHTML = `
-      <div style="background:#fff;padding:20px;border-radius:8px;width:260px;font-family:Arial;">
-        <h3>Record bid for Lot #${itemNo} - ${itemDesc}</h3>
-        <label>Paddle #</label>
-        <input id="paddle" type="number" min="1" max="999" style="width:100%" autofocus>
-        <label>Hammer £</label>
-        <input id="price" type="number" min="1" step="0.01" style="width:100%">
-        <div style="margin-top:1rem;display:flex;gap:6px;justify-content:flex-end;">
-          <button id="cancel">Cancel</button>
-          <button id="ok">Record Bid</button>
+      <div class="admin-inline-card" role="dialog" aria-modal="true" aria-labelledby="admin-bid-modal-title">
+        <h3 id="admin-bid-modal-title">Record Bid</h3>
+        <p class="admin-inline-copy">Lot #${itemNo}: ${itemDesc}</p>
+        <div class="admin-inline-field">
+          <label for="paddle">Paddle #</label>
+          <input id="paddle" class="admin-inline-input" type="number" min="1" max="999" inputmode="numeric" autofocus>
+        </div>
+        <div class="admin-inline-field">
+          <label for="price">Hammer ${window.localStorage.getItem("currencySymbol") || "£"}</label>
+          <input id="price" class="admin-inline-input" type="number" min="1" step="0.01" inputmode="decimal">
+        </div>
+        <div class="admin-inline-actions">
+          <button id="cancel" type="button" class="admin-inline-cancel">Cancel</button>
+          <button id="ok" type="button" class="admin-inline-confirm">Record Bid</button>
         </div>
       </div>`;
     document.body.appendChild(wrap);
+    const cancelButton = wrap.querySelector('#cancel');
+    const okButton = wrap.querySelector('#ok');
     wrap.querySelector('#paddle').focus();
 
     wrap.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { e.preventDefault(); cancel.click(); }
-  if (e.key === 'Enter')  { e.preventDefault(); ok.click();     }
-});
+      if (e.key === 'Escape') { e.preventDefault(); cancelButton.click(); }
+      if (e.key === 'Enter')  { e.preventDefault(); okButton.click(); }
+    });
 
 
-    wrap.querySelector('#cancel').onclick = () => wrap.remove();
-    wrap.querySelector('#ok').onclick = async () => {
+    cancelButton.onclick = () => wrap.remove();
+    okButton.onclick = async () => {
       const paddle = wrap.querySelector('#paddle').value.trim();
       const price  = wrap.querySelector('#price').value.trim();
       const currentAuctionId = parseInt(document.getElementById("auction-select").value, 10);
@@ -221,50 +331,58 @@ const API = "/api"
 
   // --------------- undo finalize -----------------------------
   async function undoFinalize(itemId, rowEl) {
-    // if (!confirm('Undo finalize for this lot?')) return;
-           const modal = await DayPilot.Modal.confirm("Retract bid for this lot?");
-        if (modal.canceled) {
-           return showMessage("Retract cancelled", "info");
-        } else { 
-    
     try {
-      const res = await fetch(UNDO_API(itemId), {
-        method:'POST',
-        headers:{ 'Authorization': getToken() }
+      const previewResponse = await fetch(UNDO_PREVIEW_API(itemId), {
+        headers: { 'Authorization': getToken() }
       });
-      const data = await res.json();
-      if (!res.ok) {
- //       alert(data.error || 'Cannot undo');
-            showMessage(data.error || 'Cannot undo', "error");
-
-        if (res.status === 409) {
-          rowEl.dataset.locked = '1'; // locked (payment exists)
-      //    rowEl.querySelector('.btn-undo')?.remove();
-        }
+      const previewData = await previewResponse.json();
+      if (!previewResponse.ok) {
+        showMessage(previewData.error || 'Cannot load retract preview', "error");
         return;
       }
-      // success → reset row state
-      rowEl.dataset.sold = '0';
-      rowEl.classList.remove('sold-row');
-      rowEl.querySelector('.btn-undo')?.remove();
-      enhanceRows(); // re-show Finalize button
-      showMessage(data.message, "info");
 
-              /* --- update paddle & price cells immediately --- */
-        const cells = rowEl.children;        
-        if (cells.length >= 7) {
-          cells[5].textContent = "";                 // Paddle #
-          cells[6].textContent = "";  // Hammer £
+      const modal = createUndoPreviewModal(previewData);
+      if (!modal.confirmButton) {
+        return;
+      }
+
+      modal.confirmButton.addEventListener('click', async () => {
+        modal.confirmButton.disabled = true;
+        modal.confirmButton.textContent = 'Retracting...';
+
+        try {
+          const res = await fetch(UNDO_API(itemId), {
+            method:'POST',
+            headers:{ 'Authorization': getToken() }
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            showMessage(data.error || 'Cannot undo', "error");
+            modal.close();
+            return;
+          }
+
+          rowEl.dataset.sold = '0';
+          rowEl.classList.remove('sold-row');
+          rowEl.querySelector('.btn-undo')?.remove();
+          enhanceRows();
+          showMessage(data.message, "info");
+
+          const cells = rowEl.children;
+          if (cells.length >= 7) {
+            cells[5].textContent = "";
+            cells[6].textContent = "";
+          }
+
+          modal.close();
+        } catch(err) {
+          showMessage(err.message||err, "error");
+          modal.close();
         }
-
-      
-
-    } catch(err) { 
-   //   alert(err.message||err);
+      });
+    } catch(err) {
       showMessage(err.message||err, "error");
-
     }
-  }
   }
 
   // --------------- lock editing when live --------------------

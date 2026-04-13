@@ -197,6 +197,14 @@ async function attemptLoginWith(username, role, password) {
   });
 }
 
+async function savePreferences(token, preferences, extraBody = {}) {
+  return fetchJson(`${baseUrl}/preferences`, {
+    method: "POST",
+    headers: authHeaders(token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ preferences, ...extraBody })
+  });
+}
+
 async function maintenanceRequest(pathname, body) {
   return fetchJson(`${baseUrl}${pathname}`, {
     method: "POST",
@@ -420,6 +428,8 @@ addTest("B-003","POST /login success admin", async () => {
   await expectStatus(res, 200);
   assert.ok(json && json.token, "Missing token");
   assert.ok(Array.isArray(json?.user?.permissions), "Expected permissions array");
+  assert.ok(json?.user?.preferences, "Expected preferences object on login");
+  assert.deepEqual(json?.user?.preferences?.theme, { mode: "system" });
   assert.equal(json?.landing_path, "/admin/index.html");
 });
 
@@ -569,10 +579,151 @@ addTest("B-007","POST /validate success", async () => {
   assert.equal(json?.user?.username, managedUsers.admin.username);
   assert.deepEqual(json?.user?.roles || [], ["admin"]);
   assert.deepEqual(json?.user?.permissions || [], ["admin_bidding", "live_feed"]);
+  assert.equal(Object.hasOwn(json?.user || {}, "preferences"), false, "Validate should not include preferences");
   assert.equal(json?.landing_path, "/admin/index.html");
   const payload = decodeJwtPayload(json.token);
   assert.equal(payload.username, managedUsers.admin.username);
   assert.ok(Number.isFinite(payload.session_invalid_before), "Expected session_invalid_before claim");
+});
+
+addTest("B-007a","POST /preferences saves normalized preferences and persists to next login", async () => {
+  const requestedPreferences = {
+    admin: {
+      selected_auction_id: testData.auctionId,
+      sort_field: "description",
+      sort_order: "desc"
+    },
+    cashier: {
+      selected_auction_id: testData.auctionId,
+      show_pictures: false
+    },
+    live_feed: {
+      selected_auction_id: testData.auctionId,
+      filter: "123",
+      show_unsold: true,
+      change_persist_seconds: 45,
+      bucket_sort_order: "ready_state",
+      show_pictures: false,
+      show_multi_item_buckets_only: true
+    },
+    theme: {
+      mode: "dark"
+    }
+  };
+
+  const save = await savePreferences(tokens.admin, requestedPreferences);
+  await expectStatus(save.res, 200);
+  assert.deepEqual(save.json?.preferences, requestedPreferences);
+
+  const relogin = await attemptLoginWith(managedUsers.admin.username, "admin", managedUsers.admin.password);
+  await expectStatus(relogin.res, 200);
+  assert.deepEqual(relogin.json?.user?.preferences, requestedPreferences);
+});
+
+addTest("B-007b","POST /preferences normalizes malformed payload", async () => {
+  const malformedPreferences = {
+    admin: {
+      selected_auction_id: -9,
+      sort_field: "nope",
+      sort_order: "sideways"
+    },
+    cashier: {
+      selected_auction_id: "abc",
+      show_pictures: "yes"
+    },
+    live_feed: {
+      selected_auction_id: 0,
+      filter: 456,
+      show_unsold: "true",
+      change_persist_seconds: -5,
+      bucket_sort_order: "wrong",
+      show_pictures: "false",
+      show_multi_item_buckets_only: "true"
+    },
+    theme: {
+      mode: "midnight"
+    }
+  };
+
+  const save = await savePreferences(tokens.admin, malformedPreferences);
+  await expectStatus(save.res, 200);
+  assert.deepEqual(save.json?.preferences, {
+    admin: {},
+    cashier: {},
+    live_feed: {},
+    theme: { mode: "system" }
+  });
+
+  const relogin = await attemptLoginWith(managedUsers.admin.username, "admin", managedUsers.admin.password);
+  await expectStatus(relogin.res, 200);
+  assert.deepEqual(relogin.json?.user?.preferences, {
+    admin: {},
+    cashier: {},
+    live_feed: {},
+    theme: { mode: "system" }
+  });
+});
+
+addTest("B-007c","POST /preferences rejects unauthenticated requests", async () => {
+  const { res } = await fetchJson(`${baseUrl}/preferences`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      preferences: {
+        theme: { mode: "dark" }
+      }
+    })
+  });
+  await expectStatus(res, 403);
+});
+
+addTest("B-007d","POST /preferences accepts token in request body for beacon-style saves", async () => {
+  const requestedPreferences = {
+    theme: { mode: "light" },
+    cashier: {
+      selected_auction_id: testData.auctionId,
+      show_pictures: true
+    }
+  };
+
+  const { res, json } = await fetchJson(`${baseUrl}/preferences`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      token: tokens.cashier,
+      preferences: requestedPreferences
+    })
+  });
+  await expectStatus(res, 200);
+  assert.deepEqual(json?.preferences, requestedPreferences);
+
+  const relogin = await attemptLoginWith(managedUsers.cashier.username, "cashier", managedUsers.cashier.password);
+  await expectStatus(relogin.res, 200);
+  assert.deepEqual(relogin.json?.user?.preferences, requestedPreferences);
+});
+
+addTest("B-007e","GET /preferences returns saved preferences for authenticated user", async () => {
+  const expectedPreferences = {
+    theme: { mode: "light" },
+    cashier: {
+      selected_auction_id: testData.auctionId,
+      show_pictures: true
+    }
+  };
+
+  const { res, json } = await fetchJson(`${baseUrl}/preferences`, {
+    method: "GET",
+    headers: authHeaders(tokens.cashier)
+  });
+  await expectStatus(res, 200);
+  assert.deepEqual(json?.preferences, expectedPreferences);
+});
+
+addTest("B-007f","GET /preferences rejects unauthenticated requests", async () => {
+  const { res } = await fetchJson(`${baseUrl}/preferences`, {
+    method: "GET"
+  });
+  await expectStatus(res, 403);
 });
 
 addTest("B-008","POST /validate failure missing token", async () => {

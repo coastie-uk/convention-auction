@@ -640,6 +640,50 @@ const ACCESS_DEPENDENCIES = [
   { permission: "admin_bidding", role: "admin" },
   { permission: "manage_users", role: "maintenance" }
 ];
+const USER_ACTION_ICONS = Object.freeze({
+  save: `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"></path>
+      <path d="M17 21v-8H7v8"></path>
+      <path d="M7 3v5h8"></path>
+    </svg>
+  `,
+  key: `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="8" cy="15" r="4"></circle>
+      <path d="M12 15h9"></path>
+      <path d="M18 12v6"></path>
+      <path d="M21 13v4"></path>
+    </svg>
+  `,
+  logout: `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+      <path d="M16 17l5-5-5-5"></path>
+      <path d="M21 12H9"></path>
+    </svg>
+  `,
+  trash: `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M3 6h18"></path>
+      <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"></path>
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+      <path d="M10 11v6"></path>
+      <path d="M14 11v6"></path>
+    </svg>
+  `
+});
+
+function createUserActionButton(icon, title, { disabled = false } = {}) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "item-action-button";
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  button.innerHTML = `<span class="item-action-icon" aria-hidden="true">${icon}</span>`;
+  button.disabled = disabled;
+  return button;
+}
 
 function syncDependentAccessCheckboxes(scope = document) {
   ACCESS_DEPENDENCIES.forEach(({ permission, role }) => {
@@ -814,8 +858,10 @@ async function loadUsers() {
     syncDependentAccessCheckboxes(tr);
 
     const actionsTd = document.createElement("td");
-    const logoutNowBtn = document.createElement("button");
-    logoutNowBtn.textContent = "Logout now";
+    const actionsWrap = document.createElement("div");
+    actionsWrap.className = "maintenance-user-actions";
+
+    const logoutNowBtn = createUserActionButton(USER_ACTION_ICONS.logout, "Log out user from all current sessions");
     logoutNowBtn.onclick = async () => {
       const confirmed = confirm(`Log out "${user.username}" from all current sessions?`);
       if (!confirmed) return;
@@ -838,8 +884,7 @@ async function loadUsers() {
     };
 
     if (!user.is_root) {
-      const saveRolesBtn = document.createElement("button");
-      saveRolesBtn.textContent = "Save Access";
+      const saveRolesBtn = createUserActionButton(USER_ACTION_ICONS.save, "Save access changes");
       saveRolesBtn.onclick = async () => {
         const roles = USER_ROLE_ORDER.filter((role) => roleCheckboxes[role].checked);
         const permissions = USER_PERMISSION_ORDER.filter((permission) => permissionCheckboxes[permission].checked);
@@ -864,8 +909,7 @@ async function loadUsers() {
         }
       };
 
-      const setPasswordBtn = document.createElement("button");
-      setPasswordBtn.textContent = "Set Password";
+      const setPasswordBtn = createUserActionButton(USER_ACTION_ICONS.key, "Set password");
       setPasswordBtn.onclick = async () => {
         const newPassword = await promptPassword(`Enter new password for "${user.username}"`);
         if (!newPassword) return;
@@ -891,9 +935,9 @@ async function loadUsers() {
         }
       };
 
-      const deleteBtn = document.createElement("button");
-      deleteBtn.textContent = "Delete";
-      deleteBtn.disabled = user.username === currentUsername;
+      const deleteBtn = createUserActionButton(USER_ACTION_ICONS.trash, "Delete user", {
+        disabled: user.username === currentUsername
+      });
       deleteBtn.onclick = async () => {
         const confirmed = confirm(`Delete user "${user.username}"?`);
         if (!confirmed) return;
@@ -910,13 +954,14 @@ async function loadUsers() {
         }
       };
 
-      actionsTd.appendChild(saveRolesBtn);
-      actionsTd.appendChild(setPasswordBtn);
-      actionsTd.appendChild(logoutNowBtn);
-      actionsTd.appendChild(deleteBtn);
+      actionsWrap.appendChild(saveRolesBtn);
+      actionsWrap.appendChild(setPasswordBtn);
+      actionsWrap.appendChild(logoutNowBtn);
+      actionsWrap.appendChild(deleteBtn);
     } else {
-      actionsTd.appendChild(logoutNowBtn);
+      actionsWrap.appendChild(logoutNowBtn);
     }
+    actionsTd.appendChild(actionsWrap);
     tr.appendChild(actionsTd);
 
     tableBody.appendChild(tr);

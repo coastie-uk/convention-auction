@@ -4,13 +4,28 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Auction - Submit Item</title>
+    <script>
+        (function bootstrapPublicTheme() {
+            try {
+                const mode = sessionStorage.getItem("publicEntryTheme") === "dark" ? "dark" : "light";
+                document.documentElement.dataset.theme = mode;
+                document.documentElement.style.colorScheme = mode;
+            } catch (_error) {
+                document.documentElement.dataset.theme = "light";
+                document.documentElement.style.colorScheme = "light";
+            }
+        })();
+    </script>
     <link rel="stylesheet" href="/styles/styles.css">
     <link rel="icon" type="image/png" href="/images/favicon.png" />
 </head>
 <body>
     <header class="page-hero">
         <div class="hero-shell">
-            <h1>Auction item entry</h1>
+            <div class="hero-headline-row">
+                <h1>Auction item entry</h1>
+                <button type="button" class="theme-toggle" data-public-theme-toggle>Theme: Light</button>
+            </div>
         </div>
     </header>
 
@@ -95,6 +110,7 @@
         </section>
     </main>
 
+    <script src="/scripts/theme.js"></script>
     <script src="/scripts/script.js"></script>
     <script src="/scripts/daypilot-modal-3.15.1.min.js"></script>
     <script src="/scripts/banner.js"></script>

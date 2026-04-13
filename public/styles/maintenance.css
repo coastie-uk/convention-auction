@@ -332,6 +332,13 @@
   margin-bottom: 4px;
 }
 
+.maintenance-user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
 .maintenance-mono-table {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -403,7 +410,9 @@
 }
 
 .maintenance-log-box {
+  height: min(60vh, 520px);
   margin-top: 10px;
+  max-height: min(60vh, 520px);
 }
 
 .maintenance-log-empty {
@@ -528,4 +537,125 @@ footer {
   .maintenance-version-pill {
     white-space: normal;
   }
+}
+
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .maintenance-result-box {
+  background: var(--admin-panel-bg);
+  border-color: var(--admin-panel-border);
+  box-shadow: var(--admin-panel-shadow);
+}
+
+:root[data-theme="dark"] .panel-head,
+:root[data-theme="dark"] .maintenance-subpanel,
+:root[data-theme="dark"] .maintenance-data-table thead th,
+:root[data-theme="dark"] .table-wrap {
+  background: #162234;
+  border-color: #253349;
+}
+
+:root[data-theme="dark"] .maintenance-tab-button,
+:root[data-theme="dark"] .panel-head h2,
+:root[data-theme="dark"] .panel-head h3,
+:root[data-theme="dark"] .maintenance-subpanel-head h3,
+:root[data-theme="dark"] .maintenance-form-grid label,
+:root[data-theme="dark"] .maintenance-filter-row label,
+:root[data-theme="dark"] .maintenance-checkbox-grid label,
+:root[data-theme="dark"] .maintenance-inline-toggle,
+:root[data-theme="dark"] .maintenance-form-grid input[type="text"],
+:root[data-theme="dark"] .maintenance-form-grid input[type="password"],
+:root[data-theme="dark"] .maintenance-form-grid input[type="number"],
+:root[data-theme="dark"] .maintenance-form-grid select,
+:root[data-theme="dark"] .maintenance-inline-form input[type="file"],
+:root[data-theme="dark"] .maintenance-inline-form input[type="text"],
+:root[data-theme="dark"] .maintenance-inline-form input[type="number"],
+:root[data-theme="dark"] #config-json,
+:root[data-theme="dark"] .maintenance-filter-row input,
+:root[data-theme="dark"] .maintenance-filter-row select,
+:root[data-theme="dark"] .status-select {
+  color: var(--admin-text);
+}
+
+:root[data-theme="dark"] .maintenance-tab-button,
+:root[data-theme="dark"] .maintenance-form-grid input[type="text"],
+:root[data-theme="dark"] .maintenance-form-grid input[type="password"],
+:root[data-theme="dark"] .maintenance-form-grid input[type="number"],
+:root[data-theme="dark"] .maintenance-form-grid select,
+:root[data-theme="dark"] .maintenance-inline-form input[type="file"],
+:root[data-theme="dark"] .maintenance-inline-form input[type="text"],
+:root[data-theme="dark"] .maintenance-inline-form input[type="number"],
+:root[data-theme="dark"] #config-json,
+:root[data-theme="dark"] .maintenance-filter-row input,
+:root[data-theme="dark"] .maintenance-filter-row select,
+:root[data-theme="dark"] .status-select {
+  background: #0b1320;
+  border-color: #31425c;
+}
+
+:root[data-theme="dark"] .maintenance-tab-button:hover {
+  background: #18263a;
+  border-color: #47648c;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
+}
+
+:root[data-theme="dark"] .maintenance-tab-button.is-active {
+  background: linear-gradient(135deg, #1b2a41 0%, #142032 100%);
+  border-color: #5f86bf;
+  color: #eef5ff;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.28);
+}
+
+:root[data-theme="dark"] .maintenance-actions-row button,
+:root[data-theme="dark"] .maintenance-subpanel button,
+:root[data-theme="dark"] .maintenance-inline-form button {
+  color: #09111d;
+}
+
+:root[data-theme="dark"] .maintenance-user-actions .item-action-button {
+  background: #1a2940;
+  border-color: #5f86bf;
+  color: #f0f6ff;
+  box-shadow: 0 0 0 1px rgba(95, 159, 255, 0.12);
+}
+
+:root[data-theme="dark"] .maintenance-user-actions .item-action-button:hover {
+  background: #233754;
+  border-color: #87a8da;
+  color: #ffffff;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+}
+
+:root[data-theme="dark"] .maintenance-data-table th,
+:root[data-theme="dark"] .maintenance-data-table td,
+:root[data-theme="dark"] .table-wrap,
+:root[data-theme="dark"] .maintenance-subpanel,
+:root[data-theme="dark"] .maintenance-result-box,
+:root[data-theme="dark"] .error-box {
+  border-color: #253349;
+}
+
+:root[data-theme="dark"] .maintenance-data-table tbody tr:hover {
+  background: rgba(95, 159, 255, 0.08);
+}
+
+:root[data-theme="dark"] table.payment-methods td.enabled {
+  color: #9fe3bc;
+}
+
+:root[data-theme="dark"] table.payment-methods td.disabled,
+:root[data-theme="dark"] .maintenance-log-empty {
+  color: var(--admin-muted);
+}
+
+:root[data-theme="dark"] .error-box {
+  background: #2b1719;
+  color: #ffb3ae;
+}
+
+:root[data-theme="dark"] .error-list {
+  color: #ffb3ae;
+}
+
+:root[data-theme="dark"] footer {
+  color: var(--admin-muted);
 }

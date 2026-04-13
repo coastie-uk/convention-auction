@@ -11,8 +11,14 @@ const {
   PERMISSION_SET,
   ROOT_USERNAME
 } = require('./auth-constants');
+const { log, logLevels } = require('./logger');
+const { LOG_DIR } = require('./config');
 
 const USERNAME_REGEX = /^[a-z0-9._-]{3,64}$/;
+const ADMIN_SORT_FIELDS = new Set(['item_number', 'description', 'contributor', 'artist', 'paddle_number', 'hammer_price']);
+const ADMIN_SORT_ORDERS = new Set(['asc', 'desc']);
+const LIVE_FEED_BUCKET_SORT_ORDERS = new Set(['paddle', 'ready_state', 'last_update', 'last_paid']);
+const THEME_MODES = new Set(['light', 'dark', 'system']);
 const VIEW_PRIORITY = Object.freeze([
   { key: 'admin', path: '/admin/index.html', role: 'admin' },
   { key: 'cashier', path: '/cashier/index.html', role: 'cashier' },
@@ -45,6 +51,104 @@ function parseJsonOrDelimitedList(raw) {
   }
 
   return trimmed.split(',');
+}
+
+function isPlainObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function parsePreferences(raw) {
+  if (isPlainObject(raw)) return raw;
+  if (typeof raw !== 'string') return {};
+
+  try {
+    const parsed = JSON.parse(raw);
+    return isPlainObject(parsed) ? parsed : {};
+  } catch (_error) {
+    return {};
+  }
+}
+
+function normalisePositiveInteger(value) {
+  const numeric = Number(value);
+  return Number.isInteger(numeric) && numeric > 0 ? numeric : undefined;
+}
+
+function normaliseString(value) {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function normaliseBoolean(value) {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function normaliseAdminPreferences(raw) {
+  const source = isPlainObject(raw) ? raw : {};
+  const result = {};
+  const auctionId = normalisePositiveInteger(source.selected_auction_id);
+  const sortField = normaliseString(source.sort_field);
+  const sortOrder = normaliseString(source.sort_order);
+
+  if (auctionId !== undefined) result.selected_auction_id = auctionId;
+  if (ADMIN_SORT_FIELDS.has(sortField)) result.sort_field = sortField;
+  if (ADMIN_SORT_ORDERS.has(sortOrder)) result.sort_order = sortOrder;
+  return result;
+}
+
+function normaliseCashierPreferences(raw) {
+  const source = isPlainObject(raw) ? raw : {};
+  const result = {};
+  const auctionId = normalisePositiveInteger(source.selected_auction_id);
+  const showPictures = normaliseBoolean(source.show_pictures);
+
+  if (auctionId !== undefined) result.selected_auction_id = auctionId;
+  if (showPictures !== undefined) result.show_pictures = showPictures;
+  return result;
+}
+
+function normaliseLiveFeedPreferences(raw) {
+  const source = isPlainObject(raw) ? raw : {};
+  const result = {};
+  const auctionId = normalisePositiveInteger(source.selected_auction_id);
+  const filter = normaliseString(source.filter);
+  const showUnsold = normaliseBoolean(source.show_unsold);
+  const showPictures = normaliseBoolean(source.show_pictures);
+  const showMultiItemBucketsOnly = normaliseBoolean(source.show_multi_item_buckets_only);
+  const changePersistSeconds = normalisePositiveInteger(source.change_persist_seconds);
+  const bucketSortOrder = normaliseString(source.bucket_sort_order);
+
+  if (auctionId !== undefined) result.selected_auction_id = auctionId;
+  if (filter !== undefined) result.filter = filter;
+  if (showUnsold !== undefined) result.show_unsold = showUnsold;
+  if (changePersistSeconds !== undefined) result.change_persist_seconds = changePersistSeconds;
+  if (LIVE_FEED_BUCKET_SORT_ORDERS.has(bucketSortOrder)) result.bucket_sort_order = bucketSortOrder;
+  if (showPictures !== undefined) result.show_pictures = showPictures;
+  if (showMultiItemBucketsOnly !== undefined) result.show_multi_item_buckets_only = showMultiItemBucketsOnly;
+  return result;
+}
+
+function normaliseThemePreferences(raw) {
+  const source = isPlainObject(raw) ? raw : {};
+  const mode = normaliseString(source.mode);
+  return {
+    mode: THEME_MODES.has(mode) ? mode : 'system'
+  };
+}
+
+function normaliseUserPreferences(raw) {
+  const source = parsePreferences(raw);
+  const result = {
+    theme: normaliseThemePreferences(source.theme)
+  };
+
+  if (source.admin !== undefined) result.admin = normaliseAdminPreferences(source.admin);
+  if (source.cashier !== undefined) result.cashier = normaliseCashierPreferences(source.cashier);
+  if (source.live_feed !== undefined) result.live_feed = normaliseLiveFeedPreferences(source.live_feed);
+  return result;
 }
 
 function normaliseRoles(inputRoles) {
@@ -149,6 +253,7 @@ function asUser(row, { includePassword = false } = {}) {
     username: row.username,
     roles: access.roles,
     permissions: access.permissions,
+    preferences: cloneJson(normaliseUserPreferences(row.preferences)),
     session_invalid_before: getSessionInvalidBeforeValue(row),
     is_root: access.is_root,
     created_at: row.created_at,
@@ -164,7 +269,7 @@ function getUserByUsername(username) {
   if (!normalized) return null;
 
   const row = db.prepare(`
-    SELECT username, password, roles, permissions, session_invalid_before, is_root, created_at, updated_at
+    SELECT username, password, roles, permissions, preferences, session_invalid_before, is_root, created_at, updated_at
     FROM users
     WHERE lower(username) = lower(?)
   `).get(normalized);
@@ -174,7 +279,7 @@ function getUserByUsername(username) {
 
 function listUsers() {
   const rows = db.prepare(`
-    SELECT username, roles, permissions, session_invalid_before, is_root, created_at, updated_at
+    SELECT username, roles, permissions, preferences, session_invalid_before, is_root, created_at, updated_at
     FROM users
     ORDER BY is_root DESC, username COLLATE NOCASE ASC
   `).all();
@@ -184,7 +289,7 @@ function listUsers() {
 
 function listUsersWithPasswords() {
   const rows = db.prepare(`
-    SELECT username, password, roles, permissions, session_invalid_before, is_root, created_at, updated_at
+    SELECT username, password, roles, permissions, preferences, session_invalid_before, is_root, created_at, updated_at
     FROM users
     ORDER BY username COLLATE NOCASE ASC
   `).all();
@@ -224,13 +329,14 @@ function createUser({ username, passwordHash, roles, permissions = [], isRoot = 
   }
 
   const info = db.prepare(`
-    INSERT INTO users (username, password, roles, permissions, session_invalid_before, is_root, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 0, ?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'), strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
+    INSERT INTO users (username, password, roles, permissions, preferences, session_invalid_before, is_root, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 0, ?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'), strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
   `).run(
     normalizedUsername,
     passwordHash,
     JSON.stringify(normalizedRoles),
     JSON.stringify(access.permissions),
+    JSON.stringify(normaliseUserPreferences({})),
     isRootUser ? 1 : 0
   );
 
@@ -278,6 +384,16 @@ function setUserPassword(username, passwordHash) {
     SET password = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
     WHERE lower(username) = lower(?)
   `).run(passwordHash, normalizedUsername);
+}
+
+function setUserPreferences(username, preferences) {
+  const normalizedUsername = normaliseUsername(username);
+  if (!normalizedUsername) return { changes: 0 };
+  return db.prepare(`
+    UPDATE users
+    SET preferences = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
+    WHERE lower(username) = lower(?)
+  `).run(JSON.stringify(normaliseUserPreferences(preferences)), normalizedUsername);
 }
 
 function invalidateUserSessions(username) {
@@ -336,10 +452,12 @@ module.exports = {
   updateUserRoles,
   updateUserAccess,
   setUserPassword,
+  setUserPreferences,
   invalidateUserSessions,
   deleteUser,
   userHasRole,
   userHasPermission,
+  normaliseUserPreferences,
   getSessionInvalidBeforeValue,
   isSessionTokenCurrent,
   getUsersForRole,

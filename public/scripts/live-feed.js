@@ -16,7 +16,8 @@
   const currencySymbol = localStorage.getItem('currencySymbol') || '£';
   const REFRESH_MS = 5000;
   const RECENT_ACTIVITY_LIMIT = 12;
-  const SHOW_PICTURES_KEY = 'liveFeedShowPictures';
+  const liveFeedPreferenceController = window.AppAuth?.createPreferenceController?.({ pageKey: 'live_feed' }) || null;
+  const liveFeedPreferences = liveFeedPreferenceController?.getPagePreferences?.() || {};
   const INITIAL_AUCTION_ID = Number.isInteger(REQUESTED_AUCTION_ID) && REQUESTED_AUCTION_ID > 0
     ? REQUESTED_AUCTION_ID
     : null;
@@ -86,6 +87,10 @@
   let showPictures = loadShowPictures();
   let showMultiItemBucketsOnly = loadShowMultiItemBucketsOnly();
 
+  function saveLiveFeedPreferences(partial) {
+    liveFeedPreferenceController?.patchPagePreferences?.(partial);
+  }
+
   const money = value => `${currencySymbol}${Number(value || 0).toFixed(2)}`;
 
   function notify(message, type = 'info') {
@@ -118,6 +123,11 @@
 
   function getActiveAuctionId() {
     const auctionId = Number(currentAuction?.id);
+    return Number.isInteger(auctionId) && auctionId > 0 ? auctionId : null;
+  }
+
+  function getSavedAuctionId() {
+    const auctionId = Number(liveFeedPreferenceController?.getPagePreferences?.().selected_auction_id);
     return Number.isInteger(auctionId) && auctionId > 0 ? auctionId : null;
   }
 
@@ -190,7 +200,7 @@
       els.auctionSelect.add(option);
     });
 
-    const matchedAuction = getAuctionById(INITIAL_AUCTION_ID);
+    const matchedAuction = getAuctionById(INITIAL_AUCTION_ID || getSavedAuctionId());
     if (matchedAuction) {
       currentAuction = matchedAuction;
       els.auctionSelect.value = String(matchedAuction.id);
@@ -204,6 +214,10 @@
         short_name: '',
         status: 'unknown'
       };
+    }
+
+    if (currentAuction?.id) {
+      saveLiveFeedPreferences({ selected_auction_id: Number(currentAuction.id) });
     }
 
     updateAuctionStatusPills();
@@ -458,41 +472,27 @@
   }
 
   function loadChangePersistMs() {
-    const raw = localStorage.getItem('live-feed-change-persist-seconds');
-    return parseDurationInput(raw || '15');
+    return parseDurationInput(liveFeedPreferences.change_persist_seconds || 15);
   }
 
   function loadBucketSortOrder() {
-    const raw = localStorage.getItem('live-feed-bucket-sort-order');
+    const raw = liveFeedPreferences.bucket_sort_order;
     if (['paddle', 'ready_state', 'last_update', 'last_paid'].includes(raw)) return raw;
     return 'last_update';
   }
 
   function loadShowMultiItemBucketsOnly() {
-    return localStorage.getItem('live-feed-show-multi-item-buckets-only') === 'true';
+    return liveFeedPreferences.show_multi_item_buckets_only === true;
   }
 
   function loadShowPictures() {
-    return localStorage.getItem(SHOW_PICTURES_KEY) !== '0';
-  }
-
-  function saveChangePersistMs() {
-    localStorage.setItem('live-feed-change-persist-seconds', String(Math.round(changePersistMs / 1000)));
-  }
-
-  function saveBucketSortOrder() {
-    localStorage.setItem('live-feed-bucket-sort-order', bucketSortOrder);
-  }
-
-  function saveShowMultiItemBucketsOnly() {
-    localStorage.setItem('live-feed-show-multi-item-buckets-only', String(showMultiItemBucketsOnly));
-  }
-
-  function saveShowPictures() {
-    localStorage.setItem(SHOW_PICTURES_KEY, showPictures ? '1' : '0');
+    return liveFeedPreferences.show_pictures !== false;
   }
 
   function syncInputs() {
+    const pagePreferences = liveFeedPreferenceController?.getPagePreferences?.() || liveFeedPreferences;
+    if (els.filterInput) els.filterInput.value = typeof pagePreferences.filter === 'string' ? pagePreferences.filter : '';
+    if (els.chkUnsold) els.chkUnsold.checked = pagePreferences.show_unsold === true;
     if (els.changePersistInput) els.changePersistInput.value = String(Math.round(changePersistMs / 1000));
     if (els.bucketSortOrderInput) els.bucketSortOrderInput.value = bucketSortOrder;
     if (els.showPicturesInput) els.showPicturesInput.checked = showPictures;
@@ -1233,11 +1233,13 @@
       closeMenuGroups();
       const selectedAuction = getAuctionById(Number(els.auctionSelect.value));
       if (!selectedAuction) return;
+      saveLiveFeedPreferences({ selected_auction_id: Number(selectedAuction.id) });
       window.location.assign(buildLiveFeedUrl(selectedAuction));
     });
 
     els.applyFilter?.addEventListener('click', () => {
       closeMenuGroups();
+      saveLiveFeedPreferences({ filter: els.filterInput?.value.trim() || '' });
       render();
       void poll({ reschedule: true });
     });
@@ -1253,13 +1255,14 @@
     });
 
     els.chkUnsold?.addEventListener('change', () => {
+      saveLiveFeedPreferences({ show_unsold: Boolean(els.chkUnsold.checked) });
       render();
       void poll({ reschedule: true });
     });
 
     els.changePersistInput?.addEventListener('change', () => {
       changePersistMs = parseDurationInput(els.changePersistInput.value);
-      saveChangePersistMs();
+      saveLiveFeedPreferences({ change_persist_seconds: Math.round(changePersistMs / 1000) });
       syncInputs();
       retimeActiveEffects();
       render();
@@ -1267,28 +1270,33 @@
 
     els.bucketSortOrderInput?.addEventListener('change', () => {
       bucketSortOrder = els.bucketSortOrderInput.value;
-      saveBucketSortOrder();
+      saveLiveFeedPreferences({ bucket_sort_order: bucketSortOrder });
       syncInputs();
       render();
     });
 
     els.showPicturesInput?.addEventListener('change', () => {
       showPictures = Boolean(els.showPicturesInput.checked);
-      saveShowPictures();
+      saveLiveFeedPreferences({ show_pictures: showPictures });
       syncInputs();
       render();
     });
 
     els.showMultiItemBucketsOnlyInput?.addEventListener('change', () => {
       showMultiItemBucketsOnly = Boolean(els.showMultiItemBucketsOnlyInput.checked);
-      saveShowMultiItemBucketsOnly();
+      saveLiveFeedPreferences({ show_multi_item_buckets_only: showMultiItemBucketsOnly });
       syncInputs();
       render();
+    });
+
+    els.filterInput?.addEventListener('change', () => {
+      saveLiveFeedPreferences({ filter: els.filterInput?.value.trim() || '' });
     });
 
     els.filterInput?.addEventListener('keydown', event => {
       if (event.key === 'Enter') {
         closeMenuGroups();
+        saveLiveFeedPreferences({ filter: els.filterInput?.value.trim() || '' });
         render();
         void poll({ reschedule: true });
       }

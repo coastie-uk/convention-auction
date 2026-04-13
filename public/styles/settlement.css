@@ -666,3 +666,161 @@ body.buyer-display-page {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+:root[data-theme="dark"] body {
+  background: transparent;
+  color: var(--admin-text);
+}
+
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .buyer-display-card {
+  background: var(--admin-panel-bg);
+  border-color: var(--admin-panel-border);
+  box-shadow: var(--admin-panel-shadow);
+}
+
+:root[data-theme="dark"] .panel-head,
+:root[data-theme="dark"] .summary-grid,
+:root[data-theme="dark"] .section-total,
+:root[data-theme="dark"] thead th,
+:root[data-theme="dark"] .buyer-display-summary .summary-card {
+  background: #162234;
+  border-color: #253349;
+}
+
+:root[data-theme="dark"] .secondary-button,
+:root[data-theme="dark"] .modal-button,
+:root[data-theme="dark"] .modal-input,
+:root[data-theme="dark"] .lot-preview-thumb img,
+:root[data-theme="dark"] .lot-preview-thumb-more,
+:root[data-theme="dark"] .buyer-display-thumb img,
+:root[data-theme="dark"] .buyer-display-thumb-more {
+  background: #121d2d;
+  border-color: #31425c;
+  color: var(--admin-text);
+}
+
+:root[data-theme="dark"] .secondary-button:hover,
+:root[data-theme="dark"] .modal-button:hover {
+  background: #1b2a41;
+}
+
+:root[data-theme="dark"] .primary-button,
+:root[data-theme="dark"] .payment-button,
+:root[data-theme="dark"] .modal-button-primary {
+  color: #fff;
+}
+
+:root[data-theme="dark"] .table-wrap,
+:root[data-theme="dark"] th,
+:root[data-theme="dark"] td,
+:root[data-theme="dark"] .summary-grid,
+:root[data-theme="dark"] .section-total,
+:root[data-theme="dark"] .buyer-display-empty {
+  border-color: #253349;
+}
+
+:root[data-theme="dark"] .bidder-row:hover {
+  background: rgba(95, 159, 255, 0.08);
+}
+
+:root[data-theme="dark"] .bidder-row.sel {
+  background: rgba(95, 159, 255, 0.18);
+}
+
+:root[data-theme="dark"] .bidder-paid {
+  background: #13251e !important;
+  color: #9fe3bc;
+}
+
+:root[data-theme="dark"] .bidder-negative {
+  background: #2a1d14 !important;
+  color: #f5bc8a;
+}
+
+:root[data-theme="dark"] .empty-state,
+:root[data-theme="dark"] .cashier-placeholder-copy,
+:root[data-theme="dark"] .panel-subtle,
+:root[data-theme="dark"] .summary-card-label,
+:root[data-theme="dark"] .buyer-display-thumb figcaption,
+:root[data-theme="dark"] .buyer-display-thumb-more,
+:root[data-theme="dark"] .lot-preview-thumb figcaption,
+:root[data-theme="dark"] .lot-preview-thumb-more {
+  color: var(--admin-muted);
+}
+
+:root[data-theme="dark"] .modal-overlay {
+  background: rgba(3, 8, 15, 0.72);
+}
+
+:root[data-theme="dark"] .modal-card {
+  background: #121d2d;
+  border-color: #31425c;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.38);
+}
+
+:root[data-theme="dark"] .modal-label {
+  color: var(--admin-muted);
+}
+
+.summary-modal-card {
+  width: min(100%, 560px);
+}
+
+.summary-breakdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.summary-breakdown-table th,
+.summary-breakdown-table td {
+  border-top: 1px solid #e7ebf0;
+  padding: 8px 10px;
+  vertical-align: top;
+}
+
+.summary-breakdown-table .summary-column-headings th {
+  border-top: 0;
+  background: #fbfcfe;
+  color: #5f6b7a;
+  font-size: 0.82rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.summary-breakdown-table td:nth-child(2),
+.summary-breakdown-table td:nth-child(3),
+.summary-breakdown-table th:nth-child(2),
+.summary-breakdown-table th:nth-child(3) {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.summary-modal-group-title td {
+  background: #f8fbff;
+  color: #24436b;
+  font-weight: 700;
+}
+
+.summary-modal-total td {
+  font-weight: 700;
+}
+
+.summary-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+:root[data-theme="dark"] .summary-breakdown-table th,
+:root[data-theme="dark"] .summary-breakdown-table td {
+  border-color: #253349;
+}
+
+:root[data-theme="dark"] .summary-breakdown-table .summary-column-headings th,
+:root[data-theme="dark"] .summary-modal-group-title td {
+  background: #162234;
+  color: #dfeaff;
+}
