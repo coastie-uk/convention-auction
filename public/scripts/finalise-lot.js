@@ -412,7 +412,10 @@ const API = "/api"
         if (!btn) return;
         const defaultTitle = btn.dataset.defaultTitle || btn.title || '';
         const isMoveBtn = btn.classList.contains('move-toggle');
-        if (isLive || hasBid) {
+        const isViewBtn = btn.classList.contains('view-item-button');
+        const shouldDisable = !isViewBtn && (isLive || hasBid);
+
+        if (shouldDisable) {
           btn.disabled = true;
           btn.style.display = isLive ? 'none' : 'inline-flex'; // hide move if live without bids
           btn.classList.add('disabled');

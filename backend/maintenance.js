@@ -33,6 +33,12 @@ const bcrypt = require('bcryptjs');
 const { logLevels, setLogLevel, logFromRequest, createLogger, log } = require('./logger');
 const { checkAuctionState } = require('./middleware/checkAuctionState');
 const {
+  SUMMARY_MODE,
+  VERBOSE_MODE,
+  collectIntegrityChecks,
+  applyIntegrityFixes
+} = require('./integrity-check');
+const {
   ROLE_LIST,
   PERMISSION_LIST,
   ROOT_USERNAME,
@@ -185,17 +191,30 @@ router.get("/download-db", (req, res) => {
   const ext = path.extname(DB_NAME);
   const base = path.basename(DB_NAME, ext);
   const filename = `${base}_${timestamp}${ext}`;
+  const databaseFile = path.join(DB_PATH, DB_NAME);
+  const tempSnapshotPath = path.join(BACKUP_DIR, `${base}_download_${Date.now()}${ext}`);
 
   db.setMaintenanceLock(true);
   try {
-    db.close;
-    res.download(path.join(DB_PATH, DB_NAME), filename);
+    db.close();
+    fs.copyFileSync(databaseFile, tempSnapshotPath);
     if (typeof db.reopen === "function") {
       db.reopen({ skipClose: true });
     }
   } finally {
     db.setMaintenanceLock(false);
   }
+
+  res.download(tempSnapshotPath, filename, (err) => {
+    try {
+      fs.rmSync(tempSnapshotPath, { force: true });
+    } catch (_) {
+      // Ignore cleanup errors for temp snapshot files.
+    }
+    if (err && !res.headersSent) {
+      res.status(500).json({ error: "Failed to download database snapshot." });
+    }
+  });
 
 });
 
@@ -543,196 +562,40 @@ router.get("/photo-report", (req, res) => {
 
 //--------------------------------------------------------------------------
 // GET /check-integrity
-// API to do some basic database checks. Mostly deprecated by database engine protections.......
+// API to run integrity diagnostics in summary or verbose mode
 //--------------------------------------------------------------------------
 
 router.get("/check-integrity", (req, res) => {
-  logFromRequest(req, logLevels.DEBUG, `Running integrity checks`);
+  const requestedMode = req.query?.mode;
+  const mode = requestedMode === SUMMARY_MODE ? SUMMARY_MODE : VERBOSE_MODE;
 
-  db.all("SELECT * FROM items", [], (err, items) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const result = collectIntegrityChecks(mode);
+    res.json(result);
+    logFromRequest(
+      req,
+      result.has_problems ? logLevels.WARN : logLevels.INFO,
+      `Integrity check (${mode}) complete: ${result.summary_text}`
+    );
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Integrity check failed: ${err.message}`);
+    res.status(500).json({ error: 'Integrity check failed.' });
+  }
+});
 
-    const missingPhotoItemIds = new Set();
-    for (const item of items) {
-      if (item.photo && !fs.existsSync(path.join(UPLOAD_DIR, item.photo))) {
-        missingPhotoItemIds.add(item.id);
-      }
-    }
-
-    // Find items with missing or invalid auction_id
-    db.all("SELECT id FROM auctions", [], (err, auctions) => {
-      if (err) return res.status(500).json({ error: err.message });
-
-      const validAuctionIds = new Set(auctions.map(a => a.id));
-      const orphanedItems = items.filter(item => !validAuctionIds.has(item.auction_id));
-
-      // Optional: Check for missing required fields
-      const invalidFields = items.filter(item =>
-        !item.description?.trim() || !item.contributor?.trim() || !item.item_number
-      );
-
-      db.all("SELECT * FROM bidders", [], (err, bidders) => {
-        if (err) return res.status(500).json({ error: err.message });
-
-        const bidderById = new Map(bidders.map(b => [b.id, b]));
-
-        db.all("SELECT * FROM payments", [], (err, payments) => {
-          if (err) return res.status(500).json({ error: err.message });
-
-          const paymentById = new Map(payments.map(p => [p.id, p]));
-
-          const invalidItemDetails = items.map(item => {
-            const issues = [];
-
-            if (missingPhotoItemIds.has(item.id)) {
-              issues.push("Missing photo");
-            }
-            if (!validAuctionIds.has(item.auction_id)) {
-              issues.push("Invalid auction ID");
-            }
-            if (!item.description?.trim()) {
-              issues.push("Missing description");
-            }
-            if (!item.contributor?.trim()) {
-              issues.push("Missing contributor");
-            }
-            if (!item.item_number) {
-              issues.push("Missing item number");
-            }
-            if (item.winning_bidder_id) {
-              const winningBidder = bidderById.get(item.winning_bidder_id);
-              if (!winningBidder) {
-                issues.push("Invalid winning bidder");
-              } else if (winningBidder.auction_id && winningBidder.auction_id !== item.auction_id) {
-                issues.push("Winning bidder auction mismatch");
-              }
-            }
-            if (item.hammer_price != null) {
-              if (Number.isNaN(Number(item.hammer_price)) || Number(item.hammer_price) <= 0) {
-                issues.push("Invalid hammer price");
-              }
-              if (!item.winning_bidder_id) {
-                issues.push("Hammer price without winning bidder");
-              }
-            } else if (item.winning_bidder_id) {
-              issues.push("Winning bidder without hammer price");
-            }
-
-            if (issues.length === 0) return null;
-
-            return {
-              id: item.id,
-              auction_id: item.auction_id,
-              description: item.description,
-              contributor: item.contributor,
-              photo: item.photo,
-              item_number: item.item_number,
-              winning_bidder_id: item.winning_bidder_id,
-              hammer_price: item.hammer_price,
-              issues
-            };
-          }).filter(Boolean);
-
-          const invalidBidderDetails = bidders.map(bidder => {
-            const issues = [];
-
-            if (!validAuctionIds.has(bidder.auction_id)) {
-              issues.push("Invalid auction ID");
-            }
-            // Bidder name not used
-            // if (!bidder.name?.trim()) {
-            //   issues.push("Missing name");
-            // }
-            if (!Number.isFinite(bidder.paddle_number) || bidder.paddle_number <= 0) {
-              issues.push("Invalid paddle number");
-            }
-
-            if (issues.length === 0) return null;
-
-            return {
-              id: bidder.id,
-              auction_id: bidder.auction_id,
-              paddle_number: bidder.paddle_number,
-              name: bidder.name,
-              issues
-            };
-          }).filter(Boolean);
-
-          const invalidPaymentDetails = payments.map(payment => {
-            const issues = [];
-
-            if (!Number.isFinite(payment.amount)) {
-              issues.push("Invalid amount");
-            }
-            if (payment.reverses_payment_id) {
-              if (!paymentById.has(payment.reverses_payment_id)) {
-                issues.push("Invalid reversal target");
-              } else if (payment.reverses_payment_id === payment.id) {
-                issues.push("Self-referencing reversal");
-              }
-              if (Number.isFinite(payment.amount) && payment.amount > 0) {
-                issues.push("Reversal with positive amount");
-              }
-            }
-
-            if (issues.length === 0) return null;
-
-            return {
-              id: payment.id,
-              bidder_id: payment.bidder_id,
-              amount: payment.amount,
-              method: payment.method,
-              reverses_payment_id: payment.reverses_payment_id,
-              provider: payment.provider,
-              provider_txn_id: payment.provider_txn_id,
-              intent_id: payment.intent_id,
-              currency: payment.currency,
-              issues
-            };
-          }).filter(Boolean);
-
-          res.json({
-            total: items.length,
-            invalidItems: invalidItemDetails,
-            bidderTotal: bidders.length,
-            invalidBidders: invalidBidderDetails,
-            paymentTotal: payments.length,
-            invalidPayments: invalidPaymentDetails
-          });
-
-          const logChunks = [];
-          if (invalidItemDetails.length > 0) {
-            const itemLines = invalidItemDetails.map(item =>
-              `Item ID ${item.id} (Auction ${item.auction_id}) Issues: ${item.issues.join(", ")}`
-            ).join(" | ");
-            logChunks.push(`Items: ${itemLines}`);
-          }
-          if (invalidBidderDetails.length > 0) {
-            const bidderLines = invalidBidderDetails.map(bidder =>
-              `Bidder ID ${bidder.id} (Auction ${bidder.auction_id}) Issues: ${bidder.issues.join(", ")}`
-            ).join(" | ");
-            logChunks.push(`Bidders: ${bidderLines}`);
-          }
-          if (invalidPaymentDetails.length > 0) {
-            const paymentLines = invalidPaymentDetails.map(payment =>
-              `Payment ID ${payment.id} (Bidder ${payment.bidder_id}) Issues: ${payment.issues.join(", ")}`
-            ).join(" | ");
-            logChunks.push(`Payments: ${paymentLines}`);
-          }
-
-          if (logChunks.length > 0) {
-            logFromRequest(
-              req,
-              logLevels.WARN,
-              `Integrity check flagged issues: ${logChunks.join(" || ")}`
-            );
-          } else {
-            logFromRequest(req, logLevels.INFO, `Integrity check complete, no errors found`);
-          }
-        });
-      });
-    });
-  });
+router.post("/check-integrity/fix", (req, res) => {
+  try {
+    const result = applyIntegrityFixes(req);
+    res.json(result);
+    logFromRequest(
+      req,
+      result.applied_fix_count > 0 ? logLevels.WARN : logLevels.INFO,
+      `Integrity fixes applied: ${result.applied_fix_count}, remaining problems: ${result.remaining_problem_count}`
+    );
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Integrity fix failed: ${err.message}`);
+    res.status(500).json({ error: 'Integrity fix failed.' });
+  }
 });
 //--------------------------------------------------------------------------
 // Remove invalid items API (disabled as this only had limited usecase and feels like more a security risk!)

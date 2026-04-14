@@ -3,7 +3,9 @@
 
 const assert = require("assert/strict");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
+const Database = require(path.join(__dirname, "..", "backend", "node_modules", "better-sqlite3"));
 const { initFramework } = require("./api-test-framework");
 
 const configCandidates = [
@@ -74,6 +76,43 @@ context.slipConfig = null;
 context.resourceFilename = null;
 context.dbBackupBuffer = null;
 context.managedUser = managedUsers.lifecycle;
+
+function createTempDbBuffer(sourceBuffer, mutator) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "auction-integrity-"));
+  const tempFile = path.join(tempDir, "scenario.db");
+  fs.writeFileSync(tempFile, Buffer.from(sourceBuffer));
+
+  const tempDb = new Database(tempFile);
+  try {
+    mutator(tempDb);
+  } finally {
+    tempDb.close();
+  }
+
+  const mutatedBuffer = fs.readFileSync(tempFile);
+  fs.rmSync(tempDir, { recursive: true, force: true });
+  return mutatedBuffer;
+}
+
+async function downloadCurrentDbBuffer() {
+  const res = await fetch(`${baseUrl}/maintenance/download-db`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+async function restoreDbBuffer(buffer, filename = "integrity-restore.db") {
+  const form = new FormData();
+  form.append("backup", new Blob([buffer]), filename);
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/restore`, {
+    method: "POST",
+    headers: authHeaders(context.token),
+    body: form
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && json.message, `Unexpected restore response: ${text}`);
+}
 
 // async function updateAuctionStatus(auctionId, status) {
 //   const { res, json, text } = await fetchJson(`${baseUrl}/auctions/update-status`, {
@@ -320,16 +359,233 @@ addTest("M-018","maintenance/photo-report failure unauthenticated", async () => 
 });
 
 addTest("M-019","maintenance/check-integrity success", async () => {
-  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/check-integrity`, {
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/check-integrity?mode=summary`, {
     headers: authHeaders(context.token)
   });
   await expectStatus(res, 200);
-  assert.ok(json && typeof json.total === "number", `Unexpected response: ${text}`);
+  assert.ok(json && json.mode === "summary", `Unexpected response: ${text}`);
+  assert.ok(typeof json.has_problems === "boolean", `Unexpected response: ${text}`);
+  assert.ok(typeof json.fixable_problem_count === "number", `Unexpected response: ${text}`);
+  assert.ok(typeof json.check_count === "number", `Unexpected response: ${text}`);
+  assert.ok(typeof json.summary_text === "string", `Unexpected response: ${text}`);
 });
 
 addTest("M-020","maintenance/check-integrity failure unauthenticated", async () => {
   const res = await fetch(`${baseUrl}/maintenance/check-integrity`);
   await expectStatus(res, 403);
+});
+
+addTest("M-020A","maintenance/check-integrity verbose success", async () => {
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/check-integrity?mode=verbose`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && json.mode === "verbose", `Unexpected response: ${text}`);
+  assert.ok(Array.isArray(json.checks), `Unexpected response: ${text}`);
+  assert.ok(Array.isArray(json.problems), `Unexpected response: ${text}`);
+});
+
+addTest("M-020B","maintenance/check-integrity/fix failure unauthenticated", async () => {
+  const res = await fetch(`${baseUrl}/maintenance/check-integrity/fix`, {
+    method: "POST"
+  });
+  await expectStatus(res, 403);
+});
+
+addTest("M-020C","maintenance/check-integrity/fix repairs deterministic workflow issues", async () => {
+  const originalBuffer = await downloadCurrentDbBuffer();
+  let otherAuctionId = null;
+
+  try {
+    const corruptedBuffer = createTempDbBuffer(originalBuffer, (tempDb) => {
+      tempDb.pragma("foreign_keys = OFF");
+
+      tempDb.prepare("DELETE FROM payment_intents WHERE bidder_id IN (SELECT id FROM bidders WHERE auction_id = ?)").run(context.testAuctionId);
+      tempDb.prepare("DELETE FROM payments WHERE bidder_id IN (SELECT id FROM bidders WHERE auction_id = ?)").run(context.testAuctionId);
+      tempDb.prepare("DELETE FROM items WHERE auction_id = ?").run(context.testAuctionId);
+      tempDb.prepare("DELETE FROM bidders WHERE auction_id = ?").run(context.testAuctionId);
+      tempDb.prepare("UPDATE auctions SET status = 'live' WHERE id = ?").run(context.testAuctionId);
+
+      const otherAuctionInfo = tempDb.prepare(`
+        INSERT INTO auctions (short_name, full_name, logo, status)
+        VALUES (?, ?, ?, 'live')
+      `).run(`integrity_other_${Date.now()}`, "Integrity Secondary Auction", "default_logo.png");
+      otherAuctionId = Number(otherAuctionInfo.lastInsertRowid);
+
+      const bidderSold = Number(tempDb.prepare(`
+        INSERT INTO bidders (paddle_number, name, auction_id, ready_for_collection)
+        VALUES (101, 'Scenario Sold Bidder', ?, 0)
+      `).run(context.testAuctionId).lastInsertRowid);
+
+      const bidderReady = Number(tempDb.prepare(`
+        INSERT INTO bidders (paddle_number, name, auction_id, ready_for_collection, ready_fingerprint, ready_updated_at)
+        VALUES (102, 'Scenario Ready Bidder', ?, 1, 'ready-fingerprint', '2026-01-01 12:00:00')
+      `).run(context.testAuctionId).lastInsertRowid);
+
+      const bidderOtherAuction = Number(tempDb.prepare(`
+        INSERT INTO bidders (paddle_number, name, auction_id, ready_for_collection)
+        VALUES (201, 'Other Auction Bidder', ?, 0)
+      `).run(otherAuctionId).lastInsertRowid);
+
+      tempDb.prepare(`
+        INSERT INTO items (description, contributor, auction_id, item_number, winning_bidder_id, hammer_price, date)
+        VALUES ('Valid sold item', 'Contributor A', ?, 1, ?, 50, '2026-01-01 12:00:00')
+      `).run(context.testAuctionId, bidderSold);
+
+      tempDb.prepare(`
+        INSERT INTO items (description, contributor, auction_id, item_number, winning_bidder_id, hammer_price, date)
+        VALUES ('Missing bidder sold item', 'Contributor B', ?, 1, 999001, 40, '2026-01-01 12:01:00')
+      `).run(context.testAuctionId);
+
+      tempDb.prepare(`
+        INSERT INTO items (description, contributor, auction_id, item_number, collected_at, date)
+        VALUES ('Collected without sale', 'Contributor C', ?, 4, '2026-01-01 12:02:00', '2026-01-01 12:02:00')
+      `).run(context.testAuctionId);
+
+      tempDb.prepare(`
+        INSERT INTO items (description, contributor, auction_id, item_number, winning_bidder_id, hammer_price, date)
+        VALUES ('Mismatched bidder item', 'Contributor D', ?, NULL, ?, 60, '2026-01-01 12:03:00')
+      `).run(context.testAuctionId, bidderOtherAuction);
+
+      tempDb.prepare(`
+        INSERT INTO items (description, contributor, auction_id, item_number, winning_bidder_id, hammer_price, date)
+        VALUES ('Missing hammer item', 'Contributor E', ?, 7, ?, NULL, '2026-01-01 12:04:00')
+      `).run(context.testAuctionId, bidderSold);
+
+      tempDb.prepare(`
+        INSERT INTO items (description, contributor, auction_id, item_number, winning_bidder_id, hammer_price, date)
+        VALUES ('Secondary auction sold item', 'Contributor F', ?, 1, ?, 25, '2026-01-01 12:05:00')
+      `).run(otherAuctionId, bidderOtherAuction);
+
+      tempDb.prepare(`
+        INSERT INTO payment_intents (intent_id, bidder_id, amount_minor, donation_minor, created_by, currency, status, channel, created_at, expires_at, note)
+        VALUES ('intent-good', ?, 5000, 0, 'test-suite', 'GBP', 'pending', 'app', '2026-01-01 12:00:00', '2026-01-01 13:00:00', 'good intent')
+      `).run(bidderSold);
+
+      tempDb.prepare(`
+        INSERT INTO payment_intents (intent_id, bidder_id, amount_minor, donation_minor, created_by, currency, status, channel, created_at, expires_at, note)
+        VALUES ('intent-missing', 999003, 1000, 0, 'test-suite', 'GBP', 'pending', 'app', '2026-01-01 12:00:00', '2026-01-01 13:00:00', 'missing bidder intent')
+      `).run();
+
+      tempDb.prepare(`
+        INSERT INTO payments (bidder_id, amount, donation_amount, method, created_by, created_at, provider, intent_id, currency)
+        VALUES (?, 50, 0, 'cash', 'test-suite', '2026-01-01 12:10:00', 'manual', 'intent-good', 'GBP')
+      `).run(bidderReady);
+
+      tempDb.prepare(`
+        INSERT INTO payments (bidder_id, amount, donation_amount, method, created_by, created_at, provider, provider_txn_id, currency)
+        VALUES (999002, 12, 0, 'cash', 'test-suite', '2026-01-01 12:11:00', 'manual', 'missing-bidder-payment', 'GBP')
+      `).run();
+
+      const reversalPaymentId = Number(tempDb.prepare(`
+        INSERT INTO payments (bidder_id, amount, donation_amount, method, created_by, created_at, provider, provider_txn_id, currency)
+        VALUES (?, 10, 0, 'cash', 'test-suite', '2026-01-01 12:12:00', 'manual', 'bad-reversal', 'GBP')
+      `).run(bidderSold).lastInsertRowid);
+
+      tempDb.prepare(`
+        UPDATE payments
+           SET reverses_payment_id = ?
+         WHERE id = ?
+      `).run(reversalPaymentId, reversalPaymentId);
+
+      tempDb.prepare(`
+        INSERT INTO payments (bidder_id, amount, donation_amount, method, created_by, created_at, provider, intent_id, currency)
+        VALUES (999004, 35, 0, 'cash', 'test-suite', '2026-01-01 12:13:00', 'manual_missing', 'intent-good', 'GBP')
+      `).run();
+    });
+
+    await restoreDbBuffer(corruptedBuffer, "integrity-corrupt.db");
+
+    const beforeFix = await fetchJson(`${baseUrl}/maintenance/check-integrity?mode=verbose`, {
+      headers: authHeaders(context.token)
+    });
+    await expectStatus(beforeFix.res, 200);
+    assert.ok(beforeFix.json && beforeFix.json.has_problems, "Expected integrity problems before fix");
+
+    const codesBefore = new Set((beforeFix.json.problems || []).map((problem) => problem.code));
+    [
+      "item_number_sequence_broken",
+      "item_sale_pair_broken",
+      "item_bidder_auction_mismatch",
+      "item_collected_without_sale",
+      "auction_live_but_complete",
+      "bidder_ready_without_sold_items",
+      "payment_intent_bidder_mismatch",
+      "payment_missing_bidder",
+      "payment_reversal_invalid",
+      "payment_intent_missing_bidder"
+    ].forEach((code) => assert.ok(codesBefore.has(code), `Expected integrity code ${code} before fix`));
+
+    const fixRun = await fetchJson(`${baseUrl}/maintenance/check-integrity/fix`, {
+      method: "POST",
+      headers: authHeaders(context.token)
+    });
+    await expectStatus(fixRun.res, 200);
+    assert.ok(fixRun.json && fixRun.json.ok, "Expected fix endpoint to succeed");
+    assert.ok(Array.isArray(fixRun.json.applied_fixes), "Expected applied_fixes array");
+    assert.ok(fixRun.json.applied_fix_count >= 6, "Expected multiple safe fixes to be applied");
+    assert.ok(fixRun.json.rerun && fixRun.json.rerun.mode === "verbose", "Expected verbose rerun after fix");
+
+    const afterFixCodes = new Set((fixRun.json.rerun.problems || []).map((problem) => problem.code));
+    assert.ok(!afterFixCodes.has("item_bidder_auction_mismatch"), "Mismatched bidder issue should be fixed");
+    assert.ok(!afterFixCodes.has("item_collected_without_sale"), "Collected-without-sale issue should be fixed");
+    assert.ok(!afterFixCodes.has("bidder_ready_without_sold_items"), "Ready-without-items issue should be fixed");
+    assert.ok(afterFixCodes.has("item_sale_pair_broken"), "Missing hammer issue should remain after fix");
+    assert.ok(afterFixCodes.has("payment_missing_bidder"), "Non-inferable missing bidder payment should remain after fix");
+    assert.ok(afterFixCodes.has("payment_reversal_invalid"), "Invalid reversal should remain after fix");
+    assert.ok(afterFixCodes.has("payment_intent_missing_bidder"), "Missing-bidder payment intent should remain after fix");
+
+    const repairedBuffer = await downloadCurrentDbBuffer();
+    createTempDbBuffer(repairedBuffer, (tempDb) => {
+      tempDb.pragma("foreign_keys = OFF");
+
+      const repairedItems = tempDb.prepare(`
+        SELECT id, description, item_number, winning_bidder_id, collected_at
+        FROM items
+        WHERE auction_id = ?
+        ORDER BY item_number ASC, id ASC
+      `).all(context.testAuctionId);
+      assert.equal(repairedItems.length, 5, "Expected five scenario items after fix");
+      assert.deepEqual(repairedItems.map((item) => item.item_number), [1, 2, 3, 4, 5], "Expected auction items to be renumbered contiguously");
+
+      const missingBidderItem = repairedItems.find((item) => item.description === "Missing bidder sold item");
+      assert.ok(missingBidderItem && Number(missingBidderItem.winning_bidder_id) > 0, "Missing-bidder item should have a replacement bidder");
+      const replacementBidder = tempDb.prepare("SELECT auction_id, paddle_number, name FROM bidders WHERE id = ?").get(missingBidderItem.winning_bidder_id);
+      assert.equal(Number(replacementBidder.auction_id), context.testAuctionId, "Recovery bidder should belong to the original auction");
+      assert.ok(Number(replacementBidder.paddle_number) >= 900000, "Recovery bidder should use reserved high paddle range");
+
+      const mismatchItem = repairedItems.find((item) => item.description === "Mismatched bidder item");
+      assert.ok(mismatchItem && Number(mismatchItem.winning_bidder_id) > 0, "Mismatched item should be relinked");
+      const mismatchBidder = tempDb.prepare("SELECT auction_id, paddle_number FROM bidders WHERE id = ?").get(mismatchItem.winning_bidder_id);
+      assert.equal(Number(mismatchBidder.auction_id), context.testAuctionId, "Relinked bidder should belong to the original auction");
+      assert.ok(Number(mismatchBidder.paddle_number) >= 900000, "Relinked bidder should also use reserved high paddle range");
+
+      const collectedItem = repairedItems.find((item) => item.description === "Collected without sale");
+      assert.equal(collectedItem.collected_at, null, "Collected-without-sale item should be cleared");
+
+      const readyBidderRow = tempDb.prepare(`
+        SELECT ready_for_collection, ready_fingerprint
+        FROM bidders
+        WHERE auction_id = ? AND name = 'Scenario Ready Bidder'
+      `).get(context.testAuctionId);
+      assert.equal(Number(readyBidderRow.ready_for_collection), 0, "Ready bidder should be cleared");
+      assert.equal(readyBidderRow.ready_fingerprint, null, "Ready bidder fingerprint should be cleared");
+
+      const relinkedPayments = tempDb.prepare(`
+        SELECT bidder_id, intent_id
+        FROM payments
+        WHERE intent_id = 'intent-good'
+        ORDER BY id ASC
+      `).all();
+      assert.equal(relinkedPayments.length, 2, "Expected two payments tied to the good intent");
+      assert.ok(relinkedPayments.every((payment) => Number(payment.bidder_id) === Number(tempDb.prepare("SELECT bidder_id FROM payment_intents WHERE intent_id = 'intent-good'").get().bidder_id)), "Payments with the good intent should be relinked to the intent bidder");
+
+      const otherAuction = tempDb.prepare("SELECT status FROM auctions WHERE id = ?").get(otherAuctionId);
+      assert.equal(otherAuction.status, "settlement", "Completed live auction should be moved to settlement");
+    });
+  } finally {
+    await restoreDbBuffer(originalBuffer, "integrity-restore-original.db");
+  }
 });
 
 addTest("M-021","maintenance/users list success", async () => {
@@ -619,7 +875,12 @@ addTest("M-021o","maintenance/users/:username delete failure root from non-root 
   const createGuard = await fetchJson(`${baseUrl}/maintenance/users`, {
     method: "POST",
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ username: guardUsername, password: guardPassword, roles: ["maintenance"] })
+    body: JSON.stringify({
+      username: guardUsername,
+      password: guardPassword,
+      roles: ["maintenance"],
+      permissions: ["manage_users"]
+    })
   });
   if (createGuard.res.status !== 201 && createGuard.res.status !== 409) {
     throw new Error(`Failed to prepare guard user: ${createGuard.text || createGuard.res.status}`);
@@ -628,7 +889,7 @@ addTest("M-021o","maintenance/users/:username delete failure root from non-root 
     const patchGuard = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(guardUsername)}/roles`, {
       method: "PATCH",
       headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-      body: JSON.stringify({ roles: ["maintenance"] })
+      body: JSON.stringify({ roles: ["maintenance"], permissions: ["manage_users"] })
     });
     await expectStatus(patchGuard.res, 200);
 

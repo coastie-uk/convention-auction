@@ -159,6 +159,29 @@ function getAdminItemStatus(item) {
   };
 }
 
+function getItemEditState(item, auctionStatus) {
+  const normalizedStatus = String(auctionStatus || '').toLowerCase();
+
+  if (normalizedStatus !== 'setup' && normalizedStatus !== 'locked') {
+    return {
+      can_edit: false,
+      edit_block_reason: `Items can only be edited while the auction is in setup or locked. Current state: ${normalizedStatus || 'unknown'}.`
+    };
+  }
+
+  if (item?.winning_bidder_id != null || item?.hammer_price != null) {
+    return {
+      can_edit: false,
+      edit_block_reason: 'Item has a bid and cannot be edited.'
+    };
+  }
+
+  return {
+    can_edit: true,
+    edit_block_reason: null
+  };
+}
+
 function isLoginLockedOut(req, username) {
   const now = Date.now();
   const key = getLockoutKey(req, username);
@@ -410,7 +433,7 @@ app.post('/validate', async (req, res) => {
             versions: { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer },
             user: buildSessionUser(sessionUser)
         });
-        logFromRequest(req, logLevels.DEBUG, `Token validated successfully for user ${currentUser.username} `);
+      //  logFromRequest(req, logLevels.DEBUG, `Token validated successfully for user ${currentUser.username} `);
 
 
     });
@@ -860,6 +883,51 @@ app.get('/auctions/:auctionId/items', authenticateRole("admin"), (req, res) => {
 });
 
 //--------------------------------------------------------------------------
+// GET /auctions/:auctionId/items/:id
+// API to get full saved item details for the edit/view screen
+//--------------------------------------------------------------------------
+
+app.get('/auctions/:auctionId/items/:id', authenticateRole("admin"), (req, res) => {
+    const auction_id = Number(req.params.auctionId);
+    const id = Number(req.params.id);
+
+    if (!auction_id || !id) {
+        return res.status(400).json({ error: "Missing auction_id or item id" });
+    }
+
+    try {
+        const row = db.prepare(`
+            SELECT i.*,
+                   a.status AS auction_status,
+                   b.paddle_number AS paddle_no
+              FROM items i
+              LEFT JOIN auctions a ON a.id = i.auction_id
+              LEFT JOIN bidders b ON b.id = i.winning_bidder_id
+             WHERE i.id = ?
+        `).get(id);
+
+        if (!row) {
+            return res.status(404).json({ error: "Item not found" });
+        }
+
+        if (Number(row.auction_id) !== auction_id) {
+            return res.status(400).json({ error: "Item auction ID mismatch" });
+        }
+
+        const { can_edit, edit_block_reason } = getItemEditState(row, row.auction_status);
+
+        res.json({
+            ...row,
+            can_edit,
+            edit_block_reason
+        });
+    } catch (err) {
+        logFromRequest(req, logLevels.ERROR, `Error fetching item ${id}: ${err.message}`);
+        res.status(500).json({ error: "Failed to load item details." });
+    }
+});
+
+//--------------------------------------------------------------------------
 // POST /auctions/:auctionId/items/:id/update
 // API to update an item, including photo. Includes moving an item to a new auction
 //--------------------------------------------------------------------------
@@ -998,7 +1066,7 @@ try {
     }
     );
     }
-    catch {
+    catch (err) {
         logFromRequest(req, logLevels.ERROR, "Error editing: " + err.message);
         res.status(500).json({ error: err.message });
     }
@@ -1195,9 +1263,29 @@ app.post('/rotate-photo', authenticateRole("admin"), async (req, res) => {
     const { id, direction } = req.body;
     logFromRequest(req, logLevels.DEBUG, `Rotate Request for item ${id} (${direction})`);
 
-    db.get('SELECT photo FROM items WHERE id = ?', [id], async (err, row) => {
-        if (err || !row) {
-            return res.status(500).json({ error: 'Photo not found' });
+    if (direction !== 'left' && direction !== 'right') {
+        return res.status(400).json({ error: 'Invalid rotation direction' });
+    }
+
+    try {
+        const row = db.prepare(`
+            SELECT i.photo,
+                   i.winning_bidder_id,
+                   i.hammer_price,
+                   a.status AS auction_status
+              FROM items i
+              LEFT JOIN auctions a ON a.id = i.auction_id
+             WHERE i.id = ?
+        `).get(Number(id));
+
+        if (!row || !row.photo) {
+            return res.status(404).json({ error: 'Photo not found' });
+        }
+
+        const { can_edit, edit_block_reason } = getItemEditState(row, row.auction_status);
+        if (!can_edit) {
+            logFromRequest(req, logLevels.WARN, `Rotate blocked: item ${id} cannot be edited (${edit_block_reason})`);
+            return res.status(400).json({ error: edit_block_reason });
         }
 
         const photoFilename = row.photo;
@@ -1205,36 +1293,23 @@ app.post('/rotate-photo', authenticateRole("admin"), async (req, res) => {
         const previewPath = path.join(UPLOAD_DIR, `preview_${photoFilename}`);
         const angle = direction === 'left' ? -90 : 90;
 
-        try {
-            // Rotate main image
-            await sharp(photoPath)
-                .rotate(angle)
-                .toFile(photoPath + '.tmp');
-            fs.renameSync(photoPath + '.tmp', photoPath);
+        await sharp(photoPath)
+            .rotate(angle)
+            .toFile(photoPath + '.tmp');
+        fs.renameSync(photoPath + '.tmp', photoPath);
 
-            // Rotate preview
-            await sharp(previewPath)
-                .rotate(angle)
-                .toFile(previewPath + '.tmp');
-            fs.renameSync(previewPath + '.tmp', previewPath);
+        await sharp(previewPath)
+            .rotate(angle)
+            .toFile(previewPath + '.tmp');
+        fs.renameSync(previewPath + '.tmp', previewPath);
 
-            // Update mod_date after rotation
-            db.run(`UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime') WHERE id = ?`, [id], function (err) {
-                if (err) {
-                    logFromRequest(req, logLevels.ERROR, `Rotate: Failed to update mod_date:` + err.message);
-
-                    return res.status(500).json({ error: "Rotation succeeded but failed to update modification time." });
-                }
-
-                res.json({ message: 'Image rotated' });
-                logFromRequest(req, logLevels.INFO, `Rotate: ${photoFilename} rotated ${angle} degrees`);
-            });
-
-        } catch (error) {
-            logFromRequest(req, logLevels.ERROR, `Image rotation failed for item ${id}: ${error.message}`);
-            res.status(500).json({ error: 'Rotation failed' });
-        }
-    });
+        db.prepare(`UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime') WHERE id = ?`).run(Number(id));
+        res.json({ message: 'Image rotated' });
+        logFromRequest(req, logLevels.INFO, `Rotate: ${photoFilename} rotated ${angle} degrees`);
+    } catch (error) {
+        logFromRequest(req, logLevels.ERROR, `Image rotation failed for item ${id}: ${error.message}`);
+        res.status(500).json({ error: 'Rotation failed' });
+    }
 });
 
 //--------------------------------------------------------------------------

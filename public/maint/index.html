@@ -242,15 +242,17 @@
                 <div class="maintenance-subpanel-head">
                   <div>
                     <h3>Integrity Check</h3>
-                    <p>Check the database for invalid items before a live event.</p>
+                    <p>Check the database for workflow issues, schema inconsistencies, and safe repair opportunities.</p>
                   </div>
                 </div>
                 <div class="maintenance-actions-row">
-                  <button id="integrity-check" type="button">Check for Invalid Items</button>
+                  <button id="integrity-check" type="button">Run Detailed Integrity Check</button>
+                  <button id="integrity-fix" type="button" disabled>Apply Safe Fixes</button>
                 </div>
                 <div id="integrity-results" class="maintenance-result-box" style="display:none;">
-                  <p id="integrity-summary"></p>
-                  <pre id="invalid-items-list" class="maintenance-code-block"></pre>
+                  <div id="integrity-summary-panel"></div>
+                  <div id="integrity-fix-summary" hidden></div>
+                  <div id="integrity-details-panel" hidden></div>
                 </div>
               </section>
 

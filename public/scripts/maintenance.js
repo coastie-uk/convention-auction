@@ -33,6 +33,12 @@ const editAuctionDeleteButton = document.getElementById("edit-auction-delete");
 const editAuctionResetButton = document.getElementById("edit-auction-reset");
 const popoutLogsButton = document.getElementById("popout-logs");
 const autoRefreshLogsCheckbox = document.getElementById("auto-refresh-logs");
+const integrityCheckButton = document.getElementById("integrity-check");
+const integrityFixButton = document.getElementById("integrity-fix");
+const integrityResults = document.getElementById("integrity-results");
+const integritySummaryPanel = document.getElementById("integrity-summary-panel");
+const integrityFixSummary = document.getElementById("integrity-fix-summary");
+const integrityDetailsPanel = document.getElementById("integrity-details-panel");
 
 var isRendering = false;
 let currentUsername = null;
@@ -40,6 +46,7 @@ let currentMaintenanceUser = null;
 let currentVersions = {};
 let latestServerLog = "";
 let logPopupWindow = null;
+let lastIntegrityResult = null;
 
 function getAuthToken() {
   return window.AppAuth?.getToken?.() || localStorage.getItem("maintenanceToken") || "";
@@ -59,6 +66,15 @@ function clearUserManagementData() {
   if (tableBody) {
     tableBody.innerHTML = "";
   }
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function applyUserManagementAccess(user = currentMaintenanceUser) {
@@ -478,7 +494,7 @@ async function checkToken() {
     loginSection.style.display = "none";
     maintenanceSection.style.display = "grid";
     refreshAuctions();
-    checkIntegrity();
+    checkIntegritySummary();
     loadPptxImageList();
     if (canManageUsers(session.user)) {
       loadUsers();
@@ -1643,45 +1659,230 @@ editAuctionResetButton?.addEventListener("click", async () => {
   }
 });
 
-let runCheck = document.getElementById("integrity-check");
-runCheck.addEventListener("click", checkIntegrity);
+integrityCheckButton?.addEventListener("click", checkIntegrity);
+integrityFixButton?.addEventListener("click", fixIntegrity);
 
+function resetIntegrityPanels() {
+  lastIntegrityResult = null;
+  if (integrityResults) {
+    integrityResults.style.display = "none";
+  }
+  if (integritySummaryPanel) {
+    integritySummaryPanel.innerHTML = "";
+  }
+  if (integrityFixSummary) {
+    integrityFixSummary.innerHTML = "";
+    integrityFixSummary.hidden = true;
+    integrityFixSummary.className = "";
+  }
+  if (integrityDetailsPanel) {
+    integrityDetailsPanel.innerHTML = "";
+    integrityDetailsPanel.hidden = true;
+    integrityDetailsPanel.className = "";
+  }
+  if (integrityFixButton) {
+    integrityFixButton.disabled = true;
+  }
+}
 
-async function checkIntegrity() {
-  const res = await fetch(`${API}/maintenance/check-integrity`, {
+function renderIntegritySummary(result) {
+  if (!integrityResults || !integritySummaryPanel) return;
+
+  lastIntegrityResult = result;
+  integrityResults.style.display = "block";
+  integritySummaryPanel.innerHTML = `
+    <p class="integrity-summary-line ${result.has_problems ? "has-problems" : "no-problems"}">${escapeHtml(result.summary_text || "")}</p>
+    <p class="integrity-summary-meta">
+      Checks run: ${escapeHtml(result.check_count || 0)}.
+      Fixable problems: ${escapeHtml(result.fixable_problem_count || 0)}.
+      Errors: ${escapeHtml(result.problems_by_severity?.error || 0)}.
+      Warnings: ${escapeHtml(result.problems_by_severity?.warning || 0)}.
+    </p>
+  `;
+
+  if (integrityFixSummary) {
+    integrityFixSummary.innerHTML = "";
+    integrityFixSummary.hidden = true;
+    integrityFixSummary.className = "";
+  }
+  if (integrityDetailsPanel) {
+    integrityDetailsPanel.innerHTML = "";
+    integrityDetailsPanel.hidden = true;
+    integrityDetailsPanel.className = "";
+  }
+  if (integrityFixButton) {
+    integrityFixButton.disabled = !(result.fixable_problem_count > 0);
+  }
+}
+
+function renderIntegrityFixResult(fixResult) {
+  if (!integrityFixSummary) return;
+
+  const fixes = Array.isArray(fixResult?.applied_fixes) ? fixResult.applied_fixes : [];
+  integrityFixSummary.hidden = false;
+  integrityFixSummary.className = "integrity-fix-box";
+  integrityFixSummary.innerHTML = `
+    <p class="integrity-summary-line ${fixes.length > 0 ? "no-problems" : "has-problems"}">
+      ${escapeHtml(fixes.length > 0 ? `Applied ${fixes.length} safe fix(es).` : "No safe fixes were applied.")}
+    </p>
+    <p class="integrity-fix-meta">
+      Remaining problems after rerun: ${escapeHtml(fixResult?.remaining_problem_count || 0)}.
+    </p>
+    ${fixes.length > 0 ? `
+      <div class="integrity-fix-list">
+        ${fixes.map((fix) => `
+          <div class="integrity-fix-card">
+            <div class="integrity-problem-title">${escapeHtml(fix.message || fix.type || "Applied fix")}</div>
+          </div>
+        `).join("")}
+      </div>
+    ` : ""}
+  `;
+}
+
+function renderIntegrityVerbose(result, fixResult = null) {
+  renderIntegritySummary(result);
+  if (!integrityDetailsPanel) return;
+
+  const checks = Array.isArray(result.checks) ? result.checks : [];
+  const problems = Array.isArray(result.problems) ? result.problems : [];
+
+  integrityDetailsPanel.hidden = false;
+  integrityDetailsPanel.className = "integrity-details-box";
+  integrityDetailsPanel.innerHTML = `
+    <div class="integrity-details-grid">
+      <div class="integrity-detail-stat">
+        <span class="integrity-detail-label">Problems</span>
+        <span class="integrity-detail-value">${escapeHtml(result.problem_count || 0)}</span>
+      </div>
+      <div class="integrity-detail-stat">
+        <span class="integrity-detail-label">Errors</span>
+        <span class="integrity-detail-value">${escapeHtml(result.problems_by_severity?.error || 0)}</span>
+      </div>
+      <div class="integrity-detail-stat">
+        <span class="integrity-detail-label">Warnings</span>
+        <span class="integrity-detail-value">${escapeHtml(result.problems_by_severity?.warning || 0)}</span>
+      </div>
+      <div class="integrity-detail-stat">
+        <span class="integrity-detail-label">Fixable Problems</span>
+        <span class="integrity-detail-value">${escapeHtml(result.fixable_problem_count || 0)}</span>
+      </div>
+    </div>
+    <div class="integrity-check-list">
+      ${checks.map((check) => `
+        <div class="integrity-check-card ${check.status === "fail" ? "is-fail" : "is-pass"}">
+          <div class="integrity-check-head">
+            <div class="integrity-check-title">${escapeHtml(check.title || check.code || "Check")}</div>
+            <div>${escapeHtml(check.status === "fail" ? "Fail" : "Pass")}</div>
+          </div>
+          <p class="integrity-check-summary">
+            ${escapeHtml(check.problem_count || 0)} problem(s), ${escapeHtml(check.fixable_count || 0)} fixable.
+          </p>
+          <div class="integrity-badge-row">
+            <span class="integrity-badge priority-${escapeHtml(check.priority || "workflow")}">${escapeHtml(check.priority || "workflow")}</span>
+            <span class="integrity-badge severity-${escapeHtml(check.severity || "error")}">${escapeHtml(check.severity || "error")}</span>
+            <span class="integrity-badge">${escapeHtml(check.code || "")}</span>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+    <div class="integrity-problem-list">
+      ${problems.length > 0 ? problems.map((problem) => `
+        <div class="integrity-problem-card">
+          <div class="integrity-problem-head">
+            <div class="integrity-problem-title">${escapeHtml(problem.code || "problem")}</div>
+            <div>${escapeHtml(`${problem.entity_type || "entity"} ${problem.entity_id ?? ""}`.trim())}</div>
+          </div>
+          <p class="integrity-problem-message">${escapeHtml(problem.message || "")}</p>
+          <div class="integrity-badge-row">
+            <span class="integrity-badge severity-${escapeHtml(problem.severity || "error")}">${escapeHtml(problem.severity || "error")}</span>
+            ${problem.fixable ? '<span class="integrity-badge fixable">fixable</span>' : ""}
+            ${problem.auction_id != null ? `<span class="integrity-badge">auction ${escapeHtml(problem.auction_id)}</span>` : ""}
+          </div>
+          <details class="integrity-problem-details">
+            <summary>Details</summary>
+            <pre>${escapeHtml(JSON.stringify(problem.details || {}, null, 2))}</pre>
+          </details>
+        </div>
+      `).join("") : `
+        <div class="integrity-problem-card">
+          <div class="integrity-problem-title">No problems detected in verbose mode.</div>
+        </div>
+      `}
+    </div>
+  `;
+
+  if (fixResult) {
+    renderIntegrityFixResult(fixResult);
+  }
+}
+
+async function fetchIntegrityResult(mode = "verbose") {
+  const res = await fetch(`${API}/maintenance/check-integrity?mode=${encodeURIComponent(mode)}`, {
     headers: { Authorization: token }
   });
-
   const data = await res.json();
-  if (!res.ok) return showMessage(data.error || "Integrity check failed", "error");
-
-  const listDiv = document.getElementById("integrity-results");
-  const summary = document.getElementById("integrity-summary");
-  const details = document.getElementById("invalid-items-list");
-
-// TODO: Update this function to also process invalidBidders and invalidPayments
-
-  if (data.invalidItems.length === 0) {
-    summary.textContent = "No invalid items found.";
-    details.textContent = "";
-    listDiv.style.display = "block";
-    return;
+  if (!res.ok) {
+    throw new Error(data.error || "Integrity check failed");
   }
+  return data;
+}
 
-  summary.textContent = `${data.invalidItems.length} invalid item(s) found.`;
-  showMessage(`Integrity check found ${data.invalidItems.length} invalid item(s).`, "error");
+async function checkIntegritySummary() {
+  try {
+    const data = await fetchIntegrityResult("summary");
+    if (!data.has_problems) {
+      resetIntegrityPanels();
+      return;
+    }
+    renderIntegritySummary(data);
+    showMessage(`Integrity check found ${data.problem_count || 0} problem(s).`, "error");
+  } catch (error) {
+    resetIntegrityPanels();
+    showMessage(error.message || "Integrity check failed", "error");
+  }
+}
 
+async function checkIntegrity() {
+  integrityCheckButton.disabled = true;
+  try {
+    const data = await fetchIntegrityResult("verbose");
+    renderIntegrityVerbose(data);
+    showMessage(data.summary_text || "Integrity check complete.", data.has_problems ? "error" : "success");
+  } catch (error) {
+    showMessage(error.message || "Integrity check failed", "error");
+  } finally {
+    integrityCheckButton.disabled = false;
+  }
+}
 
-  details.textContent = data.invalidItems.map(item =>
-    `ID: ${item.id}\n  Auction: ${item.auction_id}\n  Description: ${item.description || "-"}\n  Contributor: ${item.contributor || "-"}\n  Photo: ${item.photo || "-"}\n  Item number: ${item.item_number || "-"}\n  Issues: ${item.issues.join(", ")}\n`
-  ).join("\n\n");
+async function fixIntegrity() {
+  integrityFixButton.disabled = true;
+  integrityCheckButton.disabled = true;
+  try {
+    const res = await fetch(`${API}/maintenance/check-integrity/fix`, {
+      method: "POST",
+      headers: { Authorization: token }
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Integrity fix failed");
+    }
 
-
-  listDiv.style.display = "block";
-
-  // Store IDs for deletion
-  listDiv.dataset.ids = JSON.stringify(data.invalidItems.map(i => i.id));
-};
+    renderIntegrityVerbose(data.rerun, data);
+    showMessage(
+      data.applied_fix_count > 0
+        ? `Applied ${data.applied_fix_count} safe integrity fix(es).`
+        : "No safe integrity fixes were available.",
+      data.applied_fix_count > 0 ? "success" : "info"
+    );
+  } catch (error) {
+    showMessage(error.message || "Integrity fix failed", "error");
+  } finally {
+    integrityCheckButton.disabled = false;
+    integrityFixButton.disabled = !(lastIntegrityResult?.fixable_problem_count > 0);
+  }
+}
 
 // document.getElementById("delete-invalid-items").onclick = async () => {
 //   const ids = JSON.parse(document.getElementById("integrity-results").dataset.ids || "[]");

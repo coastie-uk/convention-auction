@@ -395,6 +395,174 @@
   padding: 12px;
 }
 
+.integrity-summary-line {
+  font-weight: 700;
+  margin: 0;
+}
+
+.integrity-summary-line.has-problems {
+  color: #9f1239;
+}
+
+.integrity-summary-line.no-problems {
+  color: #166534;
+}
+
+.integrity-summary-meta,
+.integrity-fix-meta {
+  color: #51606f;
+  font-size: 0.95rem;
+  margin: 8px 0 0;
+}
+
+.integrity-fix-box,
+.integrity-details-box {
+  border-top: 1px solid #e2e8f0;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.integrity-fix-box[hidden],
+.integrity-details-box[hidden] {
+  display: none;
+}
+
+.integrity-check-list,
+.integrity-problem-list,
+.integrity-fix-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.integrity-check-card,
+.integrity-problem-card,
+.integrity-fix-card {
+  background: #f8fafc;
+  border: 1px solid #d8dee6;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.integrity-check-card.is-pass {
+  border-left: 4px solid #166534;
+}
+
+.integrity-check-card.is-fail {
+  border-left: 4px solid #b91c1c;
+}
+
+.integrity-check-head,
+.integrity-problem-head {
+  align-items: baseline;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.integrity-check-title,
+.integrity-problem-title {
+  font-weight: 700;
+}
+
+.integrity-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.integrity-badge {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 3px 8px;
+}
+
+.integrity-badge.priority-workflow {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.integrity-badge.priority-warning {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.integrity-badge.priority-engine {
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.integrity-badge.severity-error {
+  background: #fce7f3;
+  color: #9d174d;
+}
+
+.integrity-badge.severity-warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.integrity-badge.fixable {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.integrity-details-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-top: 12px;
+}
+
+.integrity-detail-stat {
+  background: #f8fafc;
+  border: 1px solid #d8dee6;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.integrity-detail-label {
+  color: #51606f;
+  display: block;
+  font-size: 0.85rem;
+}
+
+.integrity-detail-value {
+  display: block;
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.integrity-problem-message,
+.integrity-check-summary {
+  margin: 8px 0 0;
+}
+
+.integrity-problem-details {
+  margin: 8px 0 0;
+}
+
+.integrity-problem-details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.integrity-problem-details pre {
+  background: #0f1720;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  color: #dbe7f5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  margin: 8px 0 0;
+  overflow: auto;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
 .maintenance-code-block,
 .maintenance-log-box {
   background: #0f1720;
@@ -632,6 +800,25 @@ footer {
 :root[data-theme="dark"] .maintenance-result-box,
 :root[data-theme="dark"] .error-box {
   border-color: #253349;
+}
+
+:root[data-theme="dark"] .integrity-check-card,
+:root[data-theme="dark"] .integrity-problem-card,
+:root[data-theme="dark"] .integrity-fix-card,
+:root[data-theme="dark"] .integrity-detail-stat {
+  background: #0f172a;
+  border-color: #334155;
+}
+
+:root[data-theme="dark"] .integrity-fix-box,
+:root[data-theme="dark"] .integrity-details-box {
+  border-top-color: #334155;
+}
+
+:root[data-theme="dark"] .integrity-summary-meta,
+:root[data-theme="dark"] .integrity-fix-meta,
+:root[data-theme="dark"] .integrity-detail-label {
+  color: #94a3b8;
 }
 
 :root[data-theme="dark"] .maintenance-data-table tbody tr:hover {

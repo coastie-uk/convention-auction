@@ -173,12 +173,43 @@
             <p id="edit-title"></p>
             <form id="edit-form">
                 <input type="hidden" id="edit-id">
+                <div id="edit-mode-banner" class="edit-mode-banner" hidden></div>
+                <div class="edit-layout">
+                    <div class="edit-main-column">
+                        <p id="edit-dates"></p>
+                        <label for="edit-description">Item Description:</label>
+                        <input type="text" id="edit-description" required>
 
-                <p><img id="current-photo" src="" alt="Current Photo" style="max-width:200px;"></p>
-                <div class="image-tools">
-                    <button type="button" id="rotate-left">⟲ Rotate Left</button>
-                    <button type="button" id="rotate-right">⟳ Rotate Right</button>
-                    <button type="button" id="crop-image">✂ Crop Image</button>
+                        <label for="edit-contributor">Contributor:</label>
+                        <input type="text" id="edit-contributor" required>
+
+                        <label for="edit-artist">Creator:</label>
+                        <input type="text" id="edit-artist">
+
+                        <label for="edit-notes">Notes:</label>
+                        <input type="text" id="edit-notes">
+
+                        <label>Select an existing Photo (jpeg/png):</label>
+                        <input type="file" accept="image/*" id="edit-photo" name="photo">
+
+                        <button type="button" id="capture-button">Take a Photo now</button>
+
+                        <input type="file" id="edit-photo-live" name="edit-photo-live" accept="image/*" capture="environment"
+                            style="display: none;">
+                    </div>
+
+                    <aside class="edit-photo-column" aria-label="Photo editor">
+                        <div class="edit-photo-panel">
+                            <div class="edit-photo-preview">
+                                <img id="current-photo" src="" alt="Current Photo">
+                            </div>
+                            <div class="image-tools">
+                                <button type="button" id="rotate-left">⟲ Rotate Left</button>
+                                <button type="button" id="rotate-right">⟳ Rotate Right</button>
+                                <button type="button" id="crop-image">✂ Crop Image</button>
+                            </div>
+                        </div>
+                    </aside>
                 </div>
 
 
@@ -208,37 +239,10 @@
 
                 </div>
 
-                <p id="edit-dates"></p>
-                <label for="edit-description">Item Description:</label>
-                <input type="text" id="edit-description" required>
-
-                <label for="edit-contributor">Contributor:</label>
-                <input type="text" id="edit-contributor" required>
-
-                <label for="edit-artist">Creator:</label>
-                <input type="text" id="edit-artist">
-
-                <label for="edit-notes">Notes:</label>
-                <input type="text" id="edit-notes">
-
-                <!-- <label for="edit-auction">Auction:</label>
-                <select id="edit-auction"></select> -->
-
-
-
-                <label>Select an existing Photo (jpeg/png):</label>
-                <input type="file" accept="image/*" id="edit-photo" name="photo">
-
-                <!-- Custom Button -->
-                <button type="button" id="capture-button">Take a Photo now</button>
-
-                <!-- Hidden file input -->
-                <input type="file" id="edit-photo-live" name="edit-photo-live" accept="image/*" capture="environment"
-                    style="display: none;">
-
                 <div class="form-actions">
                     <button type="submit" id="save-changes">Save Changes (Ctrl-s)</button>
                     <button type="button" id="delete-item">Delete Item (Ctrl-d)</button>
+                    <button type="button" id="show-all-item-data">Show all</button>
                     <button type="button" id="cancel-edit">Cancel (esc)</button>
                 </div>
             </form>
@@ -248,23 +252,47 @@
         <section id="add-section" style="display: none;">
             <h2>Add New Item</h2>
             <form id="add-form">
-                <label for="add-description">Item Description:</label>
-                <input type="text" id="add-description" required>
+                <div class="edit-layout">
+                    <div class="edit-main-column">
+                        <label for="add-description">Item Description:</label>
+                        <input type="text" id="add-description" required>
 
-                <label for="add-contributor">Contributor:</label>
-                <input type="text" id="add-contributor" required>
+                        <label for="add-contributor">Contributor:</label>
+                        <input type="text" id="add-contributor" required>
 
-                <label for="add-artist">Creator:</label>
-                <input type="text" id="add-artist">
+                        <label for="add-artist">Creator:</label>
+                        <input type="text" id="add-artist">
 
-                <label for="add-notes">Notes:</label>
-                <input type="text" id="add-notes">
+                        <label for="add-notes">Notes:</label>
+                        <input type="text" id="add-notes">
 
-                <label for="add-photo">Upload Photo:</label>
-                <input type="file" id="add-photo" accept="image/*">
+                        <label for="add-photo">Upload Photo:</label>
+                        <input type="file" id="add-photo" accept="image/*">
 
-                <button type="submit" id="save-new">Add Item (Ctrl-s)</button>
-                <button type="button" id="cancel-add">Cancel (esc)</button>
+                        <button type="button" id="add-capture-button">Take a Photo now</button>
+
+                        <input type="file" id="add-photo-live" name="add-photo-live" accept="image/*" capture="environment"
+                            style="display: none;">
+                    </div>
+
+                    <aside class="edit-photo-column" aria-label="New item photo editor">
+                        <div class="edit-photo-panel">
+                            <div class="edit-photo-preview">
+                                <img id="add-current-photo" src="" alt="New Item Photo Preview">
+                            </div>
+                            <div class="image-tools">
+                                <button type="button" id="add-rotate-left" disabled>⟲ Rotate Left</button>
+                                <button type="button" id="add-rotate-right" disabled>⟳ Rotate Right</button>
+                                <button type="button" id="add-crop-image" disabled>✂ Crop Image</button>
+                            </div>
+                        </div>
+                    </aside>
+                </div>
+
+                <div class="form-actions add-form-actions">
+                    <button type="submit" id="save-new">Add Item (Ctrl-s)</button>
+                    <button type="button" id="cancel-add">Cancel (esc)</button>
+                </div>
             </form>
         </section>
 
@@ -447,6 +475,37 @@
             </div>
         </div>
 
+        <div id="item-details-modal" class="app-modal" hidden>
+            <div class="app-modal-card app-modal-card--wide">
+                <div class="app-modal-header">
+                    <div>
+                        <h3>All Item Data</h3>
+                        <p id="item-details-modal-summary">Saved values from the items table.</p>
+                    </div>
+                    <button id="close-item-details-modal" type="button" class="app-modal-close" aria-label="Close item details dialog">Close</button>
+                </div>
+                <div class="item-details-table-wrap">
+                    <table class="item-details-table">
+                        <tbody id="item-details-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="image-preview-modal" class="app-modal" hidden>
+            <div class="app-modal-card app-modal-card--image">
+                <div class="app-modal-header">
+                    <div>
+                        <h3 id="image-preview-modal-title">Image Preview</h3>
+                    </div>
+                    <button id="close-image-preview-modal" type="button" class="app-modal-close" aria-label="Close image preview">Close</button>
+                </div>
+                <div class="image-preview-stage">
+                    <img id="image-preview-modal-image" src="" alt="Full image preview">
+                </div>
+            </div>
+        </div>
+
     </main>
     <script src="/scripts/banner.js"></script>
     <script src="/scripts/session-auth.js"></script>
@@ -466,6 +525,10 @@
     <script>
         document.getElementById('capture-button').addEventListener('click', function () {
             document.getElementById('edit-photo-live').click();
+        });
+
+        document.getElementById('add-capture-button').addEventListener('click', function () {
+            document.getElementById('add-photo-live').click();
         });
 
         document.getElementById("admin-password").addEventListener("keyup", function (event) {

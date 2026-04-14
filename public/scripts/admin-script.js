@@ -14,13 +14,22 @@ document.addEventListener("DOMContentLoaded", function () {
     const menuGroups = Array.from(document.querySelectorAll(".menu-group"));
     const itemsTableBody = document.getElementById("items-table-body");
     const editForm = document.getElementById("edit-form");
+    const editModeBanner = document.getElementById("edit-mode-banner");
     const deleteButton = document.getElementById("delete-item");
     const cancelEditButton = document.getElementById("cancel-edit");
     const editPhotoInput = document.getElementById("edit-photo");
+    const editPhotoCaptureButton = document.getElementById("capture-button");
+    const currentPhotoEl = document.getElementById("current-photo");
     const openExportPanelButton = document.getElementById("open-export-panel");
     const addForm = document.getElementById("add-form");
     const cancelAddButton = document.getElementById("cancel-add");
     const addPhotoInput = document.getElementById("add-photo");
+    const addPhotoCaptureButton = document.getElementById("add-capture-button");
+    const addCurrentPhotoEl = document.getElementById("add-current-photo");
+    const addPhotoLiveInput = document.getElementById("add-photo-live");
+    const addRotateLeftButton = document.getElementById("add-rotate-left");
+    const addRotateRightButton = document.getElementById("add-rotate-right");
+    const addCropImageButton = document.getElementById("add-crop-image");
     const editLivePhotoInput = document.getElementById("edit-photo-live");
     const addItemButton = document.getElementById("add-item");
     const refreshButton = document.getElementById("refresh");
@@ -57,6 +66,15 @@ document.addEventListener("DOMContentLoaded", function () {
     const openAboutModalButton = document.getElementById("open-about-modal");
     const aboutModal = document.getElementById("about-modal");
     const closeAboutModalButton = document.getElementById("close-about-modal");
+    const showAllItemDataButton = document.getElementById("show-all-item-data");
+    const itemDetailsModal = document.getElementById("item-details-modal");
+    const itemDetailsModalSummary = document.getElementById("item-details-modal-summary");
+    const itemDetailsTableBody = document.getElementById("item-details-table-body");
+    const closeItemDetailsModalButton = document.getElementById("close-item-details-modal");
+    const imagePreviewModal = document.getElementById("image-preview-modal");
+    const imagePreviewModalTitle = document.getElementById("image-preview-modal-title");
+    const imagePreviewModalImage = document.getElementById("image-preview-modal-image");
+    const closeImagePreviewModalButton = document.getElementById("close-image-preview-modal");
     const aboutVersionBackendEl = document.getElementById("about-version-backend");
     const aboutVersionSchemaEl = document.getElementById("about-version-schema");
     const aboutVersionPaymentEl = document.getElementById("about-version-payment");
@@ -67,6 +85,9 @@ document.addEventListener("DOMContentLoaded", function () {
     const managedSections = [loginSection, adminSection, editSection, addSection, exportSection].filter(Boolean);
 
     let currentEditId = null;
+    let currentEditItem = null;
+    let currentEditCanEdit = true;
+    let currentEditBlockReason = "";
     let modifiedImages = {};
     let auctions = [];
     let selectedAuctionId = null;
@@ -80,6 +101,13 @@ document.addEventListener("DOMContentLoaded", function () {
     let latestPptxJob = null;
     let autoDownloadJobId = null;
     let adminRefreshConnected = null;
+    let draftImageBlob = null;
+    let draftImageFilename = "";
+    let draftImageUrl = "";
+    let addDraftImageBlob = null;
+    let addDraftImageFilename = "";
+    let addDraftImageUrl = "";
+    let activeCropContext = "edit";
     const downloadedPptxJobs = new Set();
 
     document.getElementById("sort-field").value = selectedSort;
@@ -92,6 +120,29 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const API = "/api";
     const OPEN_MOVE_PANEL_KEY = "admin_open_move_panel_item";
+    const EDITABLE_AUCTION_STATUSES = new Set(["setup", "locked"]);
+    const ITEM_DETAIL_FIELDS = Object.freeze([
+        "id",
+        "description",
+        "contributor",
+        "artist",
+        "photo",
+        "date",
+        "notes",
+        "mod_date",
+        "last_print",
+        "last_slide_export",
+        "last_card_export",
+        "last_bid_update",
+        "collected_at",
+        "text_mod_date",
+        "item_number",
+        "auction_id",
+        "test_item",
+        "test_bid",
+        "winning_bidder_id",
+        "hammer_price"
+    ]);
     const SORT_FIELD_LABELS = Object.freeze({
         item_number: "Number",
         description: "Name",
@@ -117,6 +168,259 @@ document.addEventListener("DOMContentLoaded", function () {
     function getSavedAdminAuctionId() {
         const savedAuctionId = Number(adminPreferenceController?.getPagePreferences?.().selected_auction_id);
         return Number.isInteger(savedAuctionId) && savedAuctionId > 0 ? savedAuctionId : null;
+    }
+
+    function getSelectedAuction() {
+        return auctions.find((auction) => Number(auction.id) === Number(selectedAuctionId)) || null;
+    }
+
+    function getSelectedAuctionStatus() {
+        return String(getSelectedAuction()?.status || "").toLowerCase();
+    }
+
+    function itemHasBid(item) {
+        return item?.winning_bidder_id != null || item?.hammer_price != null || item?.paddle_no != null;
+    }
+
+    function getItemEditState(item) {
+        const auctionStatus = getSelectedAuctionStatus();
+        if (!EDITABLE_AUCTION_STATUSES.has(auctionStatus)) {
+            return {
+                canEdit: false,
+                reason: `Editing is unavailable because this auction is currently in ${auctionStatus || "an unknown"} state.`
+            };
+        }
+
+        if (itemHasBid(item)) {
+            return {
+                canEdit: false,
+                reason: "Editing is unavailable because this item already has a bid."
+            };
+        }
+
+        return {
+            canEdit: true,
+            reason: ""
+        };
+    }
+
+    function revokeDraftImageUrl() {
+        if (draftImageUrl) {
+            URL.revokeObjectURL(draftImageUrl);
+            draftImageUrl = "";
+        }
+    }
+
+    function resetDraftImageState() {
+        revokeDraftImageUrl();
+        draftImageBlob = null;
+        draftImageFilename = "";
+    }
+
+    function revokeAddDraftImageUrl() {
+        if (addDraftImageUrl) {
+            URL.revokeObjectURL(addDraftImageUrl);
+            addDraftImageUrl = "";
+        }
+    }
+
+    function resetAddDraftImageState() {
+        revokeAddDraftImageUrl();
+        addDraftImageBlob = null;
+        addDraftImageFilename = "";
+    }
+
+    function getPersistedPhotoUrl(item = currentEditItem) {
+        if (!item?.photo || item.photo === "null") return "";
+        const version = item.mod_date ? `?v=${encodeURIComponent(item.mod_date)}` : "";
+        return `${API}/uploads/${item.photo}${version}`;
+    }
+
+    function getCurrentEditImageUrl() {
+        return draftImageUrl || getPersistedPhotoUrl();
+    }
+
+    function getCurrentAddImageUrl() {
+        return addDraftImageUrl || "";
+    }
+
+    function refreshCurrentPhotoPreview() {
+        const currentPhotoUrl = getCurrentEditImageUrl();
+        if (currentPhotoUrl) {
+            currentPhotoEl.src = currentPhotoUrl;
+        } else {
+            currentPhotoEl.removeAttribute("src");
+        }
+        currentPhotoEl.alt = currentPhotoUrl ? "Current Photo" : "No photo selected";
+    }
+
+    function refreshAddPhotoPreview() {
+        const photoUrl = getCurrentAddImageUrl();
+        if (photoUrl) {
+            addCurrentPhotoEl.src = photoUrl;
+        } else {
+            addCurrentPhotoEl.removeAttribute("src");
+        }
+        addCurrentPhotoEl.alt = photoUrl ? "New Item Photo Preview" : "No photo selected";
+    }
+
+    function updateImageToolState() {
+        const hasPhoto = Boolean(getCurrentEditImageUrl());
+        const imageToolsDisabled = !currentEditCanEdit || !hasPhoto;
+        document.getElementById("rotate-left").disabled = imageToolsDisabled;
+        document.getElementById("rotate-right").disabled = imageToolsDisabled;
+        document.getElementById("crop-image").disabled = imageToolsDisabled;
+    }
+
+    function updateAddImageToolState() {
+        const hasPhoto = Boolean(getCurrentAddImageUrl());
+        addRotateLeftButton.disabled = !hasPhoto;
+        addRotateRightButton.disabled = !hasPhoto;
+        addCropImageButton.disabled = !hasPhoto;
+    }
+
+    function setDraftImageBlob(blob, fileName = "edited-photo.jpg") {
+        if (!(blob instanceof Blob)) return;
+        revokeDraftImageUrl();
+        draftImageBlob = blob;
+        draftImageFilename = fileName;
+        draftImageUrl = URL.createObjectURL(blob);
+        refreshCurrentPhotoPreview();
+        updateImageToolState();
+    }
+
+    function setAddDraftImageBlob(blob, fileName = "new-item-photo.jpg") {
+        if (!(blob instanceof Blob)) return;
+        revokeAddDraftImageUrl();
+        addDraftImageBlob = blob;
+        addDraftImageFilename = fileName;
+        addDraftImageUrl = URL.createObjectURL(blob);
+        refreshAddPhotoPreview();
+        updateAddImageToolState();
+    }
+
+    function loadImageFromUrl(imageUrl) {
+        return new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error("Failed to load image"));
+            image.src = imageUrl;
+        });
+    }
+
+    function canvasToBlob(canvas, type = "image/jpeg", quality = 0.9) {
+        return new Promise((resolve, reject) => {
+            canvas.toBlob((blob) => {
+                if (!blob) {
+                    reject(new Error("Failed to render image"));
+                    return;
+                }
+                resolve(blob);
+            }, type, quality);
+        });
+    }
+
+    async function applyRotateToDraft(direction) {
+        const sourceUrl = getCurrentEditImageUrl();
+        if (!sourceUrl) throw new Error("No photo available");
+
+        const image = await loadImageFromUrl(sourceUrl);
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Image editor is unavailable");
+
+        canvas.width = image.height;
+        canvas.height = image.width;
+        context.translate(canvas.width / 2, canvas.height / 2);
+        context.rotate(direction === "left" ? -Math.PI / 2 : Math.PI / 2);
+        context.drawImage(image, -image.width / 2, -image.height / 2);
+
+        const rotatedBlob = await canvasToBlob(canvas);
+        setDraftImageBlob(rotatedBlob, draftImageFilename || "edited-photo.jpg");
+    }
+
+    async function applyRotateToAddDraft(direction) {
+        const sourceUrl = getCurrentAddImageUrl();
+        if (!sourceUrl) throw new Error("No photo available");
+
+        const image = await loadImageFromUrl(sourceUrl);
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Image editor is unavailable");
+
+        canvas.width = image.height;
+        canvas.height = image.width;
+        context.translate(canvas.width / 2, canvas.height / 2);
+        context.rotate(direction === "left" ? -Math.PI / 2 : Math.PI / 2);
+        context.drawImage(image, -image.width / 2, -image.height / 2);
+
+        const rotatedBlob = await canvasToBlob(canvas);
+        setAddDraftImageBlob(rotatedBlob, addDraftImageFilename || "new-item-photo.jpg");
+    }
+
+    function setEditFormEnabled(isEnabled) {
+        const selectors = [
+            "#edit-description",
+            "#edit-contributor",
+            "#edit-artist",
+            "#edit-notes",
+            "#edit-photo",
+            "#edit-photo-live"
+        ];
+
+        selectors.forEach((selector) => {
+            const field = document.querySelector(selector);
+            if (field) field.disabled = !isEnabled;
+        });
+
+        if (editPhotoCaptureButton) editPhotoCaptureButton.disabled = !isEnabled;
+        saveEditButton.disabled = !isEnabled;
+        deleteButton.disabled = !isEnabled;
+        updateImageToolState();
+    }
+
+    function updateEditModeUI() {
+        const titleVerb = currentEditCanEdit ? "Edit" : "View";
+        document.getElementById("edit-title").innerHTML = `<h2>${titleVerb} item #${escapeHtml(String(currentEditItem?.item_number ?? ""))}</h2>`;
+        if (editModeBanner) {
+            if (currentEditCanEdit) {
+                editModeBanner.hidden = true;
+                editModeBanner.textContent = "";
+            } else {
+                editModeBanner.hidden = false;
+                editModeBanner.innerHTML = `<strong>View only.</strong> ${escapeHtml(currentEditBlockReason)}`;
+            }
+        }
+        setEditFormEnabled(currentEditCanEdit);
+    }
+
+    function closeCropperModal() {
+        if (cropper) {
+            cropper.destroy();
+            cropper = null;
+        }
+        const cropModal = document.getElementById("crop-modal");
+        if (cropModal) {
+            cropModal.style.display = "none";
+        }
+    }
+
+    function resetEditDraftState() {
+        closeCropperModal();
+        closeItemDetailsModal();
+        resetDraftImageState();
+        currentEditItem = null;
+        currentEditCanEdit = true;
+        currentEditBlockReason = "";
+        currentEditId = null;
+    }
+
+    function resetAddDraftState() {
+        closeCropperModal();
+        resetAddDraftImageState();
+        addForm.reset();
+        refreshAddPhotoPreview();
+        updateAddImageToolState();
     }
 
     function setAdminConnectionStatus(isConnected, { announce = true } = {}) {
@@ -157,6 +461,12 @@ document.addEventListener("DOMContentLoaded", function () {
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <path d="M12 20h9"></path>
                 <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+            </svg>
+        `,
+        view: `
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
             </svg>
         `,
         duplicate: `
@@ -1578,6 +1888,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     addItemButton.addEventListener("click", function () {
         closeMenuGroups();
+        resetAddDraftState();
         showSection("add-section");
     });
 
@@ -1839,6 +2150,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
             itemsTableBody.innerHTML = "";
+            const auctionStatus = getSelectedAuctionStatus();
 
             items.forEach(item => {
 
@@ -1863,14 +2175,21 @@ document.addEventListener("DOMContentLoaded", function () {
                     mod_date: item.mod_date,
                     last_print: item.last_print,
                     item_number: item.item_number,
-                    auction_id: item.auction_id
+                    auction_id: item.auction_id,
+                    winning_bidder_id: item.winning_bidder_id,
+                    hammer_price: item.hammer_price
                 });
 
                 const modToken = item.mod_date ? `?v=${encodeURIComponent(item.mod_date)}` : '';
                 const imgSrc = item.photo ? `${API}/uploads/preview_${item.photo}${modToken}` : '';
 
                 const row = document.createElement("tr");
-                const hasBid = item.hammer_price != null || item.paddle_no != null;
+                const hasBid = itemHasBid(item);
+                const itemEditState = getItemEditState(item);
+                const editTitle = itemEditState.canEdit
+                    ? "Edit item"
+                    : `View item details (${itemEditState.reason})`;
+                const editIcon = itemEditState.canEdit ? ACTION_ICONS.edit : ACTION_ICONS.view;
 
             
 
@@ -1880,7 +2199,6 @@ document.addEventListener("DOMContentLoaded", function () {
                 row.dataset.hasBid = hasBid ? "1" : "0";
                 row.dataset.item_number = item.item_number;
                 row.dataset.description = item.description;
-                const editTitle = hasBid ? "Item has bids and cannot be edited" : "Edit item";
                 const moveTitle = hasBid ? "Item has bids and cannot be moved" : "Move item within auction or to a different auction";
 
                 row.innerHTML = `
@@ -1907,10 +2225,10 @@ document.addEventListener("DOMContentLoaded", function () {
                             attributes: `onclick="showItemHistory(${item.id})"`
                         })}
                         ${renderIconButton({
-                            className: "edit-item-button",
+                            className: itemEditState.canEdit ? "edit-item-button" : "view-item-button",
                             title: editTitle,
-                            icon: ACTION_ICONS.edit,
-                            attributes: `onclick="editItem('${encodedItem}')" data-default-title="Edit item" ${hasBid ? "disabled" : ""}`
+                            icon: editIcon,
+                            attributes: `onclick="editItem('${encodedItem}')" data-default-title="Edit item" data-auction-status="${escapeHtml(auctionStatus)}"`
                         })}
                         ${renderIconButton({
                             className: "duplicate-item-button",
@@ -2189,19 +2507,41 @@ document.addEventListener("DOMContentLoaded", function () {
                 const version = previewMatch[2] || ""; // ?v=mod_date
 
                 const fullImageUrl = `${API}/uploads/${filename}${version}`;
+                const row = this.closest("tr");
+                const itemNumber = normalizeString(row?.dataset?.item_number || "");
+                const description = normalizeString(row?.dataset?.description || "");
+                const previewTitle = [itemNumber, description].filter(Boolean).join(" - ") || "Image Preview";
 
-                const popup = window.open("", "ImagePopup", "width=800,height=800");
-                popup.document.write(`
-                    <html>
-                        <head><title>Image Preview</title></head>
-                        <body style='margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#000;'>
-                            <img src="${fullImageUrl}" style="max-width:100%;max-height:100%;">
-                        </body>
-                    </html>
-                `);
+                openImagePreviewModal(fullImageUrl, this.alt || "Item image", previewTitle);
             });
         });
     }
+
+    async function stageSelectedAddPhoto(file) {
+        if (!file) return;
+        setAddDraftImageBlob(file, file.name || "new-item-photo.jpg");
+        addPhotoInput.value = "";
+        addPhotoLiveInput.value = "";
+        showMessage("Photo staged for the new item.", "info");
+    }
+
+    addPhotoInput.addEventListener("change", async () => {
+        const file = addPhotoInput.files?.[0];
+        try {
+            await stageSelectedAddPhoto(file);
+        } catch (error) {
+            showMessage(`Failed to stage photo: ${error.message}`, "error");
+        }
+    });
+
+    addPhotoLiveInput.addEventListener("change", async () => {
+        const file = addPhotoLiveInput.files?.[0];
+        try {
+            await stageSelectedAddPhoto(file);
+        } catch (error) {
+            showMessage(`Failed to stage photo: ${error.message}`, "error");
+        }
+    });
 
     addForm.addEventListener("submit", function (event) {
         event.preventDefault();
@@ -2215,10 +2555,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
         const selectedAuction = auctions.find(a => a.id === selectedAuctionId);
         const selectedAuctionPublicId = selectedAuction?.public_id;
-        
 
-
-        if (addPhotoInput.files.length > 0) {
+        if (addDraftImageBlob) {
+            formData.append("photo", addDraftImageBlob, addDraftImageFilename || "new-item-photo.jpg");
+        } else if (addPhotoInput.files.length > 0) {
             formData.append("photo", addPhotoInput.files[0]);
         }
 
@@ -2238,11 +2578,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 showMessage("Item added successfully", "success");
                 loadItems();
-                document.getElementById("add-description").value = "";
-                document.getElementById("add-contributor").value = "";
-                document.getElementById("add-artist").value = "";
-                document.getElementById("add-photo").value = "";
-                document.getElementById("add-notes").value = "";
+                resetAddDraftState();
 
                 showSection("admin-section");
             })
@@ -2252,6 +2588,7 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     cancelAddButton.addEventListener("click", function () {
+        resetAddDraftState();
         showSection("admin-section");
     });
 
@@ -2264,134 +2601,207 @@ document.addEventListener("DOMContentLoaded", function () {
         }, 30000);
     }
 
+    function renderEditDates(item) {
+        const created = escapeHtml(normalizeString(item?.date) || "Unknown");
+        const modified = escapeHtml(normalizeString(item?.mod_date) || "Unknown");
+        const id = escapeHtml(String(item?.id ?? ""));
+        return `Created on: <b>${created}</b> Last modified: <b>${modified}</b> Database ID: <b>${id}</b>`;
+    }
+
+    function formatItemDetailsValue(value) {
+        if (value === null || value === undefined || value === "") return "—";
+        return String(value);
+    }
+
+    function closeItemDetailsModal() {
+        if (!itemDetailsModal) return;
+        itemDetailsModal.hidden = true;
+    }
+
+    function openImagePreviewModal(imageUrl, altText = "Full image preview", titleText = "Image Preview") {
+        if (!imagePreviewModal || !imagePreviewModalImage || !imageUrl) return;
+        if (imagePreviewModalTitle) {
+            imagePreviewModalTitle.textContent = titleText;
+        }
+        imagePreviewModalImage.src = imageUrl;
+        imagePreviewModalImage.alt = altText;
+        imagePreviewModal.hidden = false;
+    }
+
+    function closeImagePreviewModal() {
+        if (!imagePreviewModal || !imagePreviewModalImage) return;
+        imagePreviewModal.hidden = true;
+        if (imagePreviewModalTitle) {
+            imagePreviewModalTitle.textContent = "Image Preview";
+        }
+        imagePreviewModalImage.removeAttribute("src");
+    }
+
+    async function openItemDetailsModal() {
+        const token = getTokenOrLogout();
+        if (!token || !currentEditId) return;
+
+        itemDetailsTableBody.innerHTML = `<tr><td colspan="2">Loading...</td></tr>`;
+        itemDetailsModalSummary.textContent = `Item #${currentEditItem?.item_number ?? currentEditId} saved row from the items table.`;
+        itemDetailsModal.hidden = false;
+
+        try {
+            const response = await fetch(`${API}/auctions/${selectedAuctionId}/items/${currentEditId}`, {
+                headers: { Authorization: token }
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || "Failed to load item details");
+            }
+
+            itemDetailsTableBody.innerHTML = ITEM_DETAIL_FIELDS.map((field) => `
+                <tr>
+                    <th scope="row">${escapeHtml(field)}</th>
+                    <td>${escapeHtml(formatItemDetailsValue(data[field]))}</td>
+                </tr>
+            `).join("");
+        } catch (error) {
+            itemDetailsTableBody.innerHTML = `<tr><td colspan="2">${escapeHtml(error.message)}</td></tr>`;
+        }
+    }
+
+    async function stageSelectedEditPhoto(file) {
+        if (!file) return;
+        setDraftImageBlob(file, file.name || "updated-photo.jpg");
+        editPhotoInput.value = "";
+        editLivePhotoInput.value = "";
+        showMessage("Photo change staged. Save Changes to upload it.", "info");
+    }
+
     // Open the editor and get data
     window.editItem = function editItem(encodedData) {
         const item = JSON.parse(decodeURIComponent(encodedData));
+        resetEditDraftState();
 
-        // Use the extracted values. Dates are recorded by the backend
-        document.getElementById("edit-title").innerHTML = "<h2>Edit item #" + item.item_number + "</h2>";
-        document.getElementById("edit-dates").innerHTML = "Created on: <b>" + item.date + "</b> Last modified: <b>" + item.mod_date + "</b> Database ID: <b>" + item.id + "</b>";
+        currentEditItem = item;
+        currentEditId = item.id;
+        const editState = getItemEditState(item);
+        currentEditCanEdit = editState.canEdit;
+        currentEditBlockReason = editState.reason;
 
-
+        document.getElementById("edit-dates").innerHTML = renderEditDates(item);
         document.getElementById("edit-id").value = item.id || "";
         document.getElementById("edit-description").value = item.description || "";
         document.getElementById("edit-contributor").value = item.contributor || "";
         document.getElementById("edit-artist").value = item.artist || "";
         document.getElementById("edit-notes").value = item.notes || "";
-        document.getElementById("current-photo").src = item.photo;
+        editPhotoInput.value = "";
+        editLivePhotoInput.value = "";
 
-        document.getElementById("edit-photo").value = "";
-        document.getElementById("edit-photo-live").value = "";
-
-        const hasPhoto = !!item.photo;
-
-        document.getElementById("rotate-left").disabled = !hasPhoto;
-        document.getElementById("rotate-right").disabled = !hasPhoto;
-        document.getElementById("crop-image").disabled = !hasPhoto;
-
-        if (item.photo && item.photo !== "null") {
-            document.getElementById("current-photo").src = `${API}/uploads/${item.photo}?v=${encodeURIComponent(item.mod_date)}`;
-
-        } else {
-            document.getElementById("current-photo").src = "";
-
-        }
-
+        refreshCurrentPhotoPreview();
+        updateEditModeUI();
         showSection("edit-section");
-        currentEditId = item.id;
-        
-// // TODO why doesn't this work???
-//             editForm.addEventListener('keydown', e => {
-//   if (e.key === 'Escape') { e.preventDefault(); cancelEditButton.click(); }
-//     });
     };
 
+    editPhotoInput.addEventListener("change", async () => {
+        if (!currentEditCanEdit) return;
+        const file = editPhotoInput.files?.[0];
+        try {
+            await stageSelectedEditPhoto(file);
+        } catch (error) {
+            showMessage(`Failed to stage photo: ${error.message}`, "error");
+        }
+    });
 
+    editLivePhotoInput.addEventListener("change", async () => {
+        if (!currentEditCanEdit) return;
+        const file = editLivePhotoInput.files?.[0];
+        try {
+            await stageSelectedEditPhoto(file);
+        } catch (error) {
+            showMessage(`Failed to stage photo: ${error.message}`, "error");
+        }
+    });
 
-    editForm.addEventListener("submit", function (event) {
-        var token = localStorage.getItem("token");
-        if (!token) return logout();
+    editForm.addEventListener("submit", async function (event) {
+        const token = getTokenOrLogout();
+        if (!token) return;
         event.preventDefault();
 
+        if (!currentEditCanEdit) {
+            showMessage(currentEditBlockReason || "This item is view only.", "info");
+            return;
+        }
+
         const auctionId = parseInt(selectedAuctionId, 10);
-
-
         const formData = new FormData();
-        formData.append("id", currentEditId); // Ensure the ID is sent
+        formData.append("id", currentEditId);
         formData.append("description", document.getElementById("edit-description").value.trim() || "");
         formData.append("contributor", document.getElementById("edit-contributor").value.trim() || "");
         formData.append("artist", document.getElementById("edit-artist").value.trim() || "");
         formData.append("notes", document.getElementById("edit-notes").value.trim() || "");
         formData.append("auction_id", auctionId);
 
-
-        if (editLivePhotoInput.files.length > 0) {
-            formData.append("photo", editLivePhotoInput.files[0]);
-        } else if (editPhotoInput.files.length > 0) {
-            formData.append("photo", editPhotoInput.files[0]);
+        if (draftImageBlob) {
+            formData.append("photo", draftImageBlob, draftImageFilename || "edited-photo.jpg");
         }
 
-        fetch(`${API}/auctions/${auctionId}/items/${currentEditId}/update`, {
-            method: "POST",
-            body: formData,
-            headers: { "Authorization": token }
+        try {
+            const response = await fetch(`${API}/auctions/${auctionId}/items/${currentEditId}/update`, {
+                method: "POST",
+                body: formData,
+                headers: { Authorization: token }
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || "Unknown error");
+            }
 
-        })
+            showMessage(data.message || "Item updated successfully", "success");
+            modifiedImages[currentEditId] = Date.now();
+            await loadItems();
+            setTimeout(() => {
+                modifiedImages = {};
+            }, 3000);
 
-            .then(async res => {
-                const data = await res.json();
-                if (!res.ok) {
-                    
-                    throw new Error(data.error || "Unknown error");
-                }
-                showMessage(data.message || "Item updated successfully", "success");
-                const now = new Date().getTime();
-                modifiedImages[currentEditId] = now;
-
-                loadItems();
-                setTimeout(() => {
-                    modifiedImages = {};
-                }, 3000); // clear it after a short while
-
-                showSection("admin-section");
-            })
-            .catch(error => {
-                showMessage("Error updating item: " + error, "error");
-            })
+            resetEditDraftState();
+            showSection("admin-section");
+        } catch (error) {
+            showMessage("Error updating item: " + error.message, "error");
+        }
     });
 
     deleteButton.addEventListener("click", async function () {
-        var token = localStorage.getItem("token");
-        if (!token) return logout();
+        const token = getTokenOrLogout();
+        if (!token) return;
+
+        if (!currentEditCanEdit) {
+            showMessage(currentEditBlockReason || "This item is view only.", "info");
+            return;
+        }
 
         const modal = await DayPilot.Modal.confirm("Are you sure you want to delete this item?");
         if (modal.canceled) {
             showMessage("Delete cancelled", "info");
             return;
-        } else {
-            fetch(`${API}/items/${currentEditId}`, {
+        }
+
+        try {
+            const response = await fetch(`${API}/items/${currentEditId}`, {
                 method: "DELETE",
-                headers: { "Authorization": token }
-            })
-                .then(async res => {
-                    const data = await res.json();
-                    if (!res.ok) {
-                        
-                        throw new Error(data.error || "Unknown error");
-                    }
+                headers: { Authorization: token }
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || "Unknown error");
+            }
 
-                    showMessage(data.message || "Item deleted successfully", "success");
-                    loadItems();
-                    showSection("admin-section");
-                })
-                .catch(error => {
-                    showMessage("Error deleting item: " + error, "error");
-                })
-
+            showMessage(data.message || "Item deleted successfully", "success");
+            await loadItems();
+            resetEditDraftState();
+            showSection("admin-section");
+        } catch (error) {
+            showMessage("Error deleting item: " + error.message, "error");
         }
     });
 
     cancelEditButton.addEventListener("click", function () {
+        resetEditDraftState();
         showSection("admin-section");
     });
 
@@ -2401,30 +2811,18 @@ document.addEventListener("DOMContentLoaded", function () {
     rotateLeftButton.addEventListener("click", () => rotateImage("left"));
     rotateRightButton.addEventListener("click", () => rotateImage("right"));
 
-    function rotateImage(direction) {
-        const token = localStorage.getItem("token");
-        if (!token || !currentEditId) return;
+    async function rotateImage(direction) {
+        if (!currentEditCanEdit) {
+            showMessage(currentEditBlockReason || "This item is view only.", "info");
+            return;
+        }
 
-        fetch(`${API}/rotate-photo`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": token
-            },
-            body: JSON.stringify({ id: currentEditId, direction })
-        })
-            .then(res => res.json())
-            .then(data => {
-                showMessage("Image rotated", "success");
-
-                const currentPhoto = document.getElementById("current-photo");
-                currentPhoto.src = currentPhoto.src.split("?")[0] + `?t=${new Date().getTime()}`; // Bust cache
-                const now = new Date().getTime();
-                modifiedImages[currentEditId] = now;
-            })
-            .catch(err => {
-                showMessage("Failed to rotate image", "error");
-            });
+        try {
+            await applyRotateToDraft(direction);
+            showMessage("Image rotation staged. Save Changes to upload it.", "info");
+        } catch (error) {
+            showMessage(`Failed to rotate image: ${error.message}`, "error");
+        }
     }
 
     const cropImageButton = document.getElementById("crop-image");
@@ -2434,78 +2832,108 @@ document.addEventListener("DOMContentLoaded", function () {
     const cancelCropButton = document.getElementById("cancel-crop");
 
     cropImageButton.addEventListener("click", () => {
-        var currentPhoto = document.getElementById("current-photo").src.replace(/preview_/, "");
-        cropTarget.src = currentPhoto + `?t=${new Date().getTime()}`; // bust cache
+        if (!currentEditCanEdit) {
+            showMessage(currentEditBlockReason || "This item is view only.", "info");
+            return;
+        }
+
+        const currentPhoto = getCurrentEditImageUrl();
+        if (!currentPhoto) return;
+
+        activeCropContext = "edit";
+        closeCropperModal();
+        cropTarget.src = currentPhoto;
         cropModal.style.display = "flex";
 
         setTimeout(() => {
             cropper = new Cropper(cropTarget, {
                 aspectRatio: NaN,
                 viewMode: 1,
-                autoCropArea: 1,
+                autoCropArea: 1
             });
         }, 200);
     });
 
-    cancelCropButton.addEventListener("click", () => {
-
-        if (cropper) {
-            cropper.destroy();
-            cropper = null;
-        }
-        cropModal.style.display = "none";
-    })
-
+    cancelCropButton.addEventListener("click", closeCropperModal);
 
     applyCropButton.addEventListener("click", async function () {
-        const modal = await DayPilot.Modal.confirm("Are you sure you want to crop? Change is applied immediately");
-        if (modal.canceled) {
-            showMessage("Delete cancelled", "info");
-            return;
-        } else {
+        if (!cropper) return;
 
-            cropper.getCroppedCanvas().toBlob(blob => {
-                const formData = new FormData();
-                const auctionId = parseInt(selectedAuctionId, 10);
+        try {
+            const croppedCanvas = cropper.getCroppedCanvas();
+            if (!croppedCanvas) {
+                throw new Error("No crop selection available");
+            }
+            const croppedBlob = await canvasToBlob(croppedCanvas);
+            if (activeCropContext === "add") {
+                setAddDraftImageBlob(croppedBlob, addDraftImageFilename || "new-item-photo.jpg");
+            } else {
+                if (!currentEditCanEdit) {
+                    showMessage(currentEditBlockReason || "This item is view only.", "info");
+                    return;
+                }
+                setDraftImageBlob(croppedBlob, draftImageFilename || "cropped.jpg");
+            }
+            closeCropperModal();
+            showMessage(
+                activeCropContext === "add"
+                    ? "Crop staged for the new item."
+                    : "Crop staged. Save Changes to upload it.",
+                "info"
+            );
+        } catch (error) {
+            closeCropperModal();
+            showMessage("Cropping failed: " + error.message, "error");
+        }
+    });
 
-                formData.append("id", currentEditId);
-                formData.append("description", document.getElementById("edit-description").value.trim() || "");
-                formData.append("contributor", document.getElementById("edit-contributor").value.trim() || "");
-                formData.append("artist", document.getElementById("edit-artist").value.trim() || "");
-                formData.append("notes", document.getElementById("edit-notes").value.trim() || "");
-                formData.append("photo", blob, "cropped.jpg");
+    addRotateLeftButton?.addEventListener("click", async () => {
+        try {
+            await applyRotateToAddDraft("left");
+            showMessage("Image rotation staged for the new item.", "info");
+        } catch (error) {
+            showMessage(`Failed to rotate image: ${error.message}`, "error");
+        }
+    });
 
-                const token = localStorage.getItem("token");
+    addRotateRightButton?.addEventListener("click", async () => {
+        try {
+            await applyRotateToAddDraft("right");
+            showMessage("Image rotation staged for the new item.", "info");
+        } catch (error) {
+            showMessage(`Failed to rotate image: ${error.message}`, "error");
+        }
+    });
 
-                fetch(`${API}/auctions/${auctionId}/items/${currentEditId}/update`, {
-                    method: "POST",
-                    body: formData,
-                    headers: { Authorization: token }
-                })
+    addCropImageButton?.addEventListener("click", () => {
+        const currentPhoto = getCurrentAddImageUrl();
+        if (!currentPhoto) return;
 
-                    .then(async res => {
-                        if (!res.ok) {
-                            const data = await res.json();
-                            throw new Error(data.error || "Unknown error");
-                        }
-                        showMessage("Image cropped and saved", "success");
-                        cropper.destroy();
-                        cropModal.style.display = "none";
-                        modifiedImages[currentEditId] = new Date().getTime();
-                        loadItems();
+        activeCropContext = "add";
+        closeCropperModal();
+        cropTarget.src = currentPhoto;
+        cropModal.style.display = "flex";
 
-                        const currentPhoto = document.getElementById("current-photo");
-                        if (currentPhoto && currentPhoto.src) {
-                            // Update the image with a cache-busting timestamp
-                            currentPhoto.src = currentPhoto.src.split("?")[0] + `?t=${new Date().getTime()}`;
-                        }
-                    })
-                    .catch(err => {
-                        cropper.destroy();
-                        cropModal.style.display = "none";
-                        showMessage("Cropping failed: " + err.message, "error");
-                    });
-            }, "image/jpeg", 0.9);
+        setTimeout(() => {
+            cropper = new Cropper(cropTarget, {
+                aspectRatio: NaN,
+                viewMode: 1,
+                autoCropArea: 1
+            });
+        }, 200);
+    });
+
+    showAllItemDataButton?.addEventListener("click", openItemDetailsModal);
+    closeItemDetailsModalButton?.addEventListener("click", closeItemDetailsModal);
+    itemDetailsModal?.addEventListener("click", (event) => {
+        if (event.target === itemDetailsModal) {
+            closeItemDetailsModal();
+        }
+    });
+    closeImagePreviewModalButton?.addEventListener("click", closeImagePreviewModal);
+    imagePreviewModal?.addEventListener("click", (event) => {
+        if (event.target === imagePreviewModal) {
+            closeImagePreviewModal();
         }
     });
 
@@ -2587,7 +3015,19 @@ document.addEventListener("DOMContentLoaded", function () {
     });
     // Global keydown listener for useful keyboardshortcuts
     document.addEventListener('keydown', e => {
-        if (e.key === 'Escape' && editSection.style.display === 'block') {
+        if (e.key === 'Escape' && imagePreviewModal && !imagePreviewModal.hidden) {
+            e.preventDefault();
+            closeImagePreviewModal();
+        }
+        else if (e.key === 'Escape' && itemDetailsModal && !itemDetailsModal.hidden) {
+            e.preventDefault();
+            closeItemDetailsModal();
+        }
+        else if (e.key === 'Escape' && cropModal && cropModal.style.display === 'flex') {
+            e.preventDefault();
+            closeCropperModal();
+        }
+        else if (e.key === 'Escape' && editSection.style.display === 'block') {
             e.preventDefault();
             cancelEditButton.click();
         }
@@ -2597,11 +3037,15 @@ document.addEventListener("DOMContentLoaded", function () {
         }
         else if (e.key === 'd' && e.ctrlKey && editSection.style.display === 'block') {
             e.preventDefault();
-            deleteButton.click();
+            if (!deleteButton.disabled) {
+                deleteButton.click();
+            }
         }
         else if (e.key === 's' && e.ctrlKey && editSection.style.display === 'block') {
             e.preventDefault();
-            saveEditButton.click();
+            if (!saveEditButton.disabled) {
+                saveEditButton.click();
+            }
         }
         else if (e.key === 'Escape' || e.key === `Enter` && document.getElementById("history-modal").style.display === 'flex') {
             e.preventDefault();
