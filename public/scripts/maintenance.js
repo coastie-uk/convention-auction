@@ -39,6 +39,34 @@ const integrityResults = document.getElementById("integrity-results");
 const integritySummaryPanel = document.getElementById("integrity-summary-panel");
 const integrityFixSummary = document.getElementById("integrity-fix-summary");
 const integrityDetailsPanel = document.getElementById("integrity-details-panel");
+const openCreateBackupModalButton = document.getElementById("open-create-backup-modal");
+const backupNoteInput = document.getElementById("backup-note");
+const backupOperationStatus = document.getElementById("backup-operation-status");
+const createBackupLog = document.getElementById("create-backup-log");
+const refreshBackupsButton = document.getElementById("refresh-backups");
+const backupTotalSize = document.getElementById("backup-total-size");
+const backupTableBody = document.getElementById("backup-table-body");
+const backupInfoModal = document.getElementById("backup-info-modal");
+const closeBackupInfoModalButton = document.getElementById("close-backup-info-modal");
+const backupRestoreModal = document.getElementById("backup-restore-modal");
+const closeBackupRestoreModalButton = document.getElementById("close-backup-restore-modal");
+const cancelBackupRestoreButton = document.getElementById("cancel-backup-restore");
+const createBackupModal = document.getElementById("create-backup-modal");
+const closeCreateBackupModalButton = document.getElementById("close-create-backup-modal");
+const cancelCreateBackupButton = document.getElementById("cancel-create-backup");
+const backupDetailTitle = document.getElementById("backup-detail-title");
+const backupDetailSubtitle = document.getElementById("backup-detail-subtitle");
+const backupDetailGrid = document.getElementById("backup-detail-grid");
+const backupComponentSummary = document.getElementById("backup-component-summary");
+const backupAuctionTableBody = document.getElementById("backup-auction-table-body");
+const backupRestoreDb = document.getElementById("backup-restore-db");
+const backupRestorePhotos = document.getElementById("backup-restore-photos");
+const backupRestoreResources = document.getElementById("backup-restore-resources");
+const backupRestoreTitle = document.getElementById("backup-restore-title");
+const backupRestoreSubtitle = document.getElementById("backup-restore-subtitle");
+const restoreSelectedBackupButton = document.getElementById("restore-selected-backup");
+const backupRestoreLog = document.getElementById("backup-restore-log");
+const saveRestoreLogButton = document.getElementById("save-restore-log");
 
 var isRendering = false;
 let currentUsername = null;
@@ -47,6 +75,43 @@ let currentVersions = {};
 let latestServerLog = "";
 let logPopupWindow = null;
 let lastIntegrityResult = null;
+let managedBackups = [];
+let selectedBackupId = null;
+let selectedBackupDetail = null;
+let lastManagedRestoreLog = "";
+let backupOperationBusy = false;
+
+const BACKUP_ACTION_ICONS = Object.freeze({
+  restore: `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M3 12a9 9 0 1 0 3-6.7"></path>
+      <path d="M3 4v5h5"></path>
+    </svg>
+  `,
+  download: `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M12 3v12"></path>
+      <path d="M7 10l5 5 5-5"></path>
+      <path d="M5 21h14"></path>
+    </svg>
+  `,
+  info: `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="9"></circle>
+      <path d="M12 10v6"></path>
+      <path d="M12 7h.01"></path>
+    </svg>
+  `,
+  delete: `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M3 6h18"></path>
+      <path d="M8 6V4h8v2"></path>
+      <path d="M19 6l-1 14H6L5 6"></path>
+      <path d="M10 11v6"></path>
+      <path d="M14 11v6"></path>
+    </svg>
+  `
+});
 
 function getAuthToken() {
   return window.AppAuth?.getToken?.() || localStorage.getItem("maintenanceToken") || "";
@@ -75,6 +140,278 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let unitIndex = 0;
+  let size = value;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function formatDateTime(value) {
+  if (!value) return "Unknown";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
+
+function formatBackupDisplayLabel(backup) {
+  const id = backup?.backup_id ? `#${backup.backup_id}` : "#Unknown";
+  return `Backup ${id} from ${formatDateTime(backup?.created_at)}`;
+}
+
+async function confirmMaintenanceAction(message, options = {}) {
+  if (window.DayPilot?.Modal?.confirm) {
+    const result = await DayPilot.Modal.confirm(message, options);
+    return !result.canceled;
+  }
+  showMessage("Confirmation dialog is unavailable. Please refresh the page and try again.", "error");
+  return false;
+}
+
+function setBackupOperationStatus(message, type = "info") {
+  if (!backupOperationStatus) return;
+  backupOperationStatus.textContent = message;
+  backupOperationStatus.dataset.state = type;
+}
+
+function setCreateBackupLog(text) {
+  if (!createBackupLog) return;
+  createBackupLog.textContent = text || "No backup log captured yet.";
+}
+
+function openModal(modal) {
+  if (modal) {
+    modal.hidden = false;
+  }
+}
+
+function closeModal(modal) {
+  if (modal) {
+    modal.hidden = true;
+  }
+}
+
+function createBackupActionButton(icon, title, onClick, { danger = false, disabled = false } = {}) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `backup-action-button${danger ? " danger" : ""}`;
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  button.innerHTML = icon;
+  button.disabled = disabled;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    onClick();
+  });
+  return button;
+}
+
+function updateBackupActionState() {
+  const hasSelection = Boolean(selectedBackupDetail?.backup_id);
+  const componentManifest = selectedBackupDetail?.component_manifest || {};
+  const canRestoreDb = Boolean(componentManifest.database?.included);
+  const canRestorePhotos = Boolean(componentManifest.photos?.included);
+  const canRestoreResources = Boolean(componentManifest.resources?.included);
+
+  if (backupRestoreDb) {
+    backupRestoreDb.disabled = backupOperationBusy || !canRestoreDb;
+    if (!canRestoreDb) backupRestoreDb.checked = false;
+  }
+  if (backupRestorePhotos) {
+    backupRestorePhotos.disabled = backupOperationBusy || !canRestorePhotos;
+    if (!canRestorePhotos) backupRestorePhotos.checked = false;
+  }
+  if (backupRestoreResources) {
+    backupRestoreResources.disabled = backupOperationBusy || !canRestoreResources;
+    if (!canRestoreResources) backupRestoreResources.checked = false;
+  }
+
+  if (refreshBackupsButton) refreshBackupsButton.disabled = backupOperationBusy;
+  if (backupNoteInput) backupNoteInput.disabled = backupOperationBusy;
+  document.getElementById("backup-db").disabled = backupOperationBusy;
+  if (openCreateBackupModalButton) openCreateBackupModalButton.disabled = backupOperationBusy;
+  if (restoreSelectedBackupButton) restoreSelectedBackupButton.disabled = backupOperationBusy || !hasSelection;
+  if (saveRestoreLogButton) saveRestoreLogButton.disabled = !lastManagedRestoreLog;
+}
+
+function renderBackupDetails() {
+  if (!selectedBackupDetail) return;
+
+  const detail = selectedBackupDetail;
+  const auctions = Array.isArray(detail.auctions) ? detail.auctions : [];
+  const resourceConfigCount = Array.isArray(detail.component_manifest?.resources?.config_files)
+    ? detail.component_manifest.resources.config_files.length
+    : 0;
+
+  backupDetailTitle.textContent = `Backup #${detail.backup_id}`;
+  backupDetailSubtitle.textContent = detail.note
+    ? `Note: ${detail.note}`
+    : `Archive file: ${detail.filename || "Unknown"}`;
+
+  backupDetailGrid.innerHTML = [
+    ["Backup ID", `#${detail.backup_id}`],
+    ["Created", formatDateTime(detail.created_at)],
+    ["User", detail.created_by || "Unknown"],
+    ["Schema", detail.schema_version || "Unknown"],
+    ["Archive Size", formatBytes(detail.archive_size_bytes)],
+    ["Format", `v${detail.format_version || "?"}`],
+    ["Auctions", `${auctions.length}`],
+    ["Archive", detail.filename || "Unknown"]
+  ].map(([label, value]) => `
+    <div class="maintenance-detail-stat">
+      <span class="maintenance-detail-label">${escapeHtml(label)}</span>
+      <span class="maintenance-detail-value">${escapeHtml(value)}</span>
+    </div>
+  `).join("");
+
+  backupComponentSummary.innerHTML = [
+    { label: "Database", value: detail.component_manifest?.database?.included ? "Included" : "Missing" },
+    { label: "Photos", value: `${detail.component_manifest?.photos?.file_count ?? 0} file(s)` },
+    { label: "Resources", value: `${detail.component_manifest?.resources?.image_count ?? 0} image(s)` },
+    { label: "Configs", value: `${resourceConfigCount} file(s)` }
+  ].map((entry) => `<span class="maintenance-inline-pill">${escapeHtml(entry.label)}: ${escapeHtml(entry.value)}</span>`).join("");
+
+  if (backupAuctionTableBody) {
+    if (auctions.length === 0) {
+      backupAuctionTableBody.innerHTML = '<tr><td colspan="5">No auctions recorded in this backup.</td></tr>';
+    } else {
+      backupAuctionTableBody.innerHTML = auctions.map((auction) => `
+        <tr>
+          <td>${escapeHtml(auction.id)}</td>
+          <td>${escapeHtml(auction.short_name)}</td>
+          <td>${escapeHtml(auction.full_name)}</td>
+          <td>${escapeHtml(auction.status)}</td>
+          <td>${escapeHtml(auction.item_count)}</td>
+        </tr>
+      `).join("");
+    }
+  }
+
+  updateBackupActionState();
+}
+
+function renderBackupTable() {
+  if (!backupTableBody) return;
+
+  if (!Array.isArray(managedBackups) || managedBackups.length === 0) {
+    backupTableBody.innerHTML = '<tr><td colspan="6">No managed backups found.</td></tr>';
+    return;
+  }
+
+  backupTableBody.innerHTML = "";
+  managedBackups.forEach((backup) => {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>#${escapeHtml(backup.backup_id)}</td>
+      <td>${escapeHtml(formatDateTime(backup.created_at))}</td>
+      <td>${escapeHtml(backup.created_by || "Unknown")}</td>
+      <td><div class="backup-note-cell">${escapeHtml(backup.note || "")}</div></td>
+      <td>${escapeHtml(formatBytes(backup.archive_size_bytes))}</td>
+      <td></td>
+    `;
+    const actionCell = row.lastElementChild;
+    const actionWrap = document.createElement("div");
+    actionWrap.className = "backup-action-row";
+    actionWrap.appendChild(createBackupActionButton(BACKUP_ACTION_ICONS.restore, "Restore backup", () => {
+      void openBackupRestoreModal(backup.backup_id);
+    }, { disabled: backupOperationBusy }));
+    actionWrap.appendChild(createBackupActionButton(BACKUP_ACTION_ICONS.download, "Download archive", () => {
+      void downloadManagedBackupById(backup.backup_id);
+    }, { disabled: backupOperationBusy }));
+    actionWrap.appendChild(createBackupActionButton(BACKUP_ACTION_ICONS.delete, "Delete backup", () => {
+      void deleteManagedBackupById(backup.backup_id);
+    }, { danger: true, disabled: backupOperationBusy }));
+    actionWrap.appendChild(createBackupActionButton(BACKUP_ACTION_ICONS.info, "Show backup details", () => {
+      void openBackupInfoModal(backup.backup_id);
+    }, { disabled: backupOperationBusy }));
+    actionCell.appendChild(actionWrap);
+    backupTableBody.appendChild(row);
+  });
+}
+
+async function loadManagedBackups({ preserveSelection = true } = {}) {
+  if (!backupTableBody || !token) return;
+
+  const res = await fetch(`${API}/maintenance/backups`, {
+    headers: { Authorization: token }
+  });
+  const data = await res.json();
+
+  if (!res.ok) {
+    showMessage(data.error || "Failed to load backups.", "error");
+    return;
+  }
+
+  managedBackups = Array.isArray(data.backups) ? data.backups : [];
+  if (backupTotalSize) {
+    backupTotalSize.textContent = `Total occupied size: ${formatBytes(data.total_size_bytes)}`;
+  }
+
+  if (preserveSelection && selectedBackupId && managedBackups.some((backup) => backup.backup_id === selectedBackupId)) {
+    await selectManagedBackup(selectedBackupId, { silent: true });
+  } else {
+    selectedBackupId = null;
+    selectedBackupDetail = null;
+  }
+
+  renderBackupTable();
+  if (selectedBackupDetail) {
+    renderBackupDetails();
+  }
+}
+
+async function selectManagedBackup(backupId, { silent = false } = {}) {
+  if (!backupId) {
+    selectedBackupId = null;
+    selectedBackupDetail = null;
+    return;
+  }
+
+  selectedBackupId = backupId;
+
+  const res = await fetch(`${API}/maintenance/backups/${encodeURIComponent(backupId)}`, {
+    headers: { Authorization: token }
+  });
+  const data = await res.json();
+
+  if (!res.ok) {
+    selectedBackupDetail = null;
+    if (!silent) {
+      showMessage(data.error || "Failed to load backup details.", "error");
+    }
+    return;
+  }
+
+  selectedBackupDetail = data;
+  renderBackupDetails();
+}
+
+async function openBackupInfoModal(backupId) {
+  await selectManagedBackup(backupId);
+  if (selectedBackupDetail) {
+    openModal(backupInfoModal);
+  }
+}
+
+async function openBackupRestoreModal(backupId) {
+  await selectManagedBackup(backupId);
+  if (!selectedBackupDetail) return;
+
+  backupRestoreTitle.textContent = `Restore Backup #${selectedBackupDetail.backup_id || ""}`;
+  backupRestoreSubtitle.textContent = "Select which parts of the backup should be restored.";
+  if (backupRestoreDb) backupRestoreDb.checked = Boolean(selectedBackupDetail.component_manifest?.database?.included);
+  if (backupRestorePhotos) backupRestorePhotos.checked = false;
+  if (backupRestoreResources) backupRestoreResources.checked = false;
+  updateBackupActionState();
+  openModal(backupRestoreModal);
 }
 
 function applyUserManagementAccess(user = currentMaintenanceUser) {
@@ -285,7 +622,8 @@ function setMaintenanceUserMenu(username) {
 }
 
 function bindMaintenanceShell() {
-  const storedTab = localStorage.getItem(MAINTENANCE_TAB_KEY) || "auction-management";
+  const savedTab = localStorage.getItem(MAINTENANCE_TAB_KEY) || "auction-management";
+  const storedTab = savedTab === "database-import-export" ? "database-backups" : savedTab;
   setActiveTab(storedTab, { persist: false });
 
   tabButtons.forEach((button) => {
@@ -331,10 +669,41 @@ function bindMaintenanceShell() {
       closeEditAuctionModal();
     }
   });
+
+  closeBackupInfoModalButton?.addEventListener("click", () => closeModal(backupInfoModal));
+  backupInfoModal?.addEventListener("click", (event) => {
+    if (event.target === backupInfoModal) {
+      closeModal(backupInfoModal);
+    }
+  });
+
+  closeBackupRestoreModalButton?.addEventListener("click", () => closeModal(backupRestoreModal));
+  cancelBackupRestoreButton?.addEventListener("click", () => closeModal(backupRestoreModal));
+  backupRestoreModal?.addEventListener("click", (event) => {
+    if (event.target === backupRestoreModal) {
+      closeModal(backupRestoreModal);
+    }
+  });
+
+  openCreateBackupModalButton?.addEventListener("click", () => {
+    setBackupOperationStatus("No backup operation running.");
+    setCreateBackupLog("");
+    openModal(createBackupModal);
+    backupNoteInput?.focus();
+  });
+  closeCreateBackupModalButton?.addEventListener("click", () => closeModal(createBackupModal));
+  cancelCreateBackupButton?.addEventListener("click", () => closeModal(createBackupModal));
+  createBackupModal?.addEventListener("click", (event) => {
+    if (event.target === createBackupModal) {
+      closeModal(createBackupModal);
+    }
+  });
 }
 
 bindMaintenanceShell();
 updateVersionDisplays();
+setBackupOperationStatus("No backup operation running.");
+updateBackupActionState();
 checkToken();
 
 window.addEventListener("beforeunload", () => {
@@ -496,6 +865,7 @@ async function checkToken() {
     refreshAuctions();
     checkIntegritySummary();
     loadPptxImageList();
+    loadManagedBackups();
     if (canManageUsers(session.user)) {
       loadUsers();
     }
@@ -513,42 +883,233 @@ document.getElementById("login-button").addEventListener("click", async () => {
 });
 
 document.getElementById("backup-db").onclick = async () => {
-  const res = await fetch(`${API}/maintenance/backup`, { method: "POST", headers: { Authorization: token } });
-  const data = await res.json();
-  showMessage(data.message);
+  try {
+    backupOperationBusy = true;
+    updateBackupActionState();
+    setBackupOperationStatus("Creating managed backup on the server...", "info");
+    setCreateBackupLog("[pending] Creating managed backup...");
+
+    const res = await fetch(`${API}/maintenance/backup`, {
+      method: "POST",
+      headers: {
+        Authorization: token,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ note: backupNoteInput?.value || "" })
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to create backup.");
+    }
+
+    setBackupOperationStatus(`Created backup ${data.filename}.`, "success");
+    setCreateBackupLog(data.backup_log || `Created ${data.filename}`);
+    showMessage(data.message || "Backup created.", "success");
+    if (backupNoteInput) {
+      backupNoteInput.value = "";
+    }
+    await loadManagedBackups({ preserveSelection: false });
+    if (data.backup_id) {
+      await selectManagedBackup(data.backup_id);
+    }
+  } catch (error) {
+    setBackupOperationStatus(error.message || "Backup failed.", "error");
+    setCreateBackupLog(`[error] ${error.message || "Backup failed."}`);
+    showMessage(error.message || "Backup failed.", "error");
+  } finally {
+    backupOperationBusy = false;
+    updateBackupActionState();
+  }
 };
 
+refreshBackupsButton?.addEventListener("click", () => {
+  void loadManagedBackups();
+});
 
-document.getElementById("download-db").onclick = async () => {
-  const res = await fetch(`${API}/maintenance/download-full`, {
-    headers: { Authorization: token }
-  });
-
-
-
-  // Extract filename from content-disposition header
-  const disposition = res.headers.get("Content-Disposition");
-  let filename = "auction_backup.zip";
-
-  if (disposition && disposition.includes("filename=")) {
-    const match = disposition.match(/filename=\"?([^\";]+)\"?/);
-    if (match && match[1]) {
-      filename = match[1];
-    }
+async function downloadManagedBackupById(backupId) {
+  await selectManagedBackup(backupId, { silent: true });
+  if (!selectedBackupDetail?.backup_id) {
+    showMessage("Backup details are unavailable.", "error");
+    return;
   }
 
-  // Trigger download
-  const blob = await res.blob();
-  const url = window.URL.createObjectURL(blob);
+  backupOperationBusy = true;
+  updateBackupActionState();
+  setBackupOperationStatus(`Downloading ${selectedBackupDetail.filename}...`, "info");
 
-  const a = document.createElement("a");
-  a.href = url;
-  a.setAttribute("download", filename);
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  try {
+    const res = await fetch(`${API}/maintenance/backups/${encodeURIComponent(selectedBackupDetail.backup_id)}/download`, {
+      headers: { Authorization: token }
+    });
+
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || "Failed to download backup.");
+    }
+
+    const disposition = res.headers.get("Content-Disposition");
+    let filename = selectedBackupDetail.filename || "managed-backup.zip";
+    if (disposition && disposition.includes("filename=")) {
+      const match = disposition.match(/filename=\"?([^\";]+)\"?/);
+      if (match && match[1]) {
+        filename = match[1];
+      }
+    }
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.setAttribute("download", filename);
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(url);
+
+    setBackupOperationStatus(`Downloaded ${filename}.`, "success");
+  } catch (error) {
+    setBackupOperationStatus(error.message || "Backup download failed.", "error");
+    showMessage(error.message || "Backup download failed.", "error");
+  } finally {
+    backupOperationBusy = false;
+    updateBackupActionState();
+  }
+}
+
+async function deleteManagedBackupById(backupId) {
+  await selectManagedBackup(backupId, { silent: true });
+  if (!selectedBackupDetail?.backup_id) {
+    showMessage("Backup details are unavailable.", "error");
+    return;
+  }
+
+  const backupLabel = formatBackupDisplayLabel(selectedBackupDetail);
+  const confirmed = await confirmMaintenanceAction(
+    `Delete <strong>${escapeHtml(backupLabel)}</strong>?<br><br>This cannot be undone.`,
+    {
+      okText: "Delete Backup",
+      cancelText: "Cancel",
+      height: 90
+    }
+  );
+  if (!confirmed) return;
+
+  backupOperationBusy = true;
+  updateBackupActionState();
+  setBackupOperationStatus(`Deleting ${backupLabel}...`, "info");
+
+  try {
+    const res = await fetch(`${API}/maintenance/backups/${encodeURIComponent(selectedBackupDetail.backup_id)}`, {
+      method: "DELETE",
+      headers: { Authorization: token }
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to delete backup.");
+    }
+
+    selectedBackupId = null;
+    selectedBackupDetail = null;
+    lastManagedRestoreLog = "";
+    if (backupRestoreLog) {
+      backupRestoreLog.textContent = "No restore log captured yet.";
+    }
+    setBackupOperationStatus(data.message || "Backup deleted.", "success");
+    showMessage(data.message || "Backup deleted.", "success");
+    await loadManagedBackups({ preserveSelection: false });
+  } catch (error) {
+    setBackupOperationStatus(error.message || "Backup delete failed.", "error");
+    showMessage(error.message || "Backup delete failed.", "error");
+  } finally {
+    backupOperationBusy = false;
+    updateBackupActionState();
+  }
+}
+
+restoreSelectedBackupButton?.addEventListener("click", async () => {
+  if (!selectedBackupDetail?.backup_id) {
+    showMessage("Select a backup first.", "info");
+    return;
+  }
+
+  const restoreDb = Boolean(backupRestoreDb?.checked);
+  const restorePhotos = Boolean(backupRestorePhotos?.checked);
+  const restoreResources = Boolean(backupRestoreResources?.checked);
+  if (!restoreDb && !restorePhotos && !restoreResources) {
+    showMessage("Select at least one restore component.", "info");
+    return;
+  }
+
+  const components = [
+    restoreDb ? "database" : null,
+    restorePhotos ? "photos" : null,
+    restoreResources ? "resources" : null
+  ].filter(Boolean);
+  const backupLabel = formatBackupDisplayLabel(selectedBackupDetail);
+  const confirmed = await confirmMaintenanceAction(
+    `Restore ${escapeHtml(components.join(", "))} from <strong>${escapeHtml(backupLabel)}</strong>?`,
+    {
+      okText: "Restore",
+      cancelText: "Cancel",
+      height: 70
+    }
+  );
+  if (!confirmed) return;
+
+  backupOperationBusy = true;
+  updateBackupActionState();
+  setBackupOperationStatus(`Restoring ${components.join(", ")} from ${backupLabel}...`, "info");
+
+  try {
+    const res = await fetch(`${API}/maintenance/backups/${encodeURIComponent(selectedBackupDetail.backup_id)}/restore`, {
+      method: "POST",
+      headers: {
+        Authorization: token,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ restoreDb, restorePhotos, restoreResources })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Restore failed.");
+    }
+
+    lastManagedRestoreLog = data.restore_log || "";
+    if (backupRestoreLog) {
+      backupRestoreLog.textContent = lastManagedRestoreLog || "No restore log captured.";
+    }
+    setBackupOperationStatus(data.message || "Restore completed.", "success");
+    showMessage(data.message || "Restore completed.", "success");
+    closeModal(backupRestoreModal);
+    await loadManagedBackups();
+    await refreshAuctions();
+    await loadPptxImageList();
+  } catch (error) {
+    setBackupOperationStatus(error.message || "Restore failed.", "error");
+    showMessage(error.message || "Restore failed.", "error");
+  } finally {
+    backupOperationBusy = false;
+    updateBackupActionState();
+  }
+});
+
+saveRestoreLogButton?.addEventListener("click", () => {
+  if (!lastManagedRestoreLog) {
+    showMessage("No restore log available to save.", "info");
+    return;
+  }
+
+  const blob = new Blob([lastManagedRestoreLog], { type: "text/plain;charset=utf-8" });
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `restore_log_${selectedBackupDetail?.backup_id || "backup"}.txt`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
   window.URL.revokeObjectURL(url);
-};
+});
 
 document.getElementById("download-db-file").onclick = async () => {
   const res = await fetch(`${API}/maintenance/download-db`, {
@@ -879,7 +1440,14 @@ async function loadUsers() {
 
     const logoutNowBtn = createUserActionButton(USER_ACTION_ICONS.logout, "Log out user from all current sessions");
     logoutNowBtn.onclick = async () => {
-      const confirmed = confirm(`Log out "${user.username}" from all current sessions?`);
+      const confirmed = await confirmMaintenanceAction(
+        `Log out <strong>${escapeHtml(user.username)}</strong> from all current sessions?`,
+        {
+          okText: "Log Out User",
+          cancelText: "Cancel",
+          height: 70
+        }
+      );
       if (!confirmed) return;
       const logoutRes = await fetch(`${API}/maintenance/users/${encodeURIComponent(user.username)}/logout-now`, {
         method: "POST",
@@ -955,7 +1523,14 @@ async function loadUsers() {
         disabled: user.username === currentUsername
       });
       deleteBtn.onclick = async () => {
-        const confirmed = confirm(`Delete user "${user.username}"?`);
+        const confirmed = await confirmMaintenanceAction(
+          `Delete user <strong>${escapeHtml(user.username)}</strong>?`,
+          {
+            okText: "Delete User",
+            cancelText: "Cancel",
+            height: 70
+          }
+        );
         if (!confirmed) return;
         const delRes = await fetch(`${API}/maintenance/users/${encodeURIComponent(user.username)}`, {
           method: "DELETE",
@@ -1007,7 +1582,12 @@ window.addEventListener(window.AppAuth?.SESSION_EVENT || "appauth:session", (eve
 
 
 document.getElementById("restart-server").onclick = async () => {
-  if (confirm("Restart backend now?")) {
+  const confirmed = await confirmMaintenanceAction("Restart backend now?", {
+    okText: "Restart",
+    cancelText: "Cancel",
+    height: 60
+  });
+  if (confirmed) {
     await fetch(`${API}/maintenance/restart`, {
       method: "POST",
       headers: { Authorization: token }
@@ -1332,7 +1912,11 @@ document.getElementById("delete-test-bids").onclick = async () => {
     return;
   }
 
-  const confirmed = confirm("Are you sure you want to delete all test bids for this auction?");
+  const confirmed = await confirmMaintenanceAction("Delete all test bids for this auction?", {
+    okText: "Delete Bids",
+    cancelText: "Cancel",
+    height: 60
+  });
   if (!confirmed) return;
 
   const res = await fetch(`${API}/maintenance/delete-test-bids`, {
@@ -1888,7 +2472,7 @@ async function fixIntegrity() {
 //   const ids = JSON.parse(document.getElementById("integrity-results").dataset.ids || "[]");
 //   if (ids.length === 0) return showMessage("Nothing to delete.", "info");
 
-//   const confirmed = confirm(`Delete ${ids.length} invalid item(s)?`);
+//   const confirmed = await confirmMaintenanceAction(`Delete ${ids.length} invalid item(s)?`);
 //   if (!confirmed) return;
 
 //   const res = await fetch(`${API}/maintenance/check-integrity/delete`, {
@@ -1993,7 +2577,14 @@ async function loadPptxImageList() {
     const delBtn = document.createElement("button");
     delBtn.textContent = "Delete";
     delBtn.onclick = async () => {
-      const confirmed = confirm(`Delete image "${file.name}"?`);
+      const confirmed = await confirmMaintenanceAction(
+        `Delete image <strong>${escapeHtml(file.name)}</strong>?`,
+        {
+          okText: "Delete Image",
+          cancelText: "Cancel",
+          height: 70
+        }
+      );
       if (!confirmed) return;
 
       const res = await fetch(`${API}/maintenance/resources/delete`, {
@@ -2105,7 +2696,14 @@ document.getElementById("reset-pptx-config").onclick = async () => {
   const selectedConfig = document.getElementById("config-select").value; // or whatever your dropdown ID is
   const configType = selectedConfig.replace(".json", ""); // removes '.json'
 
-  const confirmed = confirm(`Reset ${selectedConfig} to default?`);
+  const confirmed = await confirmMaintenanceAction(
+    `Reset <strong>${escapeHtml(selectedConfig)}</strong> to default?`,
+    {
+      okText: "Reset",
+      cancelText: "Cancel",
+      height: 70
+    }
+  );
   if (!confirmed) return;
 
   const res = await fetch(`${API}/maintenance/pptx-config/reset`, {
@@ -2267,6 +2865,7 @@ function startAutoRefresh() {
     if (document.visibilityState === "visible") {
       refreshAuctions();
       loadPptxImageList();
+      loadManagedBackups();
       loadUsers();
 
     } else {
@@ -2278,6 +2877,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     refreshAuctions();
     loadPptxImageList();
+    loadManagedBackups();
     loadUsers();
 
   }

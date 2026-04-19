@@ -4,7 +4,7 @@ This guide explains how to deploy the Auction App backend and frontend using Nod
 
 The default locations are:
 
-    Backend:     /srv/auction/
+    Backend:     /opt/auction/
     database:        /var/lib/auction
     Data:        /var/lib/auction
         Uploaded images:        /resources
@@ -29,15 +29,64 @@ If your installation requires different paths, remember to update config.json ac
 
 ## **Install Node.js**
 
-Install the latest supported LTS version (18.x recommended):
+The backend requires Node.js 20 or newer. The `nodejs` package in the default Ubuntu repositories may not be recent, so install Node from the NodeSource LTS repository instead:
 
-    sudo apt update  
-    sudo apt install nodejs
+    sudo apt update
+    sudo apt install -y ca-certificates curl gnupg
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    sudo apt install -y nodejs
 
 Verify:
 
-    node -v  
+    node -v
     npm -v
+
+The `node -v` output should show `v20.x` or newer. If it still shows an older version, remove the older package and reinstall:
+
+    sudo apt remove nodejs
+    sudo apt install -y nodejs
+
+---
+
+## **Automated backend installer**
+
+The repository includes an interactive backend installer:
+
+```bash
+./backend/install-backend.sh
+```
+
+The installer automates the backend parts of this guide only. It does not install or configure the frontend, Apache, HTTPS certificates, or DNS.
+
+The installer will:
+
+* Offer the default backend, data, database, backup, upload, output, secure env, and log directories shown above, and allow you to change them.
+* Copy the backend into the selected backend directory.
+* Install backend Node dependencies.
+* Generate `auction.env` from `auction.env.example`, either using a securely generated `SECRET_KEY` or one you enter.
+* Update the deployed `config.json`, default PowerPoint/card config resource paths, and generated process files to match the selected directories.
+* Ask whether to use systemd service operation or PM2 operation.
+* Detect an existing installation and ask whether to overwrite or stop.
+* Check separately for an existing database and offer to back it up before continuing.
+* Run the backend once on a new database and report the initial root password, which is only shown once by the backend.
+* Print a summary of useful paths, config values, and any privileged commands that still need to be run.
+
+To inspect what it would do without changing files:
+
+```bash
+./backend/install-backend.sh --dry-run
+```
+
+If you run the installer as root, it can create the `auction` service user, create protected directories, set permissions, install the systemd unit, and start the service. If you run it as a normal user, it will do everything it can using your account and then print the `sudo` commands required to complete privileged steps. This is the preferred approach if you want to inspect privileged actions before running them.
+
+After installation, review non-secret settings and secrets with:
+
+```bash
+nano /opt/auction/config.json
+nano /etc/auction/auction.env
+```
+
+Use your selected paths instead of `/opt/auction` and `/etc/auction` if you changed them during installation. Restart the backend after changing either file.
 
 ---
 
@@ -45,13 +94,13 @@ Verify:
 ## Create a dedicated service user
 
 ```
-sudo useradd --system --home /srv/auction --shell /usr/sbin/nologin auction
+sudo useradd --system --home /opt/auction --shell /usr/sbin/nologin auction
 ```
 
 ## Create directories
 
 ```
-sudo mkdir -p /srv/auction /var/lib/auction /var/log/auction /etc/auction /var/www/auction-frontend
+sudo mkdir -p /opt/auction /var/lib/auction /var/log/auction /etc/auction /var/www/auction-frontend
 
 # Data subfolders
 sudo mkdir -p /var/lib/auction/resources /var/lib/auction/backup /var/lib/auction/uploads /var/lib/auction/output
@@ -63,8 +112,8 @@ sudo mkdir -p /var/lib/auction/resources /var/lib/auction/backup /var/lib/auctio
 ## Ownership & permissions:
 
 ```
-sudo chown -R auction:auction /srv/auction /var/lib/auction /var/log/auction
-sudo chmod 750 /srv/auction /var/lib/auction /var/log/auction
+sudo chown -R auction:auction /opt/auction /var/lib/auction /var/log/auction
+sudo chmod 750 /opt/auction /var/lib/auction /var/log/auction
 sudo chmod 750 /etc/auction
 ```
 
@@ -76,13 +125,13 @@ Clone or copy the repository to a convenient folder on the server
 
 Copy the backend and frontend to the required folder
 
-    sudo rsync -a [path to the repo]/convention-auction/backend/ /srv/auction/
+    sudo rsync -a [path to the repo]/convention-auction/backend/ /opt/auction/
     sudo rsync -a [path to the repo]/convention-auction/public/ /var/www/auction-frontend
 
 
 Navigate to the folder:
 
-    cd /srv/auction/
+    cd /opt/auction/
 
 Install Node dependencies:
 
@@ -90,7 +139,7 @@ Install Node dependencies:
 
 Set ownership of the backend and frontend files
 
-    sudo chown -R auction:auction /srv/auction
+    sudo chown -R auction:auction /opt/auction
     sudo chown -R www-data:www-data /var/www/auction-frontend
 
 ---
@@ -158,7 +207,7 @@ sudo systemctl restart auction-backend
 
 ## **Start the server**
 
-From within /srv/auction/ confirm that the backend starts
+From within /opt/auction/ confirm that the backend starts
 
     node backend.js
 
@@ -198,11 +247,11 @@ sudo cp auction-backend.service /etc/systemd/system/auction-backend.service
 
 If you've adjusted any of the default paths, remember to update the following lines to match:
 
-    WorkingDirectory=/srv/auction
+    WorkingDirectory=/opt/auction
     EnvironmentFile=/etc/auction/auction.env
-    ExecStart=/usr/bin/node /srv/auction/backend.js
+    ExecStart=/usr/bin/node /opt/auction/backend.js
     ReadWritePaths=/var/lib/auction /var/log/auction
-    ReadOnlyPaths=/srv/auction
+    ReadOnlyPaths=/opt/auction
  
 
 ### 5) Enable and start
@@ -368,4 +417,3 @@ To remove a site:
     pm2 save
 
 ---
-

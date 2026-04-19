@@ -228,13 +228,21 @@
     if (global.__APP_SHARED_PREFERENCES_HYDRATED__) return session;
 
     global.__APP_SHARED_PREFERENCES_HYDRATED__ = true;
+    const startingPreferencesJson = JSON.stringify(normalisePreferences(session?.user?.preferences));
     try {
       const preferences = await fetchPreferences(session.token);
+      const currentSession = getSharedSession();
+      const currentPreferences = normalisePreferences(currentSession?.user?.preferences);
+      const currentPreferencesJson = JSON.stringify(currentPreferences);
+      const nextPreferences = currentSession?.token === session.token && currentPreferencesJson !== startingPreferencesJson
+        ? { ...preferences, ...currentPreferences }
+        : preferences;
+      const baseSession = currentSession?.token === session.token ? currentSession : session;
       return saveSharedSession({
-        ...session,
+        ...baseSession,
         user: {
-          ...session.user,
-          preferences
+          ...(baseSession.user || {}),
+          preferences: nextPreferences
         }
       });
     } catch (_error) {
@@ -540,11 +548,24 @@
     let lastSavedJson = JSON.stringify(documentState);
     let flushPromise = null;
 
+    function rebaseDocumentOnAppliedPreferences() {
+      const applied = getAppliedPreferences();
+      const pagePreferences = isPlainObject(documentState[normalisedPageKey])
+        ? documentState[normalisedPageKey]
+        : {};
+      documentState = {
+        ...applied,
+        [normalisedPageKey]: cloneJson(pagePreferences)
+      };
+      return documentState;
+    }
+
     function getDocumentJson() {
       return JSON.stringify(documentState);
     }
 
     function syncSession() {
+      rebaseDocumentOnAppliedPreferences();
       setAppliedPreferences(documentState);
     }
 
@@ -563,6 +584,7 @@
     }
 
     function getPagePreferences() {
+      rebaseDocumentOnAppliedPreferences();
       return cloneJson(isPlainObject(documentState[normalisedPageKey]) ? documentState[normalisedPageKey] : {});
     }
 
@@ -586,6 +608,7 @@
 
     async function flush({ keepalive = false, useBeacon = false } = {}) {
       if (flushPromise) return flushPromise;
+      rebaseDocumentOnAppliedPreferences();
       if (!updateDirtyTracking()) return false;
 
       const snapshot = getDocument();
@@ -647,6 +670,18 @@
       void flush({ keepalive: true, useBeacon: true });
     }
 
+    function handleSessionEvent(event) {
+      const nextPreferences = normalisePreferences(event?.detail?.user?.preferences);
+      if (!updateDirtyTracking()) {
+        documentState = nextPreferences;
+        lastSavedJson = JSON.stringify(documentState);
+        return;
+      }
+
+      rebaseDocumentOnAppliedPreferences();
+    }
+
+    global.addEventListener(SESSION_EVENT, handleSessionEvent);
     global.document.addEventListener("visibilitychange", handleVisibilityChange);
     global.addEventListener("pagehide", handlePageHide);
 
@@ -659,6 +694,7 @@
       isDirty: updateDirtyTracking,
       destroy() {
         global.clearInterval(saveTimer);
+        global.removeEventListener(SESSION_EVENT, handleSessionEvent);
         global.document.removeEventListener("visibilitychange", handleVisibilityChange);
         global.removeEventListener("pagehide", handlePageHide);
       }

@@ -7,10 +7,10 @@ Wants=network-online.target
 Type=simple
 User=auction
 Group=auction
-WorkingDirectory=/srv/auction
+WorkingDirectory=/opt/auction
 Environment=NODE_ENV=production
 EnvironmentFile=/etc/auction/auction.env
-ExecStart=/usr/bin/node /srv/auction/backend.js
+ExecStart=/usr/bin/node /opt/auction/backend.js
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65535
@@ -42,7 +42,7 @@ RestrictNamespaces=yes
 
 # Allow writes only where needed
 ReadWritePaths=/var/lib/auction /var/log/auction
-ReadOnlyPaths=/srv/auction
+ReadOnlyPaths=/opt/auction
 
 [Install]
 WantedBy=multi-user.target

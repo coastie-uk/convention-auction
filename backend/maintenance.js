@@ -11,6 +11,8 @@ const fs = require("fs");
 const multer = require("multer");
 const { Parser } = require("@json2csv/plainjs");
 const { exec } = require("child_process");
+const JSZip = require("jszip");
+const Database = require("better-sqlite3");
 const router = express.Router();
 const { CONFIG_IMG_DIR, SAMPLE_DIR, UPLOAD_DIR, DB_PATH, DB_NAME, BACKUP_DIR, MAX_UPLOADS, allowedExtensions, MAX_AUCTIONS, PPTX_CONFIG_DIR, LOG_DIR, LOG_NAME, PASSWORD_MIN_LENGTH, SERVICE_NAME } = require('./config');
 const crypto = require('crypto');
@@ -62,6 +64,372 @@ const {
 // );
 
 const allowedStatuses = ["setup", "locked", "live", "settlement", "archived"];
+const MANAGED_BACKUP_FORMAT_VERSION = 1;
+const MANAGED_BACKUP_PREFIX = "managed_backup_";
+const MANAGED_BACKUP_SUFFIX = ".zip";
+const MANAGED_BACKUP_METADATA_SUFFIX = ".metadata.json";
+const BACKUP_NOTE_MAX_LENGTH = 500;
+const SQLITE_SIGNATURE = Buffer.from("SQLite format 3\u0000", "utf8");
+const RESOURCE_CONFIG_BACKUP_PATHS = Object.freeze([
+  { key: "pptx", filename: "pptxConfig.json", livePath: CONFIG_PATHS.pptx },
+  { key: "card", filename: "cardConfig.json", livePath: CONFIG_PATHS.card },
+  { key: "slip", filename: "slipConfig.json", livePath: CONFIG_PATHS.slip }
+]);
+
+function ensureDirectory(dirPath) {
+  fs.mkdirSync(dirPath, { recursive: true });
+}
+
+function toPosixPath(filePath) {
+  return String(filePath || "").split(path.sep).join("/");
+}
+
+function formatBackupTimestamp(date = new Date()) {
+  return date.toISOString().replace(/[:.]/g, "-");
+}
+
+function normaliseManagedBackupId(value) {
+  const text = String(value || "").trim();
+  if (!/^[a-zA-Z0-9_-]+$/.test(text)) {
+    throw new Error("Invalid backup identifier.");
+  }
+  return text;
+}
+
+function createManagedBackupId() {
+  if (!fs.existsSync(BACKUP_DIR)) {
+    return "1";
+  }
+
+  let maxId = 0;
+  const sidecars = fs.readdirSync(BACKUP_DIR)
+    .filter((filename) => filename.startsWith(MANAGED_BACKUP_PREFIX) && filename.endsWith(MANAGED_BACKUP_METADATA_SUFFIX));
+
+  for (const sidecarFilename of sidecars) {
+    const candidate = sidecarFilename
+      .slice(MANAGED_BACKUP_PREFIX.length, -MANAGED_BACKUP_METADATA_SUFFIX.length);
+    const numericId = Number.parseInt(candidate, 10);
+    if (Number.isInteger(numericId) && numericId > maxId) {
+      maxId = numericId;
+    }
+  }
+
+  return String(maxId + 1);
+}
+
+function createManagedBackupPaths(backupId, createdAt = new Date().toISOString()) {
+  const archiveFilename = `CA_Backup_${backupId}_${formatBackupTimestamp(new Date(createdAt))}${MANAGED_BACKUP_SUFFIX}`;
+  const sidecarFilename = `${MANAGED_BACKUP_PREFIX}${backupId}${MANAGED_BACKUP_METADATA_SUFFIX}`;
+  return {
+    archiveFilename,
+    archivePath: path.join(BACKUP_DIR, archiveFilename),
+    sidecarFilename,
+    sidecarPath: path.join(BACKUP_DIR, sidecarFilename)
+  };
+}
+
+function createManagedBackupSidecarPath(backupId) {
+  const sidecarFilename = `${MANAGED_BACKUP_PREFIX}${backupId}${MANAGED_BACKUP_METADATA_SUFFIX}`;
+  return {
+    sidecarFilename,
+    sidecarPath: path.join(BACKUP_DIR, sidecarFilename)
+  };
+}
+
+function createOperationLog() {
+  const lines = [];
+
+  return {
+    add(level, message) {
+      lines.push(`[${new Date().toISOString()}] [${String(level || "INFO").toUpperCase()}] ${String(message || "")}`);
+    },
+    info(message) {
+      this.add("INFO", message);
+    },
+    warn(message) {
+      this.add("WARN", message);
+    },
+    error(message) {
+      this.add("ERROR", message);
+    },
+    toString() {
+      return lines.length ? `${lines.join("\n")}\n` : "";
+    }
+  };
+}
+
+function listFilesRecursively(rootDir) {
+  if (!fs.existsSync(rootDir)) {
+    return [];
+  }
+
+  const rootResolved = path.resolve(rootDir);
+  const files = [];
+  const stack = [rootResolved];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    const entries = fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      const relativePath = toPosixPath(path.relative(rootResolved, fullPath));
+      const stats = fs.statSync(fullPath);
+      files.push({
+        absolutePath: fullPath,
+        relativePath,
+        size_bytes: stats.size
+      });
+    }
+  }
+
+  return files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+}
+
+function listManagedResourceImages() {
+  return listFilesRecursively(CONFIG_IMG_DIR).filter((file) =>
+    allowedExtensions.includes(path.extname(file.relativePath).toLowerCase())
+  );
+}
+
+function safeResolveWithin(baseDir, relativePath) {
+  const targetPath = path.resolve(baseDir, relativePath);
+  const baseResolved = path.resolve(baseDir);
+  if (targetPath !== baseResolved && !targetPath.startsWith(`${baseResolved}${path.sep}`)) {
+    throw new Error("Archive entry escapes target directory.");
+  }
+  return targetPath;
+}
+
+function copyDirectoryContents(sourceDir, targetDir) {
+  ensureDirectory(targetDir);
+  if (!fs.existsSync(sourceDir)) {
+    return;
+  }
+
+  const files = listFilesRecursively(sourceDir);
+  for (const file of files) {
+    const destPath = safeResolveWithin(targetDir, file.relativePath);
+    ensureDirectory(path.dirname(destPath));
+    fs.copyFileSync(file.absolutePath, destPath);
+  }
+}
+
+function removeDirectoryContents(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    return;
+  }
+
+  for (const entry of fs.readdirSync(dirPath)) {
+    fs.rmSync(path.join(dirPath, entry), { recursive: true, force: true });
+  }
+}
+
+function sanitiseBackupNote(note) {
+  return sanitiseText(note || "", BACKUP_NOTE_MAX_LENGTH).trim();
+}
+
+function collectAuctionBackupSummary() {
+  return db.all(`
+    SELECT a.id, a.short_name, a.full_name, a.status, COUNT(i.id) AS item_count
+      FROM auctions a
+      LEFT JOIN items i ON i.auction_id = a.id
+     GROUP BY a.id
+     ORDER BY a.id
+  `).map((row) => ({
+    id: row.id,
+    short_name: row.short_name,
+    full_name: row.full_name,
+    status: row.status,
+    item_count: Number(row.item_count || 0)
+  }));
+}
+
+function createSafeDatabaseSnapshot(destinationPath) {
+  const databaseFile = path.join(DB_PATH, DB_NAME);
+  let reopened = false;
+
+  db.setMaintenanceLock(true);
+  try {
+    db.close();
+    fs.copyFileSync(databaseFile, destinationPath);
+    if (typeof db.reopen === "function") {
+      db.reopen({ skipClose: true });
+      reopened = true;
+    }
+
+    return {
+      file_path: destinationPath,
+      size_bytes: fs.statSync(destinationPath).size
+    };
+  } finally {
+    if (!reopened && typeof db.reopen === "function") {
+      try {
+        db.reopen({ skipClose: true });
+      } catch (_error) {
+        // Best effort; allow the original error to propagate.
+      }
+    }
+    db.setMaintenanceLock(false);
+  }
+}
+
+function validateSqliteSnapshot(filePath, { expectedSchemaVersion = String(db.schemaVersion) } = {}) {
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(SQLITE_SIGNATURE.length);
+    const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    if (bytesRead < SQLITE_SIGNATURE.length || !buffer.equals(SQLITE_SIGNATURE)) {
+      throw new Error("Uploaded file is not a valid SQLite database.");
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  const testDb = new Database(filePath, { readonly: true });
+  try {
+    const metadataTable = testDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'metadata'").get();
+    if (!metadataTable) {
+      throw new Error("Uploaded database is missing schema version.");
+    }
+
+    const row = testDb.prepare("SELECT value FROM metadata WHERE data = 'schema_version'").get();
+    const schemaVersion = row && row.value != null && String(row.value).length > 0 ? String(row.value) : null;
+    if (!schemaVersion) {
+      throw new Error("Uploaded database is missing schema version.");
+    }
+
+    if (schemaVersion !== String(expectedSchemaVersion)) {
+      throw new Error(`Uploaded database schema version does not match. (import=${schemaVersion}, required=${expectedSchemaVersion})`);
+    }
+
+    return { schemaVersion };
+  } finally {
+    testDb.close();
+  }
+}
+
+function archiveContainsEntries(zip, prefix) {
+  return Object.values(zip.files).some((entry) => !entry.dir && entry.name.startsWith(prefix));
+}
+
+async function extractZipPrefixToDirectory(zip, prefix, targetDir) {
+  let extracted = 0;
+
+  for (const entry of Object.values(zip.files)) {
+    if (entry.dir || !entry.name.startsWith(prefix)) {
+      continue;
+    }
+
+    const relativePath = entry.name.slice(prefix.length);
+    if (!relativePath) {
+      continue;
+    }
+
+    const destination = safeResolveWithin(targetDir, relativePath);
+    ensureDirectory(path.dirname(destination));
+    const content = await entry.async("nodebuffer");
+    fs.writeFileSync(destination, content);
+    extracted += 1;
+  }
+
+  return extracted;
+}
+
+function validateManagedBackupMetadata(metadata) {
+  if (!metadata || Number(metadata.format_version) !== MANAGED_BACKUP_FORMAT_VERSION) {
+    throw new Error("Unsupported backup format.");
+  }
+  if (!metadata.backup_id) {
+    throw new Error("Backup metadata is missing backup_id.");
+  }
+  return metadata;
+}
+
+function readManagedBackupRecord(backupId) {
+  const normalizedId = normaliseManagedBackupId(backupId);
+  const { sidecarPath } = createManagedBackupSidecarPath(normalizedId);
+  if (!fs.existsSync(sidecarPath)) {
+    return null;
+  }
+
+  const parsed = JSON.parse(fs.readFileSync(sidecarPath, "utf8"));
+  validateManagedBackupMetadata(parsed);
+  const archiveFilename = String(parsed.archive_filename || "");
+  if (!archiveFilename) {
+    return null;
+  }
+  const archivePath = path.join(BACKUP_DIR, archiveFilename);
+  if (!fs.existsSync(archivePath)) {
+    return null;
+  }
+  const archiveStats = fs.statSync(archivePath);
+
+  return {
+    ...parsed,
+    archive_size_bytes: archiveStats.size,
+    archive_path: archivePath,
+    sidecar_path: sidecarPath
+  };
+}
+
+function listManagedBackups() {
+  if (!fs.existsSync(BACKUP_DIR)) {
+    return [];
+  }
+
+  const sidecars = fs.readdirSync(BACKUP_DIR)
+    .filter((filename) => filename.startsWith(MANAGED_BACKUP_PREFIX) && filename.endsWith(MANAGED_BACKUP_METADATA_SUFFIX))
+    .sort()
+    .reverse();
+
+  const backups = [];
+  for (const sidecarFilename of sidecars) {
+    try {
+      const backupId = sidecarFilename
+        .slice(MANAGED_BACKUP_PREFIX.length, -MANAGED_BACKUP_METADATA_SUFFIX.length);
+      const record = readManagedBackupRecord(backupId);
+      if (record) {
+        backups.push(record);
+      }
+    } catch (_error) {
+      // Ignore malformed or partially written backup metadata files.
+    }
+  }
+
+  backups.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  return backups;
+}
+
+function publicManagedBackupSummary(record) {
+  return {
+    backup_id: record.backup_id,
+    filename: record.archive_filename,
+    created_at: record.created_at,
+    created_by: record.created_by,
+    note: record.note || "",
+    schema_version: record.schema_version,
+    archive_size_bytes: Number(record.archive_size_bytes || 0),
+    component_manifest: record.component_manifest || {},
+    auction_count: Number(record.summary_counts?.auction_count || 0),
+    item_count: Number(record.summary_counts?.item_count || 0)
+  };
+}
+
+function publicManagedBackupDetail(record) {
+  const { archive_path, sidecar_path, ...rest } = record;
+  return {
+    ...rest,
+    archive_size_bytes: Number(record.archive_size_bytes || 0)
+  };
+}
 
 function requireManageUsers(req, res, next) {
   if (Array.isArray(req.user?.permissions) && req.user.permissions.includes("manage_users")) {
@@ -160,23 +528,211 @@ if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR);
 
 //--------------------------------------------------------------------------
 // POST /backup
-// API to backup database file to a folder on the server
+// API to create a managed backup archive on the server
 //--------------------------------------------------------------------------
 
-router.post("/backup", (req, res) => {
-  const backupPath = path.join(BACKUP_DIR, `auction_backup_${Date.now()}.db`);
-  const databaseFile = path.join(DB_PATH, DB_NAME);
-  db.setMaintenanceLock(true);
+router.post("/backup", async (req, res) => {
+  const createdAt = new Date().toISOString();
+  const createdBy = req.user?.username || "unknown";
+  const note = sanitiseBackupNote(req.body?.note);
+  const backupId = createManagedBackupId();
+  const backupLog = createOperationLog();
+  const tempRoot = fs.mkdtempSync(path.join(BACKUP_DIR, `managed-backup-${backupId}-`));
+  const tempDbPath = path.join(tempRoot, DB_NAME);
+  const { archiveFilename, archivePath, sidecarPath } = createManagedBackupPaths(backupId, createdAt);
+
+  backupLog.info(`Starting managed backup ${backupId}`);
+  backupLog.info(`Requested by ${createdBy}`);
+  if (note) {
+    backupLog.info(`Backup note: ${note}`);
+  }
+
   try {
-    db.close();
-    fs.copyFileSync(databaseFile, backupPath);
-    if (typeof db.reopen === "function") {
-      db.reopen({ skipClose: true });
+    const snapshot = createSafeDatabaseSnapshot(tempDbPath);
+    backupLog.info(`Database snapshot created (${snapshot.size_bytes} bytes)`);
+
+    const photoFiles = listFilesRecursively(UPLOAD_DIR);
+    const resourceImages = listManagedResourceImages();
+    const configFiles = RESOURCE_CONFIG_BACKUP_PATHS
+      .filter((entry) => fs.existsSync(entry.livePath))
+      .map((entry) => ({
+        key: entry.key,
+        filename: entry.filename,
+        livePath: entry.livePath,
+        size_bytes: fs.statSync(entry.livePath).size
+      }));
+    const auctions = collectAuctionBackupSummary();
+
+    backupLog.info(`Including ${photoFiles.length} photo file(s) from uploads`);
+    backupLog.info(`Including ${resourceImages.length} resource image file(s)`);
+    backupLog.info(`Including ${configFiles.length} resource config file(s)`);
+    backupLog.info(`Captured metadata for ${auctions.length} auction(s)`);
+
+    const metadata = {
+      format_version: MANAGED_BACKUP_FORMAT_VERSION,
+      backup_id: backupId,
+      archive_filename: archiveFilename,
+      created_at: createdAt,
+      created_by: createdBy,
+      schema_version: String(db.schemaVersion),
+      note,
+      backup_log_included: true,
+      component_manifest: {
+        database: {
+          included: true,
+          path: "database/auction.db",
+          size_bytes: snapshot.size_bytes
+        },
+        photos: {
+          included: true,
+          path: "photos/",
+          file_count: photoFiles.length,
+          total_size_bytes: photoFiles.reduce((total, file) => total + file.size_bytes, 0)
+        },
+        resources: {
+          included: true,
+          image_path: "resources/images/",
+          image_count: resourceImages.length,
+          image_total_size_bytes: resourceImages.reduce((total, file) => total + file.size_bytes, 0),
+          config_path: "resources/config/",
+          config_files: configFiles.map((file) => ({
+            key: file.key,
+            filename: file.filename,
+            size_bytes: file.size_bytes
+          }))
+        }
+      },
+      summary_counts: {
+        auction_count: auctions.length,
+        item_count: auctions.reduce((total, auction) => total + Number(auction.item_count || 0), 0)
+      },
+      auctions
+    };
+
+    await new Promise((resolve, reject) => {
+      const output = fs.createWriteStream(archivePath);
+      const archive = archiver("zip", { zlib: { level: 9 } });
+
+      output.on("close", resolve);
+      output.on("error", reject);
+      archive.on("warning", (err) => {
+        backupLog.warn(`Archive warning: ${err.message}`);
+      });
+      archive.on("error", reject);
+
+      archive.pipe(output);
+      archive.file(tempDbPath, { name: "database/auction.db" });
+
+      for (const photo of photoFiles) {
+        archive.file(photo.absolutePath, { name: `photos/${photo.relativePath}` });
+      }
+
+      for (const resource of resourceImages) {
+        archive.file(resource.absolutePath, { name: `resources/images/${resource.relativePath}` });
+      }
+
+      for (const configFile of configFiles) {
+        archive.file(configFile.livePath, { name: `resources/config/${configFile.filename}` });
+      }
+
+      archive.append(JSON.stringify(metadata, null, 2), { name: "metadata.json" });
+      backupLog.info("Archive payload assembled");
+      archive.append(backupLog.toString(), { name: "backup.log" });
+      archive.finalize();
+    });
+
+    const archiveSize = fs.statSync(archivePath).size;
+    backupLog.info(`Managed backup complete (${archiveSize} bytes)`);
+    const sidecarMetadata = {
+      ...metadata,
+      archive_size_bytes: archiveSize
+    };
+    fs.writeFileSync(sidecarPath, JSON.stringify(sidecarMetadata, null, 2), "utf8");
+
+    logFromRequest(req, logLevels.INFO, `Managed backup created ${archiveFilename}`);
+    res.json({
+      message: "Backup created.",
+      backup_id: backupId,
+      filename: archiveFilename,
+      created_at: createdAt,
+      archive_size_bytes: archiveSize,
+      backup_log: backupLog.toString()
+    });
+  } catch (err) {
+    backupLog.error(`Managed backup failed: ${err.message}`);
+    try {
+      fs.rmSync(archivePath, { force: true });
+      fs.rmSync(sidecarPath, { force: true });
+    } catch (_cleanupError) {
+      // Ignore cleanup failures for partially written backup files.
     }
-    res.json({ message: "Backup created", path: backupPath });
-    logFromRequest(req, logLevels.INFO, `Database backup created ${backupPath}`);
+    logFromRequest(req, logLevels.ERROR, `Managed backup failed: ${err.message}`);
+    res.status(500).json({ error: "Failed to create backup." });
   } finally {
-    db.setMaintenanceLock(false);
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+router.get("/backups", (req, res) => {
+  try {
+    const backups = listManagedBackups();
+    res.json({
+      backups: backups.map(publicManagedBackupSummary),
+      total_size_bytes: backups.reduce((total, backup) => total + Number(backup.archive_size_bytes || 0), 0)
+    });
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Failed to list backups: ${err.message}`);
+    res.status(500).json({ error: "Failed to list backups." });
+  }
+});
+
+router.get("/backups/:backupId/download", (req, res) => {
+  try {
+    const backup = readManagedBackupRecord(req.params.backupId);
+    if (!backup) {
+      return res.status(404).json({ error: "Backup not found." });
+    }
+
+    logFromRequest(req, logLevels.INFO, `Backup download requested ${backup.archive_filename}`);
+    return res.download(backup.archive_path, backup.archive_filename, (err) => {
+      if (err && !res.headersSent) {
+        res.status(500).json({ error: "Failed to download backup archive." });
+      }
+    });
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Failed to download backup: ${err.message}`);
+    return res.status(500).json({ error: "Failed to download backup archive." });
+  }
+});
+
+router.get("/backups/:backupId", (req, res) => {
+  try {
+    const backup = readManagedBackupRecord(req.params.backupId);
+    if (!backup) {
+      return res.status(404).json({ error: "Backup not found." });
+    }
+
+    res.json(publicManagedBackupDetail(backup));
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Failed to load backup metadata: ${err.message}`);
+    res.status(500).json({ error: "Failed to load backup metadata." });
+  }
+});
+
+router.delete("/backups/:backupId", (req, res) => {
+  try {
+    const backup = readManagedBackupRecord(req.params.backupId);
+    if (!backup) {
+      return res.status(404).json({ error: "Backup not found." });
+    }
+
+    fs.rmSync(backup.archive_path, { force: true });
+    fs.rmSync(backup.sidecar_path, { force: true });
+    logFromRequest(req, logLevels.WARN, `Managed backup deleted ${backup.archive_filename}`);
+    res.json({ message: "Backup deleted." });
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Failed to delete backup: ${err.message}`);
+    res.status(500).json({ error: "Failed to delete backup." });
   }
 });
 
@@ -223,8 +779,6 @@ router.get("/download-db", (req, res) => {
 // API to restore full DB from an uploaded copy
 //--------------------------------------------------------------------------
 
-const Database = require("better-sqlite3");
-
 router.post("/restore", async (req, res) => {
   try {
     await awaitMiddleware(upload.single("backup"))(req, res);
@@ -236,61 +790,12 @@ router.post("/restore", async (req, res) => {
     const filePath = req.file.path;
 
 
-    let header;
     try {
-      const fd = fs.openSync(filePath, "r");
-      const buffer = Buffer.alloc(16);
-      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
-      fs.closeSync(fd);
-      header = bytesRead;
-      const signature = Buffer.from("SQLite format 3\u0000", "utf8");
-      if (bytesRead < signature.length || !buffer.equals(signature)) {
-        fs.unlinkSync(filePath);
-        logFromRequest(req, logLevels.ERROR, "Database restore failed. Not a SQLite database");
-        return res.status(400).json({ error: "Uploaded file is not a valid SQLite database." });
-      }
+      validateSqliteSnapshot(filePath, { expectedSchemaVersion: String(db.schemaVersion) });
     } catch (ioErr) {
       fs.unlinkSync(filePath);
-      logFromRequest(req, logLevels.ERROR, "Database restore failed. Unable to read uploaded file");
-      return res.status(400).json({ error: "Unable to read uploaded file." });
-    }
-
-    try {
-      const testDB = new Database(filePath, { readonly: true });
-      let importSchemaVersion = null;
-
-      try {
-        const metadataTable = testDB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'metadata'").get();
-        console.log(metadataTable);
-        if (metadataTable) {
-          const row = testDB.prepare("SELECT value FROM metadata WHERE data = 'schema_version'").get();
-          if (row && row.value != null && String(row.value).length > 0) {
-            importSchemaVersion = String(row.value);
-          }
-        }
-      } finally {
-        testDB.close();
-      }
-
-      if (!importSchemaVersion) {
-        fs.unlinkSync(filePath);
-        logFromRequest(req, logLevels.ERROR, "Database restore failed. Missing schema_version");
-        return res.status(400).json({ error: "Uploaded database is missing schema version." });
-      }
-
-      if (importSchemaVersion !== String(db.schemaVersion)) {
-        fs.unlinkSync(filePath);
-        logFromRequest(
-          req,
-          logLevels.ERROR,
-          `Database restore failed. Schema version mismatch (db=${importSchemaVersion}, expected=${db.schemaVersion})`
-        );
-        return res.status(400).json({ error: `Uploaded database schema version does not match. (import=${importSchemaVersion}, required=${db.schemaVersion})` });
-      }
-    } catch (dbErr) {
-      fs.unlinkSync(filePath);
-      logFromRequest(req, logLevels.ERROR, "Database restore failed " + dbErr);
-      return res.status(400).json({ error: "Error" + dbErr });
+      logFromRequest(req, logLevels.ERROR, `Database restore failed ${ioErr.message}`);
+      return res.status(400).json({ error: ioErr.message || "Unable to read uploaded file." });
     }
 
     const dbFilePath = path.join(DB_PATH, DB_NAME);
@@ -316,6 +821,234 @@ router.post("/restore", async (req, res) => {
 
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+async function restoreManagedBackup(backup, selection, req) {
+  const restoreLog = createOperationLog();
+  const operationId = `${backup.backup_id}_${Date.now()}`;
+  const tempRoot = fs.mkdtempSync(path.join(BACKUP_DIR, `managed-restore-${operationId}-`));
+  const stagedDbPath = path.join(tempRoot, "database", DB_NAME);
+  const stagedPhotosDir = path.join(tempRoot, "photos");
+  const stagedResourcesDir = path.join(tempRoot, "resources-images");
+  const stagedConfigDir = path.join(tempRoot, "resources-config");
+  const liveDbPath = path.join(DB_PATH, DB_NAME);
+  const liveWalPath = `${liveDbPath}-wal`;
+  const liveShmPath = `${liveDbPath}-shm`;
+  const rollbackPaths = {};
+  let databaseClosed = false;
+  let databaseReopened = false;
+  let photosApplied = false;
+  let resourcesApplied = false;
+  let databaseApplied = false;
+
+  restoreLog.info(`Starting restore for backup ${backup.backup_id}`);
+  restoreLog.info(`Requested by ${req.user?.username || "unknown"}`);
+  restoreLog.info(`Restore selection: db=${selection.restoreDb}, photos=${selection.restorePhotos}, resources=${selection.restoreResources}`);
+
+  try {
+    const zip = await JSZip.loadAsync(fs.readFileSync(backup.archive_path));
+    const metadataEntry = zip.file("metadata.json");
+    if (!metadataEntry) {
+      throw new Error("Backup archive is missing metadata.json.");
+    }
+
+    const archiveMetadata = validateManagedBackupMetadata(JSON.parse(await metadataEntry.async("string")));
+    if (String(archiveMetadata.backup_id) !== String(backup.backup_id)) {
+      throw new Error("Backup archive metadata does not match the selected backup.");
+    }
+
+    if (selection.restoreDb) {
+      const dbEntry = zip.file("database/auction.db");
+      if (!dbEntry) {
+        throw new Error("Backup archive is missing the database snapshot.");
+      }
+
+      ensureDirectory(path.dirname(stagedDbPath));
+      fs.writeFileSync(stagedDbPath, await dbEntry.async("nodebuffer"));
+      const validation = validateSqliteSnapshot(stagedDbPath, { expectedSchemaVersion: String(db.schemaVersion) });
+      restoreLog.info(`Validated staged database snapshot (schema ${validation.schemaVersion})`);
+    }
+
+    if (selection.restorePhotos) {
+      ensureDirectory(stagedPhotosDir);
+      await extractZipPrefixToDirectory(zip, "photos/", stagedPhotosDir);
+      restoreLog.info("Staged photo payload extracted");
+    }
+
+    if (selection.restoreResources) {
+      ensureDirectory(stagedResourcesDir);
+      ensureDirectory(stagedConfigDir);
+      await extractZipPrefixToDirectory(zip, "resources/images/", stagedResourcesDir);
+      await extractZipPrefixToDirectory(zip, "resources/config/", stagedConfigDir);
+
+      for (const configFile of RESOURCE_CONFIG_BACKUP_PATHS) {
+        const stagedPath = path.join(stagedConfigDir, configFile.filename);
+        if (!fs.existsSync(stagedPath)) {
+          throw new Error(`Backup archive is missing ${configFile.filename}.`);
+        }
+        JSON.parse(fs.readFileSync(stagedPath, "utf8"));
+      }
+
+      restoreLog.info("Staged resource payload extracted");
+    }
+
+    db.setMaintenanceLock(true);
+    try {
+      if (selection.restoreDb) {
+        db.close();
+        databaseClosed = true;
+        restoreLog.info("Database connection closed for restore");
+      }
+
+      if (selection.restorePhotos) {
+        rollbackPaths.photos = path.join(tempRoot, "rollback-uploads");
+        if (fs.existsSync(UPLOAD_DIR)) {
+          fs.renameSync(UPLOAD_DIR, rollbackPaths.photos);
+        }
+        ensureDirectory(UPLOAD_DIR);
+        removeDirectoryContents(UPLOAD_DIR);
+        copyDirectoryContents(stagedPhotosDir, UPLOAD_DIR);
+        photosApplied = true;
+        restoreLog.info("Photo directory replaced from staged restore");
+      }
+
+      if (selection.restoreResources) {
+        rollbackPaths.resources = path.join(tempRoot, "rollback-resources");
+        if (fs.existsSync(CONFIG_IMG_DIR)) {
+          fs.renameSync(CONFIG_IMG_DIR, rollbackPaths.resources);
+        }
+        ensureDirectory(CONFIG_IMG_DIR);
+        removeDirectoryContents(CONFIG_IMG_DIR);
+        copyDirectoryContents(stagedResourcesDir, CONFIG_IMG_DIR);
+
+        rollbackPaths.configs = path.join(tempRoot, "rollback-configs");
+        ensureDirectory(rollbackPaths.configs);
+        for (const configFile of RESOURCE_CONFIG_BACKUP_PATHS) {
+          if (fs.existsSync(configFile.livePath)) {
+            fs.copyFileSync(configFile.livePath, path.join(rollbackPaths.configs, configFile.filename));
+          }
+          fs.copyFileSync(path.join(stagedConfigDir, configFile.filename), configFile.livePath);
+        }
+
+        resourcesApplied = true;
+        restoreLog.info("Resources and config files replaced from staged restore");
+      }
+
+      if (selection.restoreDb) {
+        rollbackPaths.db = path.join(tempRoot, "rollback-auction.db");
+        if (fs.existsSync(liveDbPath)) {
+          fs.copyFileSync(liveDbPath, rollbackPaths.db);
+        }
+        fs.copyFileSync(stagedDbPath, liveDbPath);
+        fs.rmSync(liveWalPath, { force: true });
+        fs.rmSync(liveShmPath, { force: true });
+        databaseApplied = true;
+        restoreLog.info("Database file replaced from staged restore");
+
+        if (typeof db.reopen === "function") {
+          db.reopen({ skipClose: true });
+          databaseReopened = true;
+          databaseClosed = false;
+          const liveValidation = validateSqliteSnapshot(liveDbPath, { expectedSchemaVersion: String(db.schemaVersion) });
+          restoreLog.info(`Reopened restored database successfully (schema ${liveValidation.schemaVersion})`);
+        }
+      }
+    } catch (swapErr) {
+      restoreLog.error(`Restore swap failed: ${swapErr.message}`);
+
+      if (databaseApplied && rollbackPaths.db && fs.existsSync(rollbackPaths.db)) {
+        fs.copyFileSync(rollbackPaths.db, liveDbPath);
+        fs.rmSync(liveWalPath, { force: true });
+        fs.rmSync(liveShmPath, { force: true });
+        restoreLog.warn("Rolled back database file");
+      }
+
+      if (resourcesApplied) {
+        fs.rmSync(CONFIG_IMG_DIR, { recursive: true, force: true });
+        if (rollbackPaths.resources && fs.existsSync(rollbackPaths.resources)) {
+          fs.renameSync(rollbackPaths.resources, CONFIG_IMG_DIR);
+        } else {
+          ensureDirectory(CONFIG_IMG_DIR);
+        }
+
+        if (rollbackPaths.configs && fs.existsSync(rollbackPaths.configs)) {
+          for (const configFile of RESOURCE_CONFIG_BACKUP_PATHS) {
+            const rollbackConfigPath = path.join(rollbackPaths.configs, configFile.filename);
+            if (fs.existsSync(rollbackConfigPath)) {
+              fs.copyFileSync(rollbackConfigPath, configFile.livePath);
+            }
+          }
+        }
+        restoreLog.warn("Rolled back resource files");
+      }
+
+      if (photosApplied) {
+        fs.rmSync(UPLOAD_DIR, { recursive: true, force: true });
+        if (rollbackPaths.photos && fs.existsSync(rollbackPaths.photos)) {
+          fs.renameSync(rollbackPaths.photos, UPLOAD_DIR);
+        } else {
+          ensureDirectory(UPLOAD_DIR);
+        }
+        restoreLog.warn("Rolled back photo files");
+      }
+
+      throw swapErr;
+    } finally {
+      if ((selection.restoreDb || databaseClosed) && !databaseReopened && typeof db.reopen === "function") {
+        try {
+          db.reopen({ skipClose: true });
+        } catch (_reopenErr) {
+          // Best effort; any relevant error is already being surfaced.
+        }
+      }
+      db.setMaintenanceLock(false);
+    }
+
+    restoreLog.info("Managed restore completed successfully");
+    logFromRequest(req, logLevels.WARN, `Managed backup restored ${backup.archive_filename}`);
+    if (selection.restoreDb) {
+      audit(getAuditActor(req), 'restore backup', 'backup', backup.backup_id, { selection });
+    }
+    return {
+      ok: true,
+      restored: {
+        database: selection.restoreDb,
+        photos: selection.restorePhotos,
+        resources: selection.restoreResources
+      },
+      restore_log: restoreLog.toString()
+    };
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+router.post("/backups/:backupId/restore", async (req, res) => {
+  try {
+    const backup = readManagedBackupRecord(req.params.backupId);
+    if (!backup) {
+      return res.status(404).json({ error: "Backup not found." });
+    }
+
+    const selection = {
+      restoreDb: Boolean(req.body?.restoreDb),
+      restorePhotos: Boolean(req.body?.restorePhotos),
+      restoreResources: Boolean(req.body?.restoreResources)
+    };
+
+    if (!selection.restoreDb && !selection.restorePhotos && !selection.restoreResources) {
+      return res.status(400).json({ error: "Select at least one restore component." });
+    }
+
+    const result = await restoreManagedBackup(backup, selection, req);
+    return res.json({
+      message: "Restore completed.",
+      ...result
+    });
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Managed restore failed: ${err.message}`);
+    return res.status(400).json({ error: err.message || "Restore failed." });
   }
 });
 

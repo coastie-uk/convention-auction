@@ -92,7 +92,8 @@
             <nav class="maintenance-nav-list" aria-label="Maintenance categories">
               <button type="button" class="maintenance-tab-button is-active" data-tab="auction-management" data-tab-label="Auction Management">Auction Management</button>
               <button type="button" class="maintenance-tab-button" data-tab="add-new-auction" data-tab-label="Add New Auction">Add New Auction</button>
-              <button type="button" class="maintenance-tab-button" data-tab="database-import-export" data-tab-label="Database + Import / Export">Database + Import / Export</button>
+              <button type="button" class="maintenance-tab-button" data-tab="database-backups" data-tab-label="Database Backups">Database Backups</button>
+              <button type="button" class="maintenance-tab-button" data-tab="csv-import-export" data-tab-label="CSV Import / Export">CSV Import / Export</button>
               <button type="button" class="maintenance-tab-button" data-tab="diagnostics" data-tab-label="Diagnostics">Diagnostics</button>
               <button type="button" class="maintenance-tab-button" data-tab="user-management" data-tab-label="Manage Users">Manage Users</button>
               <button type="button" class="maintenance-tab-button" data-tab="test-data-generator" data-tab-label="Test Data Generator">Test Data Generator</button>
@@ -173,32 +174,91 @@
             </div>
           </section>
 
-          <section class="maintenance-tab-panel" data-tab-panel="database-import-export" hidden>
+          <section class="maintenance-tab-panel" data-tab-panel="database-backups" hidden>
             <div class="panel-head">
               <div>
-                <h2>Database + Import / Export</h2>
-                <div class="panel-subtle">Backup, restore, and move structured data in and out of the system.</div>
+                <h2>Database Backups</h2>
+                <div class="panel-subtle">Create managed server backups, inspect their contents, and restore the installation safely.</div>
               </div>
             </div>
             <div class="panel-body maintenance-tab-body">
               <section class="maintenance-subpanel">
                 <div class="maintenance-subpanel-head">
                   <div>
-                    <h3>Database Backup and Restore</h3>
-                    <p>These operations briefly interrupt access to the live database. Make sure nobody is editing during a restore.</p>
+                    <h3>Create Server Backup</h3>
+                    <p>Each backup contains a safe database snapshot, all photo files, resource images, maintenance config JSON, metadata, and a backup log.</p>
                   </div>
                 </div>
                 <div class="maintenance-actions-row">
-                  <button id="backup-db" type="button">Create Backup on Server</button>
-                  <button id="download-db-file" type="button">Download Current Database File</button>
-                  <button id="download-db" type="button">Download Archive</button>
+                  <button id="open-create-backup-modal" type="button">Create Backup on Server</button>
+                </div>
+              </section>
+
+              <section class="maintenance-subpanel">
+                <div class="maintenance-subpanel-head">
+                  <div>
+                    <h3>Server Backup Manager</h3>
+                    <p>Select a backup to review metadata, then restore, delete, or download it.</p>
+                  </div>
+                </div>
+                <div class="maintenance-actions-row">
+                  <button id="refresh-backups" type="button">Refresh Backup List</button>
+                  <div id="backup-total-size" class="panel-subtle">Total occupied size: 0 B</div>
+                </div>
+                <div class="table-wrap">
+                  <table id="backup-table" class="maintenance-data-table">
+                    <thead>
+                      <tr>
+                        <th>Backup ID</th>
+                        <th>Created</th>
+                        <th>User</th>
+                        <th>Note</th>
+                        <th>Size</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="backup-table-body">
+                      <tr><td colspan="6">No backups found.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="maintenance-subpanel-head maintenance-subpanel-head--tight">
+                  <div>
+                    <h3>Restore Log</h3>
+                    <p>Available after a restore completes.</p>
+                  </div>
+                </div>
+                <div id="backup-restore-log" class="maintenance-code-block maintenance-code-block--compact">No restore log captured yet.</div>
+                <div class="maintenance-actions-row">
+                  <button id="save-restore-log" type="button" disabled>Save Restore Log</button>
+                </div>
+              </section>
+
+              <section class="maintenance-subpanel">
+                <div class="maintenance-subpanel-head">
+                  <div>
+                    <h3>Legacy Local DB Restore</h3>
+                    <p>Use this only for older local `.db` backup files. This path remains available for backwards compatibility.</p>
+                  </div>
                 </div>
                 <div class="maintenance-inline-form">
                   <input type="file" id="restore-file" />
                   <button id="restore-db" type="button">Restore Database from Local Backup</button>
+                  <button id="download-db-file" type="button">Download Current Database File</button>
                 </div>
               </section>
+            </div>
+          </section>
 
+          <section class="maintenance-tab-panel" data-tab-panel="csv-import-export" hidden>
+            <div class="panel-head">
+              <div>
+                <h2>CSV Import / Export</h2>
+                <div class="panel-subtle">Move auction table data in and out of the system using CSV bundles.</div>
+              </div>
+            </div>
+            <div class="panel-body maintenance-tab-body">
               <section class="maintenance-subpanel">
                 <div class="maintenance-subpanel-head">
                   <div>
@@ -593,6 +653,86 @@
             <div class="about-row"><span>Payment processor</span><strong id="about-version-payment">Unknown</strong></div>
           </div>
           <p class="about-license">Copyright © 2026 Chris Staples. This program is free software, licensed under the GNU General Public License, version 3. Distributed without any warranty.</p>
+        </div>
+      </div>
+
+      <div id="backup-info-modal" class="app-modal" hidden>
+        <div class="app-modal-card app-modal-card--wide">
+          <div class="app-modal-header">
+            <div>
+              <h3 id="backup-detail-title">Backup Details</h3>
+              <p id="backup-detail-subtitle"></p>
+            </div>
+            <button id="close-backup-info-modal" type="button" class="app-modal-close" aria-label="Close backup details dialog">Close</button>
+          </div>
+          <div class="backup-modal-scroll">
+            <div id="backup-detail-grid" class="maintenance-detail-grid"></div>
+            <div id="backup-component-summary" class="maintenance-inline-list"></div>
+            <div class="maintenance-subpanel-head maintenance-subpanel-head--tight">
+              <div>
+                <h3>Auctions in Backup</h3>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table id="backup-auction-table" class="maintenance-data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>URL Tag</th>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Items</th>
+                  </tr>
+                </thead>
+                <tbody id="backup-auction-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="backup-restore-modal" class="app-modal" hidden>
+        <div class="app-modal-card">
+          <div class="app-modal-header">
+            <div>
+              <h3 id="backup-restore-title">Restore Backup</h3>
+              <p id="backup-restore-subtitle">Select which parts of the backup should be restored.</p>
+            </div>
+            <button id="close-backup-restore-modal" type="button" class="app-modal-close" aria-label="Close restore dialog">Close</button>
+          </div>
+          <div class="maintenance-checkbox-grid">
+            <label><input type="checkbox" id="backup-restore-db" /> Database</label>
+            <label><input type="checkbox" id="backup-restore-photos" /> Photos</label>
+            <label><input type="checkbox" id="backup-restore-resources" /> Resources + Configs</label>
+          </div>
+          <div class="maintenance-actions-row modal-actions-row">
+            <button id="restore-selected-backup" type="button">Restore Selected Backup</button>
+            <button id="cancel-backup-restore" type="button" class="app-modal-close">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="create-backup-modal" class="app-modal" hidden>
+        <div class="app-modal-card">
+          <div class="app-modal-header">
+            <div>
+              <h3>Create Backup</h3>
+              <p>Enter an optional note, then create a managed backup. Progress and the backup log will be shown here.</p>
+            </div>
+            <button id="close-create-backup-modal" type="button" class="app-modal-close" aria-label="Close create backup dialog">Close</button>
+          </div>
+          <div class="maintenance-form-grid">
+            <label for="backup-note">Backup Note</label>
+            <input type="text" id="backup-note" maxlength="500" placeholder="Optional note describing why this backup was created" />
+          </div>
+          <div id="backup-operation-status" class="maintenance-result-box" aria-live="polite">
+            No backup operation running.
+          </div>
+          <div id="create-backup-log" class="maintenance-code-block maintenance-code-block--compact">No backup log captured yet.</div>
+          <div class="maintenance-actions-row modal-actions-row">
+            <button id="backup-db" type="button">Create Backup</button>
+            <button id="cancel-create-backup" type="button" class="app-modal-close">Close</button>
+          </div>
         </div>
       </div>
     </section>

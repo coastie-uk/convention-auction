@@ -1049,27 +1049,6 @@ form button:hover {
     }
 }
 
-@media (max-width: 900px) {
-    .edit-layout {
-        gap: 18px;
-        grid-template-columns: 1fr;
-    }
-
-    .edit-photo-panel {
-        position: static;
-    }
-
-    .edit-photo-preview {
-        min-height: min(48vh, 420px);
-    }
-
-    #current-photo,
-    #add-current-photo {
-        max-height: min(44vh, 380px);
-    }
-}
-
-
 /* Message Banner Styles */
 .message-banner {
     position: fixed;
@@ -1313,6 +1292,53 @@ footer {
     height: auto;
     border-radius: 6px;
     box-shadow: 0 0 5px rgba(0,0,0,0.1);
+}
+
+@media (max-width: 900px) {
+    .edit-layout {
+        display: grid;
+        gap: 18px;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .edit-main-column,
+    .edit-photo-column {
+        width: 100%;
+    }
+
+    .edit-photo-panel {
+        position: static;
+    }
+
+    .edit-photo-preview {
+        min-height: min(48vh, 420px);
+    }
+
+    #current-photo,
+    #add-current-photo {
+        max-height: min(44vh, 380px);
+    }
+}
+
+@media (max-width: 600px) {
+    #edit-section,
+    #add-section {
+        padding: 16px;
+    }
+
+    .edit-layout {
+        gap: 14px;
+    }
+
+    .edit-photo-preview {
+        min-height: 220px;
+        padding: 10px;
+    }
+
+    #current-photo,
+    #add-current-photo {
+        max-height: 260px;
+    }
 }
 
 /* Rotate/Crop button row */

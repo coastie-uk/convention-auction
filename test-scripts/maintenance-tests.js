@@ -2,10 +2,12 @@
 "use strict";
 
 const assert = require("assert/strict");
+const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const Database = require(path.join(__dirname, "..", "backend", "node_modules", "better-sqlite3"));
+const JSZip = require(path.join(__dirname, "..", "backend", "node_modules", "jszip"));
 const { initFramework } = require("./api-test-framework");
 
 const configCandidates = [
@@ -75,6 +77,10 @@ context.pptxConfig = null;
 context.slipConfig = null;
 context.resourceFilename = null;
 context.dbBackupBuffer = null;
+context.managedBackupId = null;
+context.managedBackupFilename = null;
+context.managedBackupNote = null;
+context.managedBackupArchive = null;
 context.managedUser = managedUsers.lifecycle;
 
 function createTempDbBuffer(sourceBuffer, mutator) {
@@ -114,6 +120,57 @@ async function restoreDbBuffer(buffer, filename = "integrity-restore.db") {
   assert.ok(json && json.message, `Unexpected restore response: ${text}`);
 }
 
+async function createManagedBackup(note) {
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/backup`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ note })
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && json.backup_id, `Unexpected managed backup response: ${text}`);
+  return json;
+}
+
+async function listManagedBackups() {
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/backups`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  assert.ok(Array.isArray(json?.backups), `Unexpected backup list response: ${text}`);
+  return json;
+}
+
+async function getManagedBackupDetail(backupId) {
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/backups/${encodeURIComponent(backupId)}`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && json.backup_id === backupId, `Unexpected backup detail response: ${text}`);
+  return json;
+}
+
+async function downloadManagedBackupBuffer(backupId) {
+  const res = await fetch(`${baseUrl}/maintenance/backups/${encodeURIComponent(backupId)}/download`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+async function restoreManagedBackup(backupId, payload, expectedStatus = 200) {
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/backups/${encodeURIComponent(backupId)}/restore`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify(payload)
+  });
+  await expectStatus(res, expectedStatus);
+  return { res, json, text };
+}
+
+function hashBuffer(buffer) {
+  return crypto.createHash("sha256").update(Buffer.from(buffer)).digest("hex");
+}
+
 // async function updateAuctionStatus(auctionId, status) {
 //   const { res, json, text } = await fetchJson(`${baseUrl}/auctions/update-status`, {
 //     method: "POST",
@@ -143,13 +200,12 @@ async function updateAuctionStatus(auctionId, status) {
 }
 
 addTest("M-001","maintenance/backup success", async () => {
-  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/backup`, {
-    method: "POST",
-    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({})
-  });
-  await expectStatus(res, 200);
-  assert.ok(json && json.path, `Unexpected backup response: ${text}`);
+  context.managedBackupNote = `Maintenance managed backup ${Date.now()}`;
+  const json = await createManagedBackup(context.managedBackupNote);
+  context.managedBackupId = json.backup_id;
+  context.managedBackupFilename = json.filename;
+  assert.ok(String(json.filename || "").endsWith(".zip"), "Expected managed backup filename to end with .zip");
+  assert.ok(Number(json.archive_size_bytes || 0) > 0, "Managed backup size missing");
 });
 
 addTest("M-002","maintenance/backup failure unauthenticated", async () => {
@@ -159,6 +215,89 @@ addTest("M-002","maintenance/backup failure unauthenticated", async () => {
     body: JSON.stringify({})
   });
   await expectStatus(res, 403);
+});
+
+addTest("M-002A","maintenance/backups list success", async () => {
+  const json = await listManagedBackups();
+  const backup = json.backups.find((entry) => entry.backup_id === context.managedBackupId);
+  assert.ok(backup, "Managed backup not present in backup list");
+  assert.equal(backup.note, context.managedBackupNote);
+  assert.ok(Number(json.total_size_bytes || 0) >= Number(backup.archive_size_bytes || 0), "Total size should include the managed backup");
+  assert.ok(json.backups.every((entry) => String(entry.filename || "").endsWith(".zip")), "Expected only managed .zip backups in list");
+});
+
+addTest("M-002B","maintenance/backups detail success", async () => {
+  const detail = await getManagedBackupDetail(context.managedBackupId);
+  assert.equal(detail.note, context.managedBackupNote);
+  assert.ok(String(detail.schema_version || "").length > 0, "Schema version missing from managed backup detail");
+  assert.ok(detail.component_manifest?.database?.included, "Database manifest missing");
+  assert.ok(detail.component_manifest?.photos?.included, "Photos manifest missing");
+  assert.ok(detail.component_manifest?.resources?.included, "Resources manifest missing");
+  assert.ok(Array.isArray(detail.auctions), "Auction metadata missing");
+});
+
+addTest("M-002C","maintenance/backups download archive contains metadata and log", async () => {
+  const archiveBuffer = await downloadManagedBackupBuffer(context.managedBackupId);
+  context.managedBackupArchive = archiveBuffer;
+  const zip = await JSZip.loadAsync(archiveBuffer);
+  const metadataText = await zip.file("metadata.json")?.async("string");
+  assert.ok(metadataText, "metadata.json missing from managed backup archive");
+  const metadata = JSON.parse(metadataText);
+  assert.equal(metadata.note, context.managedBackupNote);
+  assert.ok(String(metadata.schema_version || "").length > 0, "Schema version missing from managed backup metadata");
+  assert.ok(Array.isArray(metadata.auctions), "Managed backup archive missing auction metadata");
+  assert.ok(zip.file("backup.log"), "backup.log missing from managed backup archive");
+  assert.ok(zip.file("database/auction.db"), "database snapshot missing from managed backup archive");
+  assert.ok(zip.file("resources/config/pptxConfig.json"), "pptx config missing from managed backup archive");
+  assert.ok(zip.file("resources/config/cardConfig.json"), "card config missing from managed backup archive");
+  assert.ok(zip.file("resources/config/slipConfig.json"), "slip config missing from managed backup archive");
+});
+
+addTest("M-002D","maintenance/backups restore failure when no components selected", async () => {
+  await restoreManagedBackup(context.managedBackupId, {}, 400);
+});
+
+addTest("M-002E","maintenance/backups restore success database only", async () => {
+  const beforePhotoReport = await fetchJson(`${baseUrl}/maintenance/photo-report`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(beforePhotoReport.res, 200);
+
+  const { json, text } = await restoreManagedBackup(context.managedBackupId, { restoreDb: true });
+  assert.ok(json && json.ok, `Unexpected database-only restore response: ${text}`);
+  assert.ok(typeof json.restore_log === "string" && json.restore_log.includes("Managed restore completed successfully"), "Restore log missing success marker");
+
+  const afterPhotoReport = await fetchJson(`${baseUrl}/maintenance/photo-report`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(afterPhotoReport.res, 200);
+  assert.deepEqual(afterPhotoReport.json, beforePhotoReport.json, "Database-only restore should not change photo report");
+});
+
+addTest("M-002F","maintenance/backups restore success photos only without changing DB bytes", async () => {
+  const beforeDbHash = hashBuffer(await downloadCurrentDbBuffer());
+  const { json, text } = await restoreManagedBackup(context.managedBackupId, { restorePhotos: true });
+  assert.ok(json && json.ok, `Unexpected photos-only restore response: ${text}`);
+  const afterDbHash = hashBuffer(await downloadCurrentDbBuffer());
+  assert.equal(afterDbHash, beforeDbHash, "Photos-only restore should not change database contents");
+});
+
+addTest("M-002G","maintenance/backups restore success resources only without changing DB bytes", async () => {
+  const beforeDbHash = hashBuffer(await downloadCurrentDbBuffer());
+  const { json, text } = await restoreManagedBackup(context.managedBackupId, { restoreResources: true });
+  assert.ok(json && json.ok, `Unexpected resources-only restore response: ${text}`);
+  const afterDbHash = hashBuffer(await downloadCurrentDbBuffer());
+  assert.equal(afterDbHash, beforeDbHash, "Resources-only restore should not change database contents");
+});
+
+addTest("M-002H","maintenance/backups restore success combined restore", async () => {
+  const { json, text } = await restoreManagedBackup(context.managedBackupId, {
+    restoreDb: true,
+    restorePhotos: true,
+    restoreResources: true
+  });
+  assert.ok(json && json.ok, `Unexpected combined restore response: ${text}`);
+  assert.deepEqual(json.restored, { database: true, photos: true, resources: true });
 });
 
 addTest("M-003","maintenance/download-db success", async () => {
@@ -197,6 +336,26 @@ addTest("M-006","maintenance/restore success", async () => {
   });
   await expectStatus(res, 200);
   assert.ok(json && json.message, `Unexpected restore response: ${text}`);
+});
+
+addTest("M-006A","maintenance/backups delete success and not-found afterwards", async () => {
+  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/backups/${encodeURIComponent(context.managedBackupId)}`, {
+    method: "DELETE",
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && json.message, `Unexpected delete response: ${text}`);
+
+  const detailAfterDelete = await fetch(`${baseUrl}/maintenance/backups/${encodeURIComponent(context.managedBackupId)}`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(detailAfterDelete, 404);
+
+  const deleteAgain = await fetch(`${baseUrl}/maintenance/backups/${encodeURIComponent(context.managedBackupId)}`, {
+    method: "DELETE",
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(deleteAgain, 404);
 });
 
 addTest("M-007","maintenance/auctions/create failure missing short_name", async () => {
