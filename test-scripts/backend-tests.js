@@ -1588,7 +1588,11 @@ addTest("B-042","POST /export-csv failure wrong role", async () => {
 });
 
 // /rotate-photo
+
+
+
 addTest("B-043","POST /rotate-photo success", async () => {
+  await setAuctionStatus("locked");
   const { res, json } = await fetchJson(`${baseUrl}/rotate-photo`, {
     method: "POST",
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
@@ -1622,11 +1626,14 @@ addTest("B-046","POST /rotate-photo failure invalid item", async () => {
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
     body: JSON.stringify({ id: 999999, direction: "left" })
   });
-  await expectStatus(res, 500);
+  await expectStatus(res, 404);
 });
+
+
 
 // /auctions/:auctionId/slideshow-items
 addTest("B-047","GET /auctions/:publicId/slideshow-items success", async () => {
+  await setAuctionStatus("settlement");
   const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionPublicId}/slideshow-items`, {
     headers: authHeaders(tokens.slideshow)
   });

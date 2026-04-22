@@ -445,6 +445,12 @@ tbody tr:first-child td {
   font: inherit;
 }
 
+.inline-detail-button {
+  margin-left: 8px;
+  min-height: 30px;
+  padding: 4px 10px;
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;

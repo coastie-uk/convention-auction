@@ -475,7 +475,23 @@ h2 {
     border-radius: 8px;
     cursor: pointer;
     display: block;
-    max-width: 56px;
+    height: auto;
+    max-height: var(--item-thumb-size, 56px);
+    max-width: var(--item-thumb-size, 56px);
+    object-fit: contain;
+    width: auto;
+}
+
+.item-thumb--small {
+    --item-thumb-size: 56px;
+}
+
+.item-thumb--medium {
+    --item-thumb-size: 96px;
+}
+
+.item-thumb--large {
+    --item-thumb-size: 144px;
 }
 
 .item-photo-placeholder {
@@ -726,6 +742,65 @@ h2 {
     min-height: 34px;
     padding: 6px 9px;
     width: 100%;
+}
+
+.item-context-menu {
+    background: #fff;
+    border: 1px solid #cbd5df;
+    border-radius: 8px;
+    box-shadow: 0 18px 40px rgba(10, 30, 60, 0.2);
+    color: var(--admin-text);
+    min-width: 190px;
+    overflow: hidden;
+    padding: 6px;
+    position: fixed;
+    z-index: 12000;
+}
+
+.item-context-menu[hidden] {
+    display: none;
+}
+
+.item-context-menu-header {
+    border-bottom: 1px solid #e7ebf0;
+    color: var(--admin-muted);
+    font-size: 0.8rem;
+    font-weight: 800;
+    padding: 7px 9px 9px;
+}
+
+.item-context-menu-actions {
+    display: grid;
+    gap: 2px;
+    padding-top: 5px;
+}
+
+.item-context-menu-action {
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    color: var(--admin-text);
+    cursor: pointer;
+    font: inherit;
+    min-height: 32px;
+    padding: 7px 10px;
+    text-align: left;
+}
+
+.item-context-menu-action:hover,
+.item-context-menu-action:focus-visible {
+    background: #eef4ff;
+    outline: none;
+}
+
+.item-context-menu-action:disabled {
+    color: var(--admin-muted);
+    cursor: not-allowed;
+    opacity: 0.48;
+}
+
+.item-context-menu-action:disabled:hover {
+    background: transparent;
 }
 
 /* Forms */
@@ -985,6 +1060,57 @@ form button:hover {
 .app-modal-card--wide {
     max-width: 760px;
     width: min(100%, 760px);
+}
+
+.bidder-manager-table-wrap {
+    max-height: min(58vh, 520px);
+    overflow: auto;
+}
+
+.bidder-manager-table {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+.bidder-manager-table th,
+.bidder-manager-table td {
+    border-bottom: 1px solid var(--admin-panel-border);
+    padding: 10px;
+    text-align: left;
+}
+
+.bidder-manager-table input,
+.bidder-manager-add input {
+    border: 1px solid #cbd6e2;
+    border-radius: 8px;
+    box-sizing: border-box;
+    font: inherit;
+    padding: 8px 10px;
+    width: 100%;
+}
+
+.bidder-manager-add {
+    align-items: end;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: 130px minmax(0, 1fr) auto;
+    margin-top: 16px;
+}
+
+.bidder-manager-add label {
+    color: var(--admin-muted);
+    display: grid;
+    gap: 4px;
+    font-size: 0.92rem;
+    font-weight: 700;
+}
+
+.bidder-manager-warning {
+    background: #fff8e1;
+    border: 1px solid #ecd37f;
+    border-radius: 10px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
 }
 
 .app-modal-card--image {
@@ -1567,7 +1693,8 @@ footer {
 :root[data-theme="dark"] #export-section,
 :root[data-theme="dark"] .table-container,
 :root[data-theme="dark"] .app-modal-card,
-:root[data-theme="dark"] .edit-photo-preview {
+:root[data-theme="dark"] .edit-photo-preview,
+:root[data-theme="dark"] .item-context-menu {
     background: var(--admin-panel-bg);
     border-color: var(--admin-panel-border);
     box-shadow: var(--admin-panel-shadow);
@@ -1580,6 +1707,7 @@ footer {
 :root[data-theme="dark"] .app-modal-close,
 :root[data-theme="dark"] .image-tools button,
 :root[data-theme="dark"] .item-action-button,
+:root[data-theme="dark"] .item-context-menu-action,
 :root[data-theme="dark"] .btn-undo {
     background: #121d2d;
     border-color: #31425c;
@@ -1591,6 +1719,8 @@ footer {
 :root[data-theme="dark"] .menu-choice-button:hover,
 :root[data-theme="dark"] .image-tools button:hover,
 :root[data-theme="dark"] .item-action-button:hover,
+:root[data-theme="dark"] .item-context-menu-action:hover,
+:root[data-theme="dark"] .item-context-menu-action:focus-visible,
 :root[data-theme="dark"] .btn-undo:hover,
 :root[data-theme="dark"] .app-modal-close:hover {
     background: #1b2a41;
@@ -1618,6 +1748,7 @@ footer {
 :root[data-theme="dark"] #feed th,
 :root[data-theme="dark"] #feed td,
 :root[data-theme="dark"] .app-modal-header,
+:root[data-theme="dark"] .item-context-menu-header,
 :root[data-theme="dark"] .about-row,
 :root[data-theme="dark"] .form-footer {
     border-color: #253349;
@@ -1633,6 +1764,15 @@ footer {
 
 :root[data-theme="dark"] #itemsTable tbody tr:hover {
     background: rgba(95, 159, 255, 0.08);
+}
+
+:root[data-theme="dark"] .item-context-menu-action {
+    background: transparent;
+}
+
+:root[data-theme="dark"] .item-context-menu-action:disabled:hover {
+    background: transparent;
+    box-shadow: none;
 }
 
 :root[data-theme="dark"] .connection-status-pill.is-connected {
@@ -1806,6 +1946,84 @@ footer {
     width: min(100%, 360px);
 }
 
+.admin-inline-card--bid {
+    align-items: stretch;
+    grid-template-columns: minmax(150px, 0.72fr) minmax(260px, 1fr);
+    max-height: min(92vh, 520px);
+    width: min(100%, 620px);
+}
+
+.admin-bid-entry {
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+}
+
+.known-bidder-panel {
+    border-right: 1px solid var(--admin-panel-border);
+    display: grid;
+    gap: 8px;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+    padding-right: 14px;
+}
+
+.known-bidder-title {
+    color: var(--admin-muted);
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.known-bidder-list {
+    display: grid;
+    gap: 3px;
+    max-height: 340px;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.known-bidder-item {
+    align-items: baseline;
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    color: var(--admin-text);
+    cursor: pointer;
+    display: grid;
+    gap: 6px;
+    grid-template-columns: 44px minmax(0, 1fr);
+    line-height: 1.15;
+    min-height: 26px;
+    padding: 4px 6px;
+    text-align: left;
+}
+
+.known-bidder-item:hover,
+.known-bidder-item:focus-visible {
+    background: #eef4ff;
+    outline: none;
+}
+
+.known-bidder-paddle {
+    font-weight: 800;
+}
+
+.known-bidder-name {
+    color: var(--admin-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.known-bidder-empty {
+    color: var(--admin-muted);
+    font-size: 0.9rem;
+    padding: 4px 0;
+}
+
 .admin-inline-card h3 {
     margin: 0;
 }
@@ -1862,10 +2080,35 @@ footer {
     color: #fff;
 }
 
+.admin-inline-actions .admin-inline-secondary {
+    background: #eaf8f0;
+    border: 1px solid #b9dfc8;
+    color: #1f6f3f;
+}
+
 .admin-inline-actions .admin-inline-cancel {
     background: #eef4ff;
     border: 1px solid #d7deea;
     color: #24436b;
+}
+
+@media (max-width: 640px) {
+    .admin-inline-card--bid {
+        grid-template-columns: 1fr;
+        max-height: min(94vh, 680px);
+    }
+
+    .known-bidder-panel {
+        border-bottom: 1px solid var(--admin-panel-border);
+        border-right: 0;
+        max-height: 170px;
+        padding-bottom: 12px;
+        padding-right: 0;
+    }
+
+    .known-bidder-list {
+        max-height: 130px;
+    }
 }
 
 .retract-preview-card {
@@ -2031,6 +2274,17 @@ footer {
     background: #0b1320;
     border-color: #31425c;
     color: var(--admin-text);
+}
+
+:root[data-theme="dark"] .known-bidder-item:hover,
+:root[data-theme="dark"] .known-bidder-item:focus-visible {
+    background: #1f314c;
+}
+
+:root[data-theme="dark"] .admin-inline-actions .admin-inline-secondary {
+    background: #142a24;
+    border-color: #2c664e;
+    color: #9ce0bd;
 }
 
 :root[data-theme="dark"] .admin-inline-actions .admin-inline-cancel {

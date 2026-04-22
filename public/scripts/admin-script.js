@@ -32,6 +32,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const addCropImageButton = document.getElementById("add-crop-image");
     const editLivePhotoInput = document.getElementById("edit-photo-live");
     const addItemButton = document.getElementById("add-item");
+    const manageBiddersButton = document.getElementById("manage-bidders");
     const refreshButton = document.getElementById("refresh");
     const liveFeedButton = document.getElementById("livefeed");
     const publicButton = document.getElementById("public");
@@ -40,6 +41,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const auctionStateMenu = document.getElementById("auction-state-menu");
     const sortFieldMenu = document.getElementById("sort-field-menu");
     const sortOrderMenu = document.getElementById("sort-order-menu");
+    const photoPreviewSizeMenu = document.getElementById("photo-preview-size-menu");
+    const showBidderNamesInput = document.getElementById("show-bidder-names");
     const currentAuctionPill = document.getElementById("current-auction-pill");
     const currentStatePill = document.getElementById("current-state-pill");
     const connectionPill = document.getElementById("admin-connection-pill");
@@ -96,6 +99,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const adminPreferences = adminPreferenceController?.getPagePreferences?.() || {};
     let selectedOrder = adminPreferences.sort_order || "asc";
     let selectedSort = adminPreferences.sort_field || "item_number";
+    let showBidderNames = adminPreferences.show_bidder_names === true;
+    let selectedPhotoPreviewSize = adminPreferences.photo_preview_size || "small";
     let currencySymbol = localStorage.getItem("currencySymbol") || "£";
     let pptxStatusPollTimer = null;
     let latestPptxJob = null;
@@ -112,6 +117,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
     document.getElementById("sort-field").value = selectedSort;
     document.getElementById("sort-order").value = selectedOrder;
+    document.getElementById("photo-preview-size").value = selectedPhotoPreviewSize;
+    if (showBidderNamesInput) showBidderNamesInput.checked = showBidderNames;
 
     // controls whether to show bidder & amount columns
     const showBidStates = ['live', 'settlement', 'archived'];
@@ -155,14 +162,41 @@ document.addEventListener("DOMContentLoaded", function () {
         asc: "Ascending",
         desc: "Descending"
     });
+    const PHOTO_PREVIEW_SIZE_LABELS = Object.freeze({
+        small: "Small",
+        medium: "Medium",
+        large: "Large"
+    });
     const VALID_SORT_FIELDS = new Set(Object.keys(SORT_FIELD_LABELS));
     const VALID_SORT_ORDERS = new Set(Object.keys(SORT_ORDER_LABELS));
+    const VALID_PHOTO_PREVIEW_SIZES = new Set(Object.keys(PHOTO_PREVIEW_SIZE_LABELS));
 
     if (!VALID_SORT_FIELDS.has(selectedSort)) selectedSort = "item_number";
     if (!VALID_SORT_ORDERS.has(selectedOrder)) selectedOrder = "asc";
+    if (!VALID_PHOTO_PREVIEW_SIZES.has(selectedPhotoPreviewSize)) selectedPhotoPreviewSize = "small";
+    document.getElementById("photo-preview-size").value = selectedPhotoPreviewSize;
+
+    function getPhotoPreviewSizeClass(size = selectedPhotoPreviewSize) {
+        const normalizedSize = VALID_PHOTO_PREVIEW_SIZES.has(size) ? size : "small";
+        return `item-thumb--${normalizedSize}`;
+    }
+
+    function applyPhotoPreviewSize() {
+        itemsTableBody.querySelectorAll(".item-thumb").forEach((image) => {
+            image.classList.remove("item-thumb--small", "item-thumb--medium", "item-thumb--large");
+            image.classList.add(getPhotoPreviewSizeClass());
+        });
+    }
 
     function saveAdminPreferences(partial) {
         adminPreferenceController?.patchPagePreferences?.(partial);
+    }
+
+    function formatBidderLabel(paddleNumber, name, { prefix = false } = {}) {
+        const paddle = paddleNumber == null || paddleNumber === "" ? "" : String(paddleNumber);
+        const cleanName = normalizeString(name);
+        const base = cleanName ? `${paddle} - ${cleanName}` : paddle;
+        return prefix && base ? `Paddle ${base}` : base;
     }
 
     function getSavedAdminAuctionId() {
@@ -619,6 +653,52 @@ document.addEventListener("DOMContentLoaded", function () {
                 <span class="item-action-icon" aria-hidden="true">${icon}</span>
             </button>
         `;
+    }
+
+    function isUnavailableActionButton(button) {
+        if (!button || button.disabled) return true;
+        const style = window.getComputedStyle(button);
+        return style.display === "none" || style.visibility === "hidden" || style.pointerEvents === "none";
+    }
+
+    function getUnavailableActionReason(button, fallback = "This command is unavailable") {
+        return normalizeString(button?.title || button?.dataset?.defaultTitle || fallback) || fallback;
+    }
+
+    async function deleteItemById(itemId, { afterDelete = null } = {}) {
+        const token = getTokenOrLogout();
+        if (!token) return;
+
+        const numericItemId = Number(itemId);
+        if (!Number.isInteger(numericItemId) || numericItemId <= 0) {
+            showMessage("Cannot delete item: missing item id", "error");
+            return;
+        }
+
+        const modal = await DayPilot.Modal.confirm("Are you sure you want to delete this item?");
+        if (modal.canceled) {
+            showMessage("Delete cancelled", "info");
+            return;
+        }
+
+        try {
+            const response = await fetch(`${API}/items/${numericItemId}`, {
+                method: "DELETE",
+                headers: { Authorization: token }
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || "Unknown error");
+            }
+
+            showMessage(data.message || "Item deleted successfully", "success");
+            await loadItems();
+            if (typeof afterDelete === "function") {
+                afterDelete();
+            }
+        } catch (error) {
+            showMessage("Error deleting item: " + error.message, "error");
+        }
     }
 
     function renderItemStatusIndicator(statusCode, statusLabel) {
@@ -1516,6 +1596,11 @@ document.addEventListener("DOMContentLoaded", function () {
             Object.entries(SORT_ORDER_LABELS).map(([value, label]) => ({ value, label })),
             selectedOrder
         );
+        renderChoiceMenu(
+            photoPreviewSizeMenu,
+            Object.entries(PHOTO_PREVIEW_SIZE_LABELS).map(([value, label]) => ({ value, label })),
+            selectedPhotoPreviewSize
+        );
     }
 
     function openAboutModal() {
@@ -1675,6 +1760,13 @@ document.addEventListener("DOMContentLoaded", function () {
         orderSelect.dispatchEvent(new Event("change", { bubbles: true }));
     });
 
+    photoPreviewSizeMenu?.addEventListener("click", (event) => {
+        const button = event.target.closest(".menu-choice-button");
+        if (!button || button.disabled) return;
+        photoPreviewSizeSelect.value = button.dataset.value;
+        photoPreviewSizeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
     auctionStateMenu?.addEventListener("click", (event) => {
         const button = event.target.closest(".menu-choice-button");
         if (!button || button.disabled) return;
@@ -1693,6 +1785,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const auctionSelect = document.getElementById("auction-select");
     const orderSelect = document.getElementById("sort-order");
     const sortSelect = document.getElementById("sort-field");
+    const photoPreviewSizeSelect = document.getElementById("photo-preview-size");
 
     async function loadAuctions(options = {}) {
         const { suppressErrors = false, rethrow = false } = options;
@@ -1842,6 +1935,27 @@ document.addEventListener("DOMContentLoaded", function () {
         syncViewMenus();
         closeMenuGroups();
         loadItems();
+    });
+
+    photoPreviewSizeSelect.addEventListener("change", () => {
+        const nextSize = photoPreviewSizeSelect.value;
+        selectedPhotoPreviewSize = VALID_PHOTO_PREVIEW_SIZES.has(nextSize) ? nextSize : "small";
+        photoPreviewSizeSelect.value = selectedPhotoPreviewSize;
+        saveAdminPreferences({ photo_preview_size: selectedPhotoPreviewSize });
+        syncViewMenus();
+        closeMenuGroups();
+        applyPhotoPreviewSize();
+    });
+
+    showBidderNamesInput?.addEventListener("change", () => {
+        showBidderNames = Boolean(showBidderNamesInput.checked);
+        saveAdminPreferences({ show_bidder_names: showBidderNames });
+        closeMenuGroups();
+        loadItems();
+    });
+
+    manageBiddersButton?.addEventListener("click", () => {
+        void openManageBiddersModal();
     });
 
 
@@ -2016,6 +2130,149 @@ document.addEventListener("DOMContentLoaded", function () {
             .replace(/['"]/g, "");  // Removes all single and double quotes
     }
 
+    async function fetchBiddersForSelectedAuction() {
+        const auctionId = Number(selectedAuctionId);
+        if (!Number.isInteger(auctionId) || auctionId <= 0) {
+            throw new Error("Please select an auction first");
+        }
+        const response = await fetch(`${API}/auctions/${auctionId}/bidders`, {
+            headers: { Authorization: localStorage.getItem("token") }
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || "Failed to load bidders");
+        return Array.isArray(data.bidders) ? data.bidders : [];
+    }
+
+    async function saveBidderName(bidderId, name) {
+        const auctionId = Number(selectedAuctionId);
+        const response = await fetch(`${API}/auctions/${auctionId}/bidders/${bidderId}`, {
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: localStorage.getItem("token")
+            },
+            body: JSON.stringify({ name })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || "Failed to save bidder");
+        return data.bidder;
+    }
+
+    async function addOrUpdateBidder(paddleNumber, name) {
+        const auctionId = Number(selectedAuctionId);
+        const response = await fetch(`${API}/auctions/${auctionId}/bidders`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: localStorage.getItem("token")
+            },
+            body: JSON.stringify({ paddle_number: Number(paddleNumber), name })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || "Failed to save bidder");
+        return data.bidder;
+    }
+
+    async function openManageBiddersModal() {
+        const auctionId = Number(selectedAuctionId);
+        if (!Number.isInteger(auctionId) || auctionId <= 0) {
+            showMessage("Please select an auction first", "error");
+            return;
+        }
+
+        closeMenuGroups();
+        let bidders;
+        try {
+            bidders = await fetchBiddersForSelectedAuction();
+        } catch (error) {
+            showMessage(error.message, "error");
+            return;
+        }
+
+        const archived = getSelectedAuctionStatus() === "archived";
+        const overlay = document.createElement("div");
+        overlay.className = "app-modal bidder-manager-modal";
+        overlay.innerHTML = `
+            <div class="app-modal-card app-modal-card--wide bidder-manager-card" role="dialog" aria-modal="true" aria-labelledby="bidder-manager-title">
+                <div class="app-modal-header">
+                    <div>
+                        <h3 id="bidder-manager-title">Manage Bidders</h3>
+                        <p>Edit optional bidder names for the selected auction.</p>
+                    </div>
+                    <button type="button" class="app-modal-close js-close-bidder-manager" aria-label="Close bidder manager">Close</button>
+                </div>
+                ${archived ? '<div class="bidder-manager-warning">This auction is archived. Bidder names are read only.</div>' : ''}
+                <div class="bidder-manager-table-wrap">
+                    <table class="bidder-manager-table">
+                        <thead><tr><th>Paddle</th><th>Name</th><th></th></tr></thead>
+                        <tbody>
+                            ${bidders.map((bidder) => `
+                                <tr data-bidder-id="${bidder.id}">
+                                    <td>${escapeHtml(bidder.paddle_number)}</td>
+                                    <td><input type="text" class="bidder-manager-name" value="${escapeHtml(bidder.name || "")}" maxlength="100" ${archived ? "disabled" : ""}></td>
+                                    <td><button type="button" class="secondary-button js-save-bidder-name" ${archived ? "disabled" : ""}>Save</button></td>
+                                </tr>
+                            `).join("") || '<tr><td colspan="3" class="empty-cell">No bidders recorded yet.</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="bidder-manager-add">
+                    <label>Paddle #<input type="number" min="1" class="js-new-bidder-paddle" ${archived ? "disabled" : ""}></label>
+                    <label>Name<input type="text" maxlength="100" class="js-new-bidder-name" ${archived ? "disabled" : ""}></label>
+                    <button type="button" class="js-add-bidder" ${archived ? "disabled" : ""}>Add / Update</button>
+                </div>
+            </div>
+        `;
+
+        const close = () => overlay.remove();
+        overlay.querySelectorAll(".js-close-bidder-manager").forEach((button) => button.addEventListener("click", close));
+        overlay.addEventListener("click", (event) => {
+            if (event.target === overlay) close();
+        });
+        overlay.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                event.preventDefault();
+                close();
+            }
+        });
+
+        overlay.querySelectorAll(".js-save-bidder-name").forEach((button) => {
+            button.addEventListener("click", async () => {
+                const row = button.closest("tr");
+                const bidderId = Number(row?.dataset.bidderId);
+                const input = row?.querySelector(".bidder-manager-name");
+                button.disabled = true;
+                try {
+                    await saveBidderName(bidderId, input?.value || "");
+                    showMessage("Bidder name saved", "success");
+                    await loadItems({ suppressErrors: true });
+                } catch (error) {
+                    showMessage(error.message, "error");
+                } finally {
+                    button.disabled = archived;
+                }
+            });
+        });
+
+        overlay.querySelector(".js-add-bidder")?.addEventListener("click", async () => {
+            const paddleInput = overlay.querySelector(".js-new-bidder-paddle");
+            const nameInput = overlay.querySelector(".js-new-bidder-name");
+            try {
+                await addOrUpdateBidder(paddleInput?.value, nameInput?.value || "");
+                showMessage("Bidder saved", "success");
+                close();
+                await openManageBiddersModal();
+                await loadItems({ suppressErrors: true });
+            } catch (error) {
+                showMessage(error.message, "error");
+            }
+        });
+
+        document.body.appendChild(overlay);
+        overlay.tabIndex = -1;
+        overlay.focus();
+    }
+
 
     function logout() {
         window.AppAuth?.clearAllSessions?.({ broadcast: true });
@@ -2108,9 +2365,169 @@ document.addEventListener("DOMContentLoaded", function () {
         syncMoveToggleStates();
     }
 
+    let itemContextMenu = null;
+
+    function ensureItemContextMenu() {
+        if (itemContextMenu) return itemContextMenu;
+
+        itemContextMenu = document.createElement("div");
+        itemContextMenu.className = "item-context-menu";
+        itemContextMenu.hidden = true;
+        itemContextMenu.setAttribute("role", "menu");
+        document.body.appendChild(itemContextMenu);
+        return itemContextMenu;
+    }
+
+    function closeItemContextMenu() {
+        if (!itemContextMenu) return;
+        itemContextMenu.hidden = true;
+        itemContextMenu.innerHTML = "";
+        itemContextMenu.removeAttribute("data-item-id");
+    }
+
+    function getRowActionButton(row, selector) {
+        return row?.querySelector(selector) || null;
+    }
+
+    function buildContextMenuAction({ id, label, button = null, disabled = false, disabledReason = "", run }) {
+        const reason = disabled ? (disabledReason || getUnavailableActionReason(button)) : "";
+        return { id, label, button, disabled: Boolean(disabled), disabledReason: reason, run };
+    }
+
+    function getBidContextMenuLabel(row, bidButton) {
+        if (bidButton?.classList.contains("btn-undo")) return "Retract bid";
+        if (bidButton?.classList.contains("btn-finalize")) return "Record bid";
+        return row?.dataset?.sold === "1" ? "Retract bid" : "Record bid";
+    }
+
+    function getItemContextMenuActions(row) {
+        const itemId = Number(row?.dataset?.itemId);
+        const editButton = getRowActionButton(row, ".edit-item-button, .view-item-button");
+        const duplicateButton = getRowActionButton(row, ".duplicate-item-button");
+        const moveButton = getRowActionButton(row, ".move-toggle");
+        const printButton = getRowActionButton(row, ".print-slip-button");
+        const bidButton = getRowActionButton(row, ".btn-finalize, .btn-undo");
+        const historyButton = getRowActionButton(row, ".history-button");
+        const isView = editButton?.classList.contains("view-item-button");
+        const deleteDisabled = isView || isUnavailableActionButton(editButton);
+        const deleteReason = isView
+            ? getUnavailableActionReason(editButton, "This item cannot be deleted")
+            : "This item cannot be deleted";
+
+        return [
+            buildContextMenuAction({
+                id: "edit",
+                label: isView ? "View" : "Edit",
+                button: editButton,
+                disabled: isUnavailableActionButton(editButton),
+                run: () => editButton?.click()
+            }),
+            buildContextMenuAction({
+                id: "delete",
+                label: "Delete",
+                button: editButton,
+                disabled: deleteDisabled,
+                disabledReason: deleteReason,
+                run: () => deleteItemById(itemId)
+            }),
+            buildContextMenuAction({
+                id: "copy",
+                label: "Copy",
+                button: duplicateButton,
+                disabled: isUnavailableActionButton(duplicateButton),
+                run: () => duplicateButton?.click()
+            }),
+            buildContextMenuAction({
+                id: "move",
+                label: "Move item / auction",
+                button: moveButton,
+                disabled: isUnavailableActionButton(moveButton),
+                run: () => moveButton?.click()
+            }),
+            buildContextMenuAction({
+                id: "print",
+                label: "Print item slip",
+                button: printButton,
+                disabled: isUnavailableActionButton(printButton),
+                run: () => printButton?.click()
+            }),
+            buildContextMenuAction({
+                id: "bid",
+                label: getBidContextMenuLabel(row, bidButton),
+                button: bidButton,
+                disabled: isUnavailableActionButton(bidButton),
+                disabledReason: getUnavailableActionReason(bidButton, "Bid commands are unavailable for this auction state or user"),
+                run: () => bidButton?.click()
+            }),
+            buildContextMenuAction({
+                id: "history",
+                label: "Show history",
+                button: historyButton,
+                disabled: isUnavailableActionButton(historyButton),
+                run: () => historyButton?.click()
+            })
+        ];
+    }
+
+    function positionItemContextMenu(menu, clientX, clientY) {
+        menu.style.left = "0px";
+        menu.style.top = "0px";
+        menu.hidden = false;
+
+        const menuRect = menu.getBoundingClientRect();
+        const margin = 8;
+        const maxLeft = Math.max(margin, window.innerWidth - menuRect.width - margin);
+        const maxTop = Math.max(margin, window.innerHeight - menuRect.height - margin);
+        const left = Math.min(Math.max(clientX, margin), maxLeft);
+        const top = Math.min(Math.max(clientY, margin), maxTop);
+
+        menu.style.left = `${left}px`;
+        menu.style.top = `${top}px`;
+    }
+
+    function openItemContextMenu(row, event) {
+        const itemId = Number(row?.dataset?.itemId);
+        if (!Number.isInteger(itemId) || itemId <= 0) return;
+
+        closeMenuGroups();
+        const menu = ensureItemContextMenu();
+        const itemNumber = normalizeString(row.dataset.item_number || row.cells?.[0]?.textContent || itemId);
+        const actions = getItemContextMenuActions(row);
+
+        menu.dataset.itemId = String(itemId);
+        menu.innerHTML = `
+            <div class="item-context-menu-header">Item #${escapeHtml(itemNumber)}</div>
+            <div class="item-context-menu-actions">
+                ${actions.map((action) => `
+                    <button
+                        type="button"
+                        class="item-context-menu-action"
+                        role="menuitem"
+                        data-action-id="${escapeHtml(action.id)}"
+                        ${action.disabled ? "disabled" : ""}
+                        ${action.disabledReason ? `title="${escapeHtml(action.disabledReason)}"` : ""}
+                    >${escapeHtml(action.label)}</button>
+                `).join("")}
+            </div>
+        `;
+
+        menu.querySelectorAll(".item-context-menu-action").forEach((button) => {
+            const action = actions.find((candidate) => candidate.id === button.dataset.actionId);
+            if (!action || action.disabled) return;
+            button.addEventListener("click", async () => {
+                closeItemContextMenu();
+                await action.run();
+            });
+        });
+
+        positionItemContextMenu(menu, event.clientX, event.clientY);
+        menu.querySelector(".item-context-menu-action:not(:disabled)")?.focus({ preventScroll: true });
+    }
+
 
     async function loadItems(options = {}) {
         const { suppressErrors = false, rethrow = false } = options;
+        closeItemContextMenu();
         const token = localStorage.getItem("token");
         if (!token) return logout();
         const showBidCols = showBidStates.includes(window.currentAuctionStatus);
@@ -2199,7 +2616,11 @@ document.addEventListener("DOMContentLoaded", function () {
                 row.dataset.hasBid = hasBid ? "1" : "0";
                 row.dataset.item_number = item.item_number;
                 row.dataset.description = item.description;
+                row.dataset.bidderName = item.bidder_name || "";
                 const moveTitle = hasBid ? "Item has bids and cannot be moved" : "Move item within auction or to a different auction";
+                const bidderDisplay = showBidderNames
+                    ? formatBidderLabel(item.paddle_no, item.bidder_name)
+                    : (item.paddle_no ?? '');
 
                 row.innerHTML = `
                 <td>${item.item_number}</td>
@@ -2207,11 +2628,11 @@ document.addEventListener("DOMContentLoaded", function () {
                 <td>${escapedContributor}</td>
                 <td>${escapedArtist}</td>
                 <td>
-                    ${item.photo ? `<img src='${imgSrc}' alt='Item Image' class="popup-image item-thumb">` : '<span class="item-photo-placeholder">No image</span>'}
+                    ${item.photo ? `<img src='${imgSrc}' alt='Item Image' class="popup-image item-thumb ${getPhotoPreviewSizeClass()}">` : '<span class="item-photo-placeholder">No image</span>'}
                 </td>
 
                 ${showBidCols ? `
-                    <td>${item.paddle_no ?? ''}</td>
+                    <td>${escapeHtml(bidderDisplay)}</td>
                     <td>${fmtPrice(hasBid, item.hammer_price ?? '')}</td>` : ''
                     }
                 <td class="status-cell">${renderItemStatusIndicator(item.status_code, item.status_label)}</td>
@@ -2393,6 +2814,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
     }
 
+    window.loadAdminItems = loadItems;
+
     async function refreshAdminData({ showErrors = false, announceConnectivity = true } = {}) {
         try {
             const hasSelectedAuction = Number.isInteger(parseInt(selectedAuctionId, 10)) && parseInt(selectedAuctionId, 10) > 0;
@@ -2492,6 +2915,36 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         }
     });
+
+    itemsTableBody.addEventListener("contextmenu", function (event) {
+        const row = event.target.closest("tr");
+        if (!row || !itemsTableBody.contains(row) || !row.dataset.itemId) return;
+
+        event.preventDefault();
+        openItemContextMenu(row, event);
+    });
+
+    document.addEventListener("contextmenu", (event) => {
+        if (!itemContextMenu || itemContextMenu.hidden) return;
+        if (itemsTableBody.contains(event.target)) return;
+        closeItemContextMenu();
+    });
+
+    document.addEventListener("mousedown", (event) => {
+        if (!itemContextMenu || itemContextMenu.hidden) return;
+        if (itemContextMenu.contains(event.target)) return;
+        closeItemContextMenu();
+    });
+
+    document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape" || !itemContextMenu || itemContextMenu.hidden) return;
+        event.preventDefault();
+        event.stopPropagation();
+        closeItemContextMenu();
+    }, true);
+
+    window.addEventListener("scroll", closeItemContextMenu, true);
+    window.addEventListener("resize", closeItemContextMenu);
 
 
     function attachImagePopupEvent() {
@@ -2767,37 +3220,17 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     deleteButton.addEventListener("click", async function () {
-        const token = getTokenOrLogout();
-        if (!token) return;
-
         if (!currentEditCanEdit) {
             showMessage(currentEditBlockReason || "This item is view only.", "info");
             return;
         }
 
-        const modal = await DayPilot.Modal.confirm("Are you sure you want to delete this item?");
-        if (modal.canceled) {
-            showMessage("Delete cancelled", "info");
-            return;
-        }
-
-        try {
-            const response = await fetch(`${API}/items/${currentEditId}`, {
-                method: "DELETE",
-                headers: { Authorization: token }
-            });
-            const data = await response.json();
-            if (!response.ok) {
-                throw new Error(data.error || "Unknown error");
+        await deleteItemById(currentEditId, {
+            afterDelete: () => {
+                resetEditDraftState();
+                showSection("admin-section");
             }
-
-            showMessage(data.message || "Item deleted successfully", "success");
-            await loadItems();
-            resetEditDraftState();
-            showSection("admin-section");
-        } catch (error) {
-            showMessage("Error deleting item: " + error.message, "error");
-        }
+        });
     });
 
     cancelEditButton.addEventListener("click", function () {

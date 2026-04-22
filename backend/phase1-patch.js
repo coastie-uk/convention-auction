@@ -70,6 +70,32 @@ const parseMoneyAmount = (value) => {
   return Number.isFinite(parsed) ? parsed : NaN;
 };
 
+const normalisePaddleNumber = (value) => {
+  const paddle = Number(value);
+  return Number.isInteger(paddle) && paddle > 0 ? paddle : null;
+};
+
+const normaliseBidderName = (value) => {
+  const name = sanitiseText(value, 100);
+  return name ? name : null;
+};
+
+const bidderLabel = (paddleNumber, name) => {
+  const paddle = paddleNumber == null ? '' : String(paddleNumber);
+  const cleanName = String(name || '').trim();
+  return cleanName ? `${paddle} - ${cleanName}` : paddle;
+};
+
+const serialiseBidderRow = (row) => ({
+  id: row.id,
+  paddle_number: row.paddle_number,
+  name: row.name || '',
+  bidder_name: row.name || '',
+  bidder_label: bidderLabel(row.paddle_number, row.name),
+  auction_id: row.auction_id,
+  created_at: row.created_at || null
+});
+
 
 module.exports = function phase1Patch (app) {
 
@@ -78,6 +104,7 @@ module.exports = function phase1Patch (app) {
   // Live Feed (Read only)
   //--------------------------------------------------------------------------
   const liveFeed = express.Router();
+  const bidderMetadata = express.Router();
 
   const derivePaymentStatus = (lotsTotal, paymentsTotal) => {
     const lots = Number(lotsTotal || 0);
@@ -141,6 +168,118 @@ module.exports = function phase1Patch (app) {
     return row?.status || null;
   };
 
+  bidderMetadata.get('/:auctionId/bidders', authenticateRole(['admin', 'cashier']), (req, res) => {
+    const auctionId = Number(req.params.auctionId);
+    if (!Number.isInteger(auctionId) || auctionId <= 0) {
+      return res.status(400).json({ error: 'Invalid auction id' });
+    }
+
+    const auction = db.get('SELECT id FROM auctions WHERE id = ?', [auctionId]);
+    if (!auction) return res.status(404).json({ error: 'Auction not found' });
+
+    const rows = db.all(`
+      SELECT id, paddle_number, name, auction_id, created_at
+        FROM bidders
+       WHERE auction_id = ?
+       ORDER BY paddle_number ASC
+    `, [auctionId]);
+
+    return res.json({ bidders: rows.map(serialiseBidderRow) });
+  });
+
+  bidderMetadata.get('/:auctionId/bidders/lookup', authenticateRole(['admin', 'cashier']), (req, res) => {
+    const auctionId = Number(req.params.auctionId);
+    const paddleNumber = normalisePaddleNumber(req.query.paddle_number);
+    if (!Number.isInteger(auctionId) || auctionId <= 0) {
+      return res.status(400).json({ error: 'Invalid auction id' });
+    }
+    if (!paddleNumber) {
+      return res.status(400).json({ error: 'Invalid paddle number' });
+    }
+
+    const row = db.get(`
+      SELECT id, paddle_number, name, auction_id, created_at
+        FROM bidders
+       WHERE auction_id = ? AND paddle_number = ?
+    `, [auctionId, paddleNumber]);
+
+    return res.json({ bidder: row ? serialiseBidderRow(row) : null });
+  });
+
+  bidderMetadata.post('/:auctionId/bidders', authenticateRole(['admin', 'cashier']), checkAuctionState(['setup', 'locked', 'live', 'settlement']), (req, res) => {
+    const auctionId = Number(req.params.auctionId);
+    const paddleNumber = normalisePaddleNumber(req.body?.paddle_number ?? req.body?.paddle);
+    const name = normaliseBidderName(req.body?.name ?? req.body?.bidderName);
+
+    if (!Number.isInteger(auctionId) || auctionId <= 0) {
+      return res.status(400).json({ error: 'Invalid auction id' });
+    }
+    if (!paddleNumber) {
+      return res.status(400).json({ error: 'Invalid paddle number' });
+    }
+
+    try {
+      let row = db.get(`
+        SELECT id, paddle_number, name, auction_id, created_at
+          FROM bidders
+         WHERE auction_id = ? AND paddle_number = ?
+      `, [auctionId, paddleNumber]);
+
+      if (row) {
+        db.run('UPDATE bidders SET name = ? WHERE id = ? AND auction_id = ?', [name, row.id, auctionId]);
+        row = db.get('SELECT id, paddle_number, name, auction_id, created_at FROM bidders WHERE id = ?', [row.id]);
+        audit(getAuditActor(req), 'bidder name updated', 'bidder', row.id, {
+          auction_id: auctionId,
+          paddle_number: paddleNumber,
+          name: name || ''
+        });
+        return res.json({ bidder: serialiseBidderRow(row), created: false });
+      }
+
+      const info = db.run(`
+        INSERT INTO bidders (paddle_number, name, auction_id, created_at)
+        VALUES (?, ?, ?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
+      `, [paddleNumber, name, auctionId]);
+      row = db.get('SELECT id, paddle_number, name, auction_id, created_at FROM bidders WHERE id = ?', [info.lastInsertRowid]);
+      audit(getAuditActor(req), 'bidder created', 'bidder', row.id, {
+        auction_id: auctionId,
+        paddle_number: paddleNumber,
+        name: name || ''
+      });
+      return res.status(201).json({ bidder: serialiseBidderRow(row), created: true });
+    } catch (error) {
+      logFromRequest(req, logLevels.ERROR, `Failed to upsert bidder for auction ${auctionId}: ${error.message}`);
+      return res.status(500).json({ error: 'Failed to save bidder' });
+    }
+  });
+
+  bidderMetadata.patch('/:auctionId/bidders/:bidderId', authenticateRole(['admin', 'cashier']), checkAuctionState(['setup', 'locked', 'live', 'settlement']), (req, res) => {
+    const auctionId = Number(req.params.auctionId);
+    const bidderId = Number(req.params.bidderId);
+    const name = normaliseBidderName(req.body?.name ?? req.body?.bidderName);
+
+    if (!Number.isInteger(auctionId) || auctionId <= 0 || !Number.isInteger(bidderId) || bidderId <= 0) {
+      return res.status(400).json({ error: 'Invalid auction or bidder id' });
+    }
+
+    try {
+      const existing = db.get('SELECT id, paddle_number FROM bidders WHERE id = ? AND auction_id = ?', [bidderId, auctionId]);
+      if (!existing) return res.status(404).json({ error: 'Bidder not found for this auction' });
+
+      db.run('UPDATE bidders SET name = ? WHERE id = ? AND auction_id = ?', [name, bidderId, auctionId]);
+      const row = db.get('SELECT id, paddle_number, name, auction_id, created_at FROM bidders WHERE id = ?', [bidderId]);
+      audit(getAuditActor(req), 'bidder name updated', 'bidder', bidderId, {
+        auction_id: auctionId,
+        paddle_number: existing.paddle_number,
+        name: name || ''
+      });
+      return res.json({ bidder: serialiseBidderRow(row) });
+    } catch (error) {
+      logFromRequest(req, logLevels.ERROR, `Failed to update bidder ${bidderId}: ${error.message}`);
+      return res.status(500).json({ error: 'Failed to update bidder' });
+    }
+  });
+
   const getLiveFeedPayload = (auctionId, includeUnsold) => {
     const auctionStatus = getAuctionStatus(auctionId);
     if (!auctionStatus) {
@@ -155,6 +294,7 @@ module.exports = function phase1Patch (app) {
              i.description,
              i.winning_bidder_id AS bidder_id,
              b.paddle_number AS bidder,
+             IFNULL(b.name, '') AS bidder_name,
              i.hammer_price  AS price,
              i.ROWID         AS rowid,
              i.last_bid_update,
@@ -174,9 +314,10 @@ module.exports = function phase1Patch (app) {
                  i.item_number AS lot,
                  i.description,
                  i.photo,
-                 NULL            AS bidder_id,
-                 NULL            AS bidder,
-                 NULL            AS price,
+             NULL            AS bidder_id,
+             NULL            AS bidder,
+             ''              AS bidder_name,
+             NULL            AS price,
                  i.ROWID         AS rowid,
                  NULL            AS last_bid_update,
                  NULL            AS collected_at,
@@ -262,6 +403,8 @@ module.exports = function phase1Patch (app) {
         bidder_id: row.bidder_id,
         bidder: row.bidder,
         name: row.name,
+        bidder_name: row.name,
+        bidder_label: bidderLabel(row.bidder, row.name),
         ready_for_collection: Boolean(row.ready_for_collection),
         ready_fingerprint: row.ready_fingerprint || '',
         ready_updated_at: row.ready_updated_at || null,
@@ -455,6 +598,7 @@ module.exports = function phase1Patch (app) {
     try {
       const rows = db.all(`
         SELECT b.paddle_number AS paddle_number,
+               IFNULL(b.name, '') AS bidder_name,
                i.item_number AS lot,
                REPLACE(IFNULL(i.description, ''), ',', ' ') AS description,
                IFNULL(i.hammer_price, 0) AS price,
@@ -483,9 +627,10 @@ module.exports = function phase1Patch (app) {
          ORDER BY b.paddle_number, i.item_number
       `, [auctionId, auctionId]);
 
-      const header = 'paddle_number,lot,description,price,payments_total,payment_status\n';
+      const header = 'paddle_number,bidder_name,lot,description,price,payments_total,payment_status\n';
       const csv = header + rows.map(row => [
         row.paddle_number,
+        row.bidder_name,
         row.lot,
         row.description,
         row.price,
@@ -543,6 +688,8 @@ module.exports = function phase1Patch (app) {
     `,[id, id]);
     rows.forEach(r => {
       r.balance = roundCurrency((r.lots_total || 0) - (r.payments_total || 0)) || 0;
+      r.bidder_name = r.name || '';
+      r.bidder_label = bidderLabel(r.paddle_number, r.name);
     });
     res.json(rows);
   });
@@ -847,7 +994,7 @@ logFromRequest(req, logLevels.DEBUG, `Reversal inserted with id=${info.lastInser
    WHERE b.auction_id = ?
     GROUP BY b.id`,[auctionId]);
 
-    const header = 'paddle_number,name,lots_won,lots_total,payments_total,balance_due\n';
+    const header = 'paddle_number,bidder_name,lots_won,lots_total,payments_total,balance_due\n';
     const csv = header + rows.map(r => {
       const balance = (r.lots_total || 0) - (r.payments_total || 0);
       return [r.paddle_number, r.name, r.lots_won || '', r.lots_total || 0, r.payments_total || 0, balance].join(',');
@@ -866,19 +1013,24 @@ logFromRequest(req, logLevels.DEBUG, `Reversal inserted with id=${info.lastInser
 
   sales.post('/:itemid/finalize', authenticateRole('admin'), authenticatePermission('admin_bidding'), checkAuctionState(['live', 'settlement']), (req, res) => {
     const itemId = Number(req.params.itemid);
-    const { paddle, price, auctionId } = req.body;
+    const { paddle, price, auctionId, bidderName } = req.body;
+    const paddleNumber = normalisePaddleNumber(paddle);
+    const sanitisedBidderName = normaliseBidderName(bidderName);
     if (!Number.isInteger(itemId) || itemId <= 0) return res.status(400).json({ error: 'Invalid item id' });
-    if (!Number.isInteger(Number(paddle)) || Number(paddle) <= 0) return res.status(400).json({ error: 'Invalid paddle' });
+    if (!paddleNumber) return res.status(400).json({ error: 'Invalid paddle' });
     if (!/^\d+(\.\d{1,2})?$/.test(String(price)) || Number(price) <= 0) return res.status(400).json({ error: 'Invalid price' });
     if (!paddle || !price || !auctionId) return res.status(400).json({ error: 'Missing paddle or price or auction id' });
 
 // Get the bidder ID if they exist, otherwise create a new entry for them
 try {
-    let bidder = db.get('SELECT id FROM bidders WHERE paddle_number = ? AND auction_id = ?', [paddle, auctionId]);
+    let bidder = db.get('SELECT id, name FROM bidders WHERE paddle_number = ? AND auction_id = ?', [paddleNumber, auctionId]);
     if (!bidder) {
-      const info = db.run(`INSERT INTO bidders (paddle_number, auction_id, created_at) VALUES (?, ?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))`, [paddle, auctionId]);
+      const info = db.run(`INSERT INTO bidders (paddle_number, name, auction_id, created_at) VALUES (?, ?, ?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))`, [paddleNumber, sanitisedBidderName, auctionId]);
       
-      bidder = { id: info.lastInsertRowid };
+      bidder = { id: info.lastInsertRowid, name: sanitisedBidderName };
+    } else if (sanitisedBidderName && sanitisedBidderName !== bidder.name) {
+      db.run('UPDATE bidders SET name = ? WHERE id = ? AND auction_id = ?', [sanitisedBidderName, bidder.id, auctionId]);
+      bidder.name = sanitisedBidderName;
     }
 
 const stmt = db.prepare(`
@@ -898,8 +1050,8 @@ if (info.changes === 0) {
 }
 
 //    db.run(`UPDATE items SET winning_bidder_id = ?, hammer_price = ? WHERE id = ?`, [bidder.id, price, itemId]);
-    audit(getAuditActor(req), 'finalize', 'item', itemId, { paddle_no: paddle, price });
-    logFromRequest(req, logLevels.INFO, `Bid recorded for auction ${auctionId}, bidder ${paddle}, item ${itemId}, price ${price}`);
+    audit(getAuditActor(req), 'finalize', 'item', itemId, { paddle_no: paddleNumber, price, bidder_name: bidder.name || '' });
+    logFromRequest(req, logLevels.INFO, `Bid recorded for auction ${auctionId}, bidder ${paddleNumber}, item ${itemId}, price ${price}`);
 
 
   /* -----------------------------------------------------------
@@ -932,6 +1084,7 @@ if (info.changes === 0) {
   res.json({
     ok: true,
     bidder_id: bidder.id,
+    bidder_name: bidder.name || '',
     auction_status: remaining === 0 ? 'settlement' : 'live'
   });
 
@@ -1100,6 +1253,8 @@ if (!auctionId || !id) return res.status(400).json({ error: 'item # and auction_
   const summary = db.get(`
       SELECT b.id,
              b.paddle_number,
+             IFNULL(b.name, '') AS name,
+             IFNULL(b.name, '') AS bidder_name,
              a.full_name AS auction_name,
              a.short_name AS auction_short_name
         FROM bidders b
@@ -1186,6 +1341,7 @@ settlement.get('/summary', authenticateRole('cashier'), (req, res) => {
   app.use('/cashier', liveFeed);
   app.use('/settlement', settlement);
   app.use('/lots', sales);
+  app.use('/auctions', bidderMetadata);
 
 
 };

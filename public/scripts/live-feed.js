@@ -93,6 +93,13 @@
 
   const money = value => `${currencySymbol}${Number(value || 0).toFixed(2)}`;
 
+  function bidderDisplayLabel(summaryOrItem, { prefix = false } = {}) {
+    const paddle = summaryOrItem?.bidder == null ? '' : String(summaryOrItem.bidder);
+    const name = String(summaryOrItem?.bidder_name || summaryOrItem?.name || '').trim();
+    const label = name ? `${paddle} - ${name}` : paddle;
+    return prefix && label ? `Paddle ${label}` : label;
+  }
+
   function notify(message, type = 'info') {
     if (typeof showMessage === 'function') {
       showMessage(message, type);
@@ -742,7 +749,7 @@
       const description = item.test_item ? `${item.description} [T]` : item.description;
       const price = item.test_bid ? `${money(item.price)} [T]` : money(item.price);
 
-      [item.bidder ?? '', item.lot ?? '', description, price].forEach(value => {
+      [bidderDisplayLabel(item), item.lot ?? '', description, price].forEach(value => {
         const td = document.createElement('td');
         td.textContent = value;
         tr.appendChild(td);
@@ -795,7 +802,7 @@
     titleWrap.className = 'bidder-group-title';
 
     const heading = document.createElement('h3');
-    heading.textContent = `Paddle ${summary.bidder}`;
+    heading.textContent = bidderDisplayLabel(summary, { prefix: true });
 
     const meta = document.createElement('div');
     meta.className = 'bidder-group-meta';

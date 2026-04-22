@@ -83,6 +83,7 @@
                         <summary class="menu-trigger">Operations</summary>
                         <div class="menu-panel">
                             <button id="add-item" type="button" class="menu-item-button">Create New Item...</button>
+                            <button id="manage-bidders" type="button" class="menu-item-button">Manage Bidders...</button>
                             <button id="refresh" type="button" class="menu-item-button">Refresh</button>
                             <button id="open-export-panel" class="menu-item-button">Export...</button>
                         </div>
@@ -92,6 +93,11 @@
                         <summary class="menu-trigger">View</summary>
                         <div class="menu-panel">
                             <label class="menu-field" for="sort-field">
+                            <label class="menu-field menu-checkbox-field" for="show-bidder-names">
+                                <span class="menu-label">Show bidder names</span>
+                                <input id="show-bidder-names" type="checkbox">
+                            </label>
+                            <div class="menu-divider" role="separator"></div>
                                 <span class="menu-label">Sort by</span>
                                 <select id="sort-field" class="menu-native-select" aria-hidden="true" tabindex="-1">
                                     <option value="item_number">Number</option>
@@ -102,6 +108,16 @@
                                     <option value="hammer_price">Price</option>
                                 </select>
                                 <div id="sort-field-menu" class="menu-choice-list" role="menu" aria-label="Sort field options"></div>
+                            </label>
+                            <div class="menu-divider" role="separator"></div>
+                            <label class="menu-field" for="photo-preview-size">
+                                <span class="menu-label">Photo preview</span>
+                                <select id="photo-preview-size" class="menu-native-select" aria-hidden="true" tabindex="-1">
+                                    <option value="small">Small</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="large">Large</option>
+                                </select>
+                                <div id="photo-preview-size-menu" class="menu-choice-list" role="menu" aria-label="Photo preview size options"></div>
                             </label>
                             <div class="menu-divider" role="separator"></div>
                             <label class="menu-field" for="sort-order">

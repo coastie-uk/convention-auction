@@ -303,7 +303,7 @@
 
         contentEl.innerHTML = \`
           <section class="buyer-display-section">
-            <h2 class="buyer-display-paddle">Paddle #\${escapeHtml(bidder.paddle_number)}</h2>
+            <h2 class="buyer-display-paddle">\${escapeHtml(bidder.bidder_label || ('Paddle #' + bidder.paddle_number))}</h2>
           </section>
           <section class="buyer-display-section">
             <h3 class="detail-heading">Lots won</h3>

@@ -19,8 +19,12 @@ const PARAMETER_TO_ITEM_FIELD = Object.freeze({
   item_name: "description",
   description: "description",
   creator: "artist",
+  artist: "artist",
   contributor: "contributor",
-  notes: "notes"
+  notes: "notes",
+  paddle_number: "paddle_number",
+  bidder_name: "bidder_name",
+  bidder_label: "bidder_label"
 });
 
 const SLIP_PARAMETER_KEYS = Object.freeze(Object.keys(PARAMETER_TO_ITEM_FIELD));

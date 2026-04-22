@@ -194,25 +194,33 @@ function registerExportRoutes({
 
     function loadAuctionItemsForExport(auctionId) {
         return db.all(
-            `SELECT id,
-                    item_number,
-                    description,
-                    contributor,
-                    artist,
-                    photo,
-                    date,
-                    notes,
-                    mod_date,
-                    text_mod_date,
-                    last_print,
-                    last_slide_export,
-                    last_card_export,
-                    auction_id,
-                    winning_bidder_id,
-                    hammer_price
-               FROM items
-              WHERE auction_id = ?
-              ORDER BY item_number ASC`,
+            `SELECT i.id,
+                    i.item_number,
+                    i.description,
+                    i.contributor,
+                    i.artist,
+                    i.photo,
+                    i.date,
+                    i.notes,
+                    i.mod_date,
+                    i.text_mod_date,
+                    i.last_print,
+                    i.last_slide_export,
+                    i.last_card_export,
+                    i.auction_id,
+                    i.winning_bidder_id,
+                    b.paddle_number,
+                    IFNULL(b.name, '') AS bidder_name,
+                    CASE
+                        WHEN b.paddle_number IS NOT NULL AND IFNULL(b.name, '') <> '' THEN b.paddle_number || ' - ' || b.name
+                        WHEN b.paddle_number IS NOT NULL THEN CAST(b.paddle_number AS TEXT)
+                        ELSE ''
+                    END AS bidder_label,
+                    i.hammer_price
+               FROM items i
+          LEFT JOIN bidders b ON b.id = i.winning_bidder_id
+              WHERE i.auction_id = ?
+              ORDER BY i.item_number ASC`,
             [auctionId]
         );
     }
@@ -2676,9 +2684,22 @@ function registerExportRoutes({
 
         try {
             const item = db.get(
-                `SELECT id, item_number, description, contributor, artist, notes
-                 FROM items
-                 WHERE id = ? AND auction_id = ?`,
+                `SELECT i.id,
+                        i.item_number,
+                        i.description,
+                        i.contributor,
+                        i.artist,
+                        i.notes,
+                        b.paddle_number,
+                        IFNULL(b.name, '') AS bidder_name,
+                        CASE
+                            WHEN b.paddle_number IS NOT NULL AND IFNULL(b.name, '') <> '' THEN b.paddle_number || ' - ' || b.name
+                            WHEN b.paddle_number IS NOT NULL THEN CAST(b.paddle_number AS TEXT)
+                            ELSE ''
+                        END AS bidder_label
+                   FROM items i
+              LEFT JOIN bidders b ON b.id = i.winning_bidder_id
+                  WHERE i.id = ? AND i.auction_id = ?`,
                 [itemId, auctionId]
             );
 
@@ -2850,7 +2871,8 @@ function registerExportRoutes({
                 ? []
                 : db.all(
                     `SELECT i.*,
-                            b.paddle_number
+                            b.paddle_number,
+                            IFNULL(b.name, '') AS bidder_name
                        FROM items i
                   LEFT JOIN bidders b ON b.id = i.winning_bidder_id
                       WHERE i.auction_id = ?
@@ -2859,7 +2881,7 @@ function registerExportRoutes({
                     [selection.auctionId, ...itemIds]
                 );
 
-            const parser = new Parser({ fields: ['id', 'description', 'contributor', 'artist', 'photo', 'date', 'notes', 'mod_date', 'auction_id', 'item_number', 'paddle_number', 'hammer_price'] });
+            const parser = new Parser({ fields: ['id', 'description', 'contributor', 'artist', 'photo', 'date', 'notes', 'mod_date', 'auction_id', 'item_number', 'paddle_number', 'bidder_name', 'hammer_price'] });
             const csv = parser.parse(itemRows);
             const filePath = path.join(OUTPUT_DIR, 'auction_data.csv');
             fs.writeFileSync(filePath, csv);

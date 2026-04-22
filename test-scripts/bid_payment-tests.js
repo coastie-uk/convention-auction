@@ -123,7 +123,15 @@ const testData = {
   sumupStartingPaymentsTotal: null,
   sumupAmountMinor: null,
   sumupOutstandingMinor: null,
-  sumupPaymentsAfterSuccess: null
+  sumupPaymentsAfterSuccess: null,
+  bidderNameAuctionId: null,
+  bidderNameAuctionPublicId: null,
+  bidderNameAuctionShortName: null,
+  bidderNameItem1: null,
+  bidderNameItem2: null,
+  bidderNameItem3: null,
+  bidderNameBidderId: null,
+  bidderNameUnwonBidderId: null
 };
 
 async function maintenanceRequest(pathname, body) {
@@ -346,6 +354,138 @@ addTest("P-003","GET /cashier/live/:auctionId success", async () => {
   assert.ok(Array.isArray(json?.sold), "Expected sold array");
   assert.ok(Array.isArray(json?.unsold), "Expected unsold array");
   assert.ok(Array.isArray(json?.bidders), "Expected bidders array");
+});
+
+addTest("P-003a","bidder names API and exports", async () => {
+  const stamp = Date.now();
+  testData.bidderNameAuctionShortName = `test_phase1_names_${stamp}`;
+  const createAuction = await maintenanceRequest("/maintenance/auctions/create", {
+    short_name: testData.bidderNameAuctionShortName,
+    full_name: `Phase1 Bidder Names Auction ${stamp}`,
+    logo: "default_logo.png"
+  });
+  await expectStatus(createAuction.res, 201);
+
+  const list = await fetchJson(`${baseUrl}/list-auctions`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({})
+  });
+  await expectStatus(list.res, 200);
+  const found = list.json.find(a => a.short_name === testData.bidderNameAuctionShortName);
+  assert.ok(found, "Bidder-name auction not found");
+  testData.bidderNameAuctionId = found.id;
+  testData.bidderNameAuctionPublicId = found.public_id;
+
+  await maintenanceRequest("/maintenance/auctions/set-admin-state-permission", {
+    auction_id: testData.bidderNameAuctionId,
+    admin_can_change_state: true
+  });
+
+  testData.bidderNameItem1 = await createItem(testData.bidderNameAuctionPublicId, "Bidder Name Item 1");
+  testData.bidderNameItem2 = await createItem(testData.bidderNameAuctionPublicId, "Bidder Name Item 2");
+  testData.bidderNameItem3 = await createItem(testData.bidderNameAuctionPublicId, "Bidder Name Item 3");
+  await setAuctionStatusFor(testData.bidderNameAuctionId, "live");
+
+  const finalize1 = await fetchJson(`${baseUrl}/lots/${testData.bidderNameItem1}/finalize`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ paddle: 701, price: 11, bidderName: "Ada Lovelace", auctionId: testData.bidderNameAuctionId })
+  });
+  await expectStatus(finalize1.res, 200);
+  testData.bidderNameBidderId = finalize1.json.bidder_id;
+
+  const lookup1 = await fetchJson(`${baseUrl}/auctions/${testData.bidderNameAuctionId}/bidders/lookup?paddle_number=701`, {
+    headers: authHeaders(tokens.admin)
+  });
+  await expectStatus(lookup1.res, 200);
+  assert.equal(lookup1.json?.bidder?.name, "Ada Lovelace");
+
+  const finalize2 = await fetchJson(`${baseUrl}/lots/${testData.bidderNameItem2}/finalize`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ paddle: 701, price: 12, bidderName: "", auctionId: testData.bidderNameAuctionId })
+  });
+  await expectStatus(finalize2.res, 200);
+  const lookupAfterEmpty = await fetchJson(`${baseUrl}/auctions/${testData.bidderNameAuctionId}/bidders/lookup?paddle_number=701`, {
+    headers: authHeaders(tokens.admin)
+  });
+  assert.equal(lookupAfterEmpty.json?.bidder?.name, "Ada Lovelace");
+
+  const updateNoBidPermission = await fetchJson(`${baseUrl}/auctions/${testData.bidderNameAuctionId}/bidders/${testData.bidderNameBidderId}`, {
+    method: "PATCH",
+    headers: authHeaders(tokens.adminNoBid, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ name: "Grace Hopper" })
+  });
+  await expectStatus(updateNoBidPermission.res, 200);
+  assert.equal(updateNoBidPermission.json?.bidder?.name, "Grace Hopper");
+
+  const cashierUpdate = await fetchJson(`${baseUrl}/auctions/${testData.bidderNameAuctionId}/bidders/${testData.bidderNameBidderId}`, {
+    method: "PATCH",
+    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ name: "Grace Brewster Hopper" })
+  });
+  await expectStatus(cashierUpdate.res, 200);
+
+  const unwon = await fetchJson(`${baseUrl}/auctions/${testData.bidderNameAuctionId}/bidders`, {
+    method: "POST",
+    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ paddle_number: 702, name: "Unwon Bidder" })
+  });
+  await expectStatus(unwon.res, 201);
+  testData.bidderNameUnwonBidderId = unwon.json.bidder.id;
+
+  const bidderList = await fetchJson(`${baseUrl}/auctions/${testData.bidderNameAuctionId}/bidders`, {
+    headers: authHeaders(tokens.cashier)
+  });
+  await expectStatus(bidderList.res, 200);
+  assert.ok(bidderList.json.bidders.some(b => b.paddle_number === 702 && b.name === "Unwon Bidder"));
+
+  const wrongRole = await fetchJson(`${baseUrl}/auctions/${testData.bidderNameAuctionId}/bidders`, {
+    headers: authHeaders(tokens.maintenance)
+  });
+  await expectStatus(wrongRole.res, 403);
+  const unauthenticated = await fetch(`${baseUrl}/auctions/${testData.bidderNameAuctionId}/bidders`);
+  await expectStatus(unauthenticated, 403);
+
+  const settlementDetail = await fetchJson(`${baseUrl}/settlement/bidders/${testData.bidderNameBidderId}?auction_id=${testData.bidderNameAuctionId}`, {
+    headers: authHeaders(tokens.cashier)
+  });
+  await expectStatus(settlementDetail.res, 200);
+  assert.equal(settlementDetail.json.bidder_name, "Grace Brewster Hopper");
+
+  const live = await getLiveFeed(testData.bidderNameAuctionId, { token: tokens.cashier });
+  await expectStatus(live.res, 200);
+  assert.ok(live.json.sold.some(row => row.bidder_name === "Grace Brewster Hopper"));
+  assert.ok(live.json.bidders.some(row => row.bidder_name === "Grace Brewster Hopper"));
+
+  const settlementCsv = await fetch(`${baseUrl}/settlement/export.csv?auction_id=${testData.bidderNameAuctionId}`, {
+    headers: authHeaders(tokens.cashier)
+  });
+  await expectStatus(settlementCsv, 200);
+  assert.match(await settlementCsv.text(), /Grace Brewster Hopper/);
+
+  const itemCsv = await fetch(`${baseUrl}/export-csv`, {
+    method: "POST",
+    headers: authHeaders(tokens.admin, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ auction_id: testData.bidderNameAuctionId, selection_mode: "all" })
+  });
+  await expectStatus(itemCsv, 200);
+  assert.match(await itemCsv.text(), /bidder_name/);
+
+  const uncollectedCsv = await fetch(`${baseUrl}/cashier/live/${testData.bidderNameAuctionId}/uncollected.csv`, {
+    headers: authHeaders(tokens.cashier)
+  });
+  await expectStatus(uncollectedCsv, 200);
+  assert.match(await uncollectedCsv.text(), /Grace Brewster Hopper/);
+
+  await setAuctionStatusFor(testData.bidderNameAuctionId, "archived");
+  const archivedUpdate = await fetchJson(`${baseUrl}/auctions/${testData.bidderNameAuctionId}/bidders/${testData.bidderNameBidderId}`, {
+    method: "PATCH",
+    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ name: "Blocked" })
+  });
+  await expectStatus(archivedUpdate.res, 400);
 });
 
 addTest("P-004","GET /cashier/live/:auctionId failure unauthenticated", async () => {
@@ -917,7 +1057,7 @@ addTest("P-029e","GET /cashier/live/:auctionId/uncollected.csv excludes collecte
   });
   await expectStatus(res, 200);
   const body = await res.text();
-  assert.match(body, /paddle_number,lot,description,price,payments_total,payment_status/);
+  assert.match(body, /paddle_number,bidder_name,lot,description,price,payments_total,payment_status/);
   assert.ok(!body.includes("Phase1 Item 1"), "Collected item should not appear in uncollected CSV");
 });
 

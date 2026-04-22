@@ -65,7 +65,7 @@
         "properties": {
           "parameter": {
             "type": "string",
-            "enum": ["item_number", "item_name", "description", "creator", "artist", "contributor", "notes"]
+            "enum": ["item_number", "item_name", "description", "creator", "artist", "contributor", "notes", "paddle_number", "bidder_name", "bidder_label"]
           },
           "label": {
             "type": "string"

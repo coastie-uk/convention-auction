@@ -333,8 +333,8 @@ document.addEventListener("DOMContentLoaded", () => {
           <ul class="compact-list">
             <li><strong>Open:</strong> Jump to the other operator views from the same shared session.</li>
             <li><strong>Auctions:</strong> Choose the current auction and, if maintenance has enabled it for that auction, change the auction state from the custom state picker.</li>
-            <li><strong>Operations:</strong> Create a new item, refresh the item table, or open the export panel.</li>
-            <li><strong>View:</strong> Sort by <strong>Number</strong>, <strong>Name</strong>, <strong>Contributor</strong>, <strong>Creator</strong>, <strong>Bidder</strong>, or <strong>Price</strong>, then switch between ascending and descending order.</li>
+            <li><strong>Operations:</strong> Create a new item, manage optional bidder names, refresh the item table, or open the export panel.</li>
+            <li><strong>View:</strong> Sort by <strong>Number</strong>, <strong>Name</strong>, <strong>Contributor</strong>, <strong>Creator</strong>, <strong>Bidder</strong>, or <strong>Price</strong>, switch between ascending and descending order, and choose whether bidder names are shown beside paddle numbers in the item table.</li>
             <li><strong>Status pills:</strong> The sticky header shows the current <strong>Auction</strong>, <strong>State</strong>, connection <strong>Status</strong>, and auction <strong>Total</strong>.</li>
           </ul>
           <img class="placeholder screenshot-small" src="images/admin-auction-tools.png" alt="Manage Items menus and header screenshot">
@@ -345,6 +345,7 @@ document.addEventListener("DOMContentLoaded", () => {
           <h2>Item Table And Actions</h2>
           <p>The main table shows <strong>Item #</strong>, <strong>Description</strong>, <strong>Contributor</strong>, <strong>Creator</strong>, <strong>Photo</strong>, a dedicated <strong>Status</strong> column, and the row <strong>Actions</strong>. In <strong>live</strong>, <strong>settlement</strong>, and <strong>archived</strong> states the bidder and price columns are also shown.</p>
           <ul class="compact-list">
+            <li><strong>Right-click menu:</strong> right-click an item row to open the same item actions in a context menu headed by the item number. Actions that are not available for the current auction state, item status, or user permissions are shown disabled.</li>
             <li><strong>Create New Item...</strong> opens the add item form.</li>
             <li><strong>Edit</strong> opens the editable form in setup and locked states. When editing is blocked the same button position switches to a <strong>View</strong> icon instead.</li>
             <li><strong>Duplicate</strong> inserts a copy of the selected item immediately after the original.</li>
@@ -444,13 +445,25 @@ document.addEventListener("DOMContentLoaded", () => {
           <h2>Manage Bids</h2>
           <p>The bid controls are shown on the action strip when the auction is in <strong>live</strong> or <strong>settlement</strong> and the signed-in user has the <strong>Manage Bids</strong> permission.</p>
           <ul class="compact-list">
-            <li><strong>Record Bid</strong> opens a small modal for <strong>Paddle #</strong> and <strong>Hammer Price</strong>, then advances focus to the next unfinalised lot.</li>
+            <li><strong>Record Bid</strong> opens a modal for <strong>Paddle #</strong>, <strong>Hammer Price</strong>, and optional bidder <strong>Name</strong>. The left panel lists known paddle numbers and names for the auction; selecting one fills the bidder fields and moves focus to the amount.</li>
+            <li><strong>Record and Next</strong> saves the bid, keeps the modal open, and advances to the next unfinalised lot. The standard <strong>Record Bid</strong> button saves the bid and closes the modal.</li>
             <li><strong>Undo Bid</strong> first opens a retract preview showing the bidder, payment status, current total owed, amount paid, and the projected balance after retraction.</li>
             <li><strong>Safety rule:</strong> a bid cannot be retracted if doing so would push the bidder into a negative balance after payments. In that case a refund must be recorded first.</li>
             <li><strong>Editing lock:</strong> once an item has a bid, edit and move actions are blocked even if the auction is still otherwise editable.</li>
           </ul>
           <img class="placeholder screenshot-small" src="images/admin-bid-ctrl.png" alt="Manage Items bid control icons screenshot">
           <img class="placeholder screenshot-small" src="images/admin-bidding.png" alt="Manage Items record bid workflow screenshot">
+        </div>
+
+        <div class="section">
+          <h2>Bidder Names</h2>
+          <p>Bidder names are optional convenience information. Paddle number remains the main bidder identifier, and multiple paddle numbers may share the same name.</p>
+          <ul class="compact-list">
+            <li><strong>During bid entry:</strong> enter a name if useful. A non-empty name updates the stored name for that paddle; leaving the field empty does not clear an existing name.</li>
+            <li><strong>Manage Bidders:</strong> open <strong>Operations &gt; Manage Bidders...</strong> to edit or clear names for known paddle numbers, or add a new paddle/name pair.</li>
+            <li><strong>Show names:</strong> use <strong>View &gt; Show bidder names</strong> to display names beside paddle numbers in the Manage Items table. The option is off by default.</li>
+            <li><strong>Archived auctions:</strong> bidder names are read-only once the auction is archived.</li>
+          </ul>
         </div>
 
         <div class="section">
@@ -573,8 +586,8 @@ document.addEventListener("DOMContentLoaded", () => {
         <div class="section">
           <h2>Settlement Queue</h2>
           <ul class="compact-list">
-            <li><strong>Settlement Queue:</strong> the left panel lists bidders with one or more won items and the amount currently due.</li>
-            <li><strong>Bidder detail:</strong> selecting a row opens <strong>Lots won</strong>, <strong>Payments</strong>, and <strong>Summary</strong> in the main panel.</li>
+            <li><strong>Settlement Queue:</strong> the left panel lists bidders with one or more won items and the amount currently due. Stored names appear beside paddle numbers when present.</li>
+            <li><strong>Bidder detail:</strong> selecting a row opens <strong>Lots won</strong>, <strong>Payments</strong>, and <strong>Summary</strong> in the main panel. Use <strong>Edit bidder name</strong> to add, edit, or clear the optional name before the auction is archived.</li>
             <li><strong>Picture toggle:</strong> the <strong>Show pictures</strong> option controls the item preview strip in the bidder detail and the linked buyer display.</li>
             <li><strong>Buyer Display:</strong> opens a pop-out screen for the currently selected paddle, including totals and optional thumbnails.</li>
           </ul>
@@ -589,7 +602,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <li><strong>Donation rule:</strong> a donation can only be added when the full outstanding balance is being paid.</li>
             <li><strong>Settlement state:</strong> payment buttons are disabled unless the auction is in <strong>settlement</strong>.</li>
             <li><strong>Refunds:</strong> recorded payments can be reversed from the payments table. A reason is required.</li>
-            <li><strong>Receipt printing:</strong> <strong>Print receipt</strong> generates a narrow settlement receipt showing lots won, payments, total donations, amount due, operator name, and the bidder fingerprint when available.</li>
+            <li><strong>Receipt printing:</strong> <strong>Print receipt</strong> generates a narrow settlement receipt showing paddle number, optional bidder name, lots won, payments, total donations, amount due, operator name, and the bidder fingerprint when available.</li>
             <li><strong>Fingerprint display:</strong> <strong>Show fingerprint</strong> reveals the current bidder fingerprint. This allows staff to verify the identity of the bidder at collection.</li>
             <li><strong>Operations menu:</strong> <strong>Payment Summary</strong> shows a payment-method breakdown, including donation totals, and <strong>Download CSV Summary</strong> exports the settlement summary for the selected auction.</li>
           </ul>
@@ -669,7 +682,7 @@ document.addEventListener("DOMContentLoaded", () => {
           <ul class="compact-list">
             <li><strong>Recent Bids:</strong> the left column keeps a rolling list of recently finalised lots.</li>
             <li><strong>Unsold Lots:</strong> can be shown or hidden with the <strong>Unsold items</strong> checkbox.</li>
-            <li><strong>Collection Buckets:</strong> the main panel groups sold items by bidder.</li>
+            <li><strong>Collection Buckets:</strong> the main panel groups sold items by bidder. Stored names appear beside paddle numbers when present.</li>
             <li><strong>Filter paddle #:</strong> narrows the display to a single bucket.</li>
             <li><strong>Show changes for... (s):</strong> controls how long new-item and bid-retraction highlights stay visible.</li>
             <li><strong>Bucket sort:</strong> choose <strong>Last update</strong>, <strong>Last paid</strong>, <strong>Ready state</strong>, or <strong>Paddle number</strong>.</li>
@@ -685,7 +698,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <li><strong>Fingerprint invalidation:</strong> if the bidder's sold items change after the bucket was marked ready, the bucket is flagged as <strong>Ready invalidated</strong> and an alert is shown.</li>
             <li><strong>Pickup column:</strong> each item row has a pickup checkbox. It is disabled until the auction is in <strong>settlement</strong> and the bidder has a non-zero recorded payment.</li>
             <li><strong>Collect all:</strong> marks all sold items in the bucket as collected and refreshes the bidder fingerprint.</li>
-            <li><strong>Export uncollected list:</strong> downloads a CSV showing the uncollected lots, paddle numbers, prices, payments total, and payment status for the selected auction.</li>
+            <li><strong>Export uncollected list:</strong> downloads a CSV showing the uncollected lots, paddle numbers, optional bidder names, prices, payments total, and payment status for the selected auction.</li>
           </ul>
         </div>
 

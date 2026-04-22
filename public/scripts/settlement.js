@@ -24,6 +24,7 @@ const API_ROOT = `${API}/settlement`;
   const fingerprintDisplay = document.getElementById('fingerprintDisplay');
   const toggleFingerprintBtn = document.getElementById('toggleFingerprintBtn');
   const printReceiptBtn = document.getElementById('printReceiptBtn');
+  const editBidderNameBtn = document.getElementById('editBidderNameBtn');
   const currencySymbol = localStorage.getItem("currencySymbol") || "£";
   const money = v => `${currencySymbol}${Number(v).toFixed(2)}`;
   const roundCurrency = value => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
@@ -113,6 +114,13 @@ const API_ROOT = `${API}/settlement`;
     }
   };
 
+  function formatBidderLabel(bidder, { prefix = false } = {}) {
+    const paddle = bidder?.paddle_number == null ? '' : String(bidder.paddle_number);
+    const name = String(bidder?.bidder_name || bidder?.name || '').trim();
+    const label = name ? `${paddle} - ${name}` : paddle;
+    return prefix && label ? `Paddle #${label}` : label;
+  }
+
   function getCashierAuctionName() {
     const currentAuctionPill = document.getElementById('current-auction-pill');
     const rawLabel = currentAuctionPill?.textContent || '';
@@ -129,6 +137,8 @@ const API_ROOT = `${API}/settlement`;
       selectedBidder: selBidder
         ? {
             paddle_number: selBidder.paddle_number,
+            bidder_name: selBidder.bidder_name || selBidder.name || '',
+            bidder_label: formatBidderLabel(selBidder, { prefix: true }),
             lots_total: Number(selBidder.lots_total || 0),
             payments_total: Number(selBidder.payments_total || 0),
             donations_total: Number(selBidder.donations_total || 0),
@@ -170,6 +180,7 @@ const API_ROOT = `${API}/settlement`;
     const donationTotal = Number(bidder.donations_total || 0);
     const balance = roundCurrency(bidder.balance || 0);
     const fingerprint = bidder.fingerprint || '';
+    const receiptBidderLabel = formatBidderLabel(bidder, { prefix: true });
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -203,7 +214,7 @@ const API_ROOT = `${API}/settlement`;
 <body>
   <div class="receipt">
     <div class="auction-name center">${escapeHtml(auctionName)}</div>
-    <div class="bidder-number">${escapeHtml(bidder.paddle_number)}</div>
+    <div class="bidder-number">${escapeHtml(receiptBidderLabel)}</div>
 
     <div class="section">
       <div class="section-title">Items won</div>
@@ -345,6 +356,80 @@ const API_ROOT = `${API}/settlement`;
     persistBuyerDisplayState();
   }
 
+  async function saveSelectedBidderName(name) {
+    if (!selBidder?.id) throw new Error('Select a bidder first');
+    const response = await fetch(`${API}/auctions/${AUCTION_ID}/bidders/${selBidder.id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: token
+      },
+      body: JSON.stringify({ name })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Failed to save bidder name');
+    return data.bidder;
+  }
+
+  function openBidderNameModal() {
+    if (!selBidder) {
+      showMessage('Select a bidder first', 'info');
+      return;
+    }
+    if (AUCTION_STATUS === 'archived') {
+      showMessage('Bidder names cannot be edited for archived auctions', 'info');
+      return;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="bidderNameTitle">
+        <h3 id="bidderNameTitle" class="modal-title">Edit bidder name</h3>
+        <label class="modal-label" for="bidderNameInput">Paddle #${escapeHtml(selBidder.paddle_number)}</label>
+        <input id="bidderNameInput" class="modal-input" type="text" maxlength="100" value="${escapeHtml(selBidder.bidder_name || selBidder.name || '')}" autofocus>
+        <div class="modal-actions">
+          <button id="cancelBidderName" class="secondary-button" type="button">Cancel</button>
+          <button id="saveBidderName" type="button">Save</button>
+        </div>
+      </div>
+    `;
+
+    const close = () => overlay.remove();
+    const save = async () => {
+      const input = overlay.querySelector('#bidderNameInput');
+      const saveButton = overlay.querySelector('#saveBidderName');
+      saveButton.disabled = true;
+      try {
+        await saveSelectedBidderName(input.value);
+        await fetchBidders();
+        showMessage('Bidder name saved', 'success');
+        close();
+      } catch (error) {
+        showMessage(error.message, 'error');
+        saveButton.disabled = false;
+      }
+    };
+
+    overlay.querySelector('#cancelBidderName')?.addEventListener('click', close);
+    overlay.querySelector('#saveBidderName')?.addEventListener('click', () => { void save(); });
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay) close();
+    });
+    overlay.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        void save();
+      }
+    });
+    document.body.appendChild(overlay);
+    overlay.querySelector('#bidderNameInput')?.focus();
+  }
+
 
 // Enable or disable payment buttons based on backend config
 
@@ -447,7 +532,7 @@ buttons.forEach(btn => {
       tr.className='bidder-row'+(b.balance===0?' bidder-paid':'');
       if(b.balance<0) tr.classList.add('bidder-negative');
       tr.dataset.id=b.id;
-      tr.innerHTML=`<td>${b.paddle_number}</td><td>${money(b.balance)}</td>`;
+      tr.innerHTML=`<td>${escapeHtml(formatBidderLabel(b))}</td><td>${money(b.balance)}</td>`;
       tr.onclick=()=>selectBidder(b);
       if((selectedBidderId ?? selBidder?.id)===b.id) tr.classList.add('sel');
       bidderBody.appendChild(tr);
@@ -466,6 +551,7 @@ buttons.forEach(btn => {
       detailBox.style.display='none';
       if (emptyDetailEl) emptyDetailEl.style.display = 'block';
       titleEl.textContent='Select a bidder...';
+      if (editBidderNameBtn) editBidderNameBtn.disabled = true;
       fingerprintVisible = false;
       if (lotsTotalEl) lotsTotalEl.textContent = '';
       updateFingerprintDisplay();
@@ -500,7 +586,11 @@ buttons.forEach(btn => {
 
     renderBidders();
 
-    titleEl.textContent=`Paddle #${selBidder.paddle_number}`;
+    titleEl.textContent=formatBidderLabel(selBidder, { prefix: true });
+    if (editBidderNameBtn) {
+      editBidderNameBtn.disabled = AUCTION_STATUS === 'archived';
+      editBidderNameBtn.title = AUCTION_STATUS === 'archived' ? 'Bidder names cannot be edited for archived auctions' : '';
+    }
     if (emptyDetailEl) emptyDetailEl.style.display = 'none';
     detailBox.style.display='block';
 
@@ -926,6 +1016,7 @@ document.getElementById('summaryBtn').onclick = async () => {
       persistBuyerDisplayState();
     }
   });
+  editBidderNameBtn?.addEventListener('click', openBidderNameModal);
   void fetchCurrentUsername();
   fetchBidders();
   refreshPaymentButtons();

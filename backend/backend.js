@@ -819,6 +819,7 @@ app.get('/auctions/:auctionId/items', authenticateRole("admin"), (req, res) => {
            i.winning_bidder_id,
            i.collected_at,
            b.paddle_number AS paddle_no,
+           IFNULL(b.name, '') AS bidder_name,
            IFNULL(lots.lots_total, 0) AS bidder_lots_total,
            IFNULL(payments.payments_total, 0) AS payments_total,
            i.test_item,
@@ -887,7 +888,7 @@ app.get('/auctions/:auctionId/items', authenticateRole("admin"), (req, res) => {
 // API to get full saved item details for the edit/view screen
 //--------------------------------------------------------------------------
 
-app.get('/auctions/:auctionId/items/:id', authenticateRole("admin"), (req, res) => {
+app.get('/auctions/:auctionId(\\d+)/items/:id(\\d+)', authenticateRole("admin"), (req, res) => {
     const auction_id = Number(req.params.auctionId);
     const id = Number(req.params.id);
 

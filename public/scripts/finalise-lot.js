@@ -29,6 +29,8 @@ const API = "/api"
     const UNDO_PREVIEW_API = id => `${API}/lots/${id}/undo-preview`;
     const UNDO_API      = id => `${API}/lots/${id}/undo`;
     const FINALIZE_API = id => `${API}/lots/${id}/finalize`;
+    const BIDDER_LOOKUP_API = (auctionId, paddle) => `${API}/auctions/${auctionId}/bidders/lookup?paddle_number=${encodeURIComponent(paddle)}`;
+    const BIDDER_LIST_API = auctionId => `${API}/auctions/${auctionId}/bidders`;
     
     let auctionStatus = 'setup';  // default; will sync below
 
@@ -59,6 +61,12 @@ const API = "/api"
     const amount = Number(value);
     const normalised = Number.isFinite(amount) ? amount : 0;
     return `${getCurrencySymbol()}${normalised.toFixed(2)}`;
+  }
+
+  function formatBidderLabel(paddle, name) {
+    const paddleText = paddle == null || paddle === '' ? '' : String(paddle);
+    const nameText = String(name || '').trim();
+    return nameText ? `${paddleText} - ${nameText}` : paddleText;
   }
 
   function escapeHtml(value) {
@@ -247,31 +255,153 @@ const API = "/api"
     return TABLE_BODY.querySelector('.btn-finalize');
   }
 
+  function getRowBidContext(row) {
+    if (!row) return null;
+    const itemId = Number(row.dataset.itemId);
+    const itemNo = Number(row.dataset.item_number);
+    if (!Number.isInteger(itemId) || itemId <= 0) return null;
+    return {
+      itemId,
+      itemNo,
+      itemDesc: row.dataset.description || '',
+      rowEl: row
+    };
+  }
+
+  function findNextFinalizeContext(itemId, rowEl) {
+    const nextButton = findNextFinalizeButton(itemId, rowEl);
+    const context = getRowBidContext(nextButton?.closest('tr'));
+    return context && context.itemId !== Number(itemId) ? context : null;
+  }
+
+  async function refreshAdminItems() {
+    if (typeof window.loadAdminItems === 'function') {
+      await window.loadAdminItems({ suppressErrors: true });
+    }
+  }
+
+  async function fetchKnownBidders(auctionId) {
+    if (!auctionId) return [];
+    try {
+      const res = await fetch(BIDDER_LIST_API(auctionId), {
+        headers: { 'Authorization': getToken() }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to load bidders');
+      return Array.isArray(data.bidders) ? data.bidders : [];
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  function renderKnownBidders(container, bidders, selectBidder) {
+    if (!container) return;
+    if (!bidders.length) {
+      container.innerHTML = '<div class="known-bidder-empty">No known bidders yet.</div>';
+      return;
+    }
+
+    container.innerHTML = bidders.map((bidder) => `
+      <button type="button" class="known-bidder-item" data-paddle="${escapeHtml(bidder.paddle_number)}" data-name="${escapeHtml(bidder.name || '')}">
+        <span class="known-bidder-paddle">${escapeHtml(bidder.paddle_number)}</span>
+        <span class="known-bidder-name">${escapeHtml(bidder.name || 'Unnamed')}</span>
+      </button>
+    `).join('');
+
+    container.querySelectorAll('.known-bidder-item').forEach((button) => {
+      button.addEventListener('click', () => {
+        selectBidder(button.dataset.paddle || '', button.dataset.name || '');
+      });
+    });
+  }
+
   // --------------- modal & finalize --------------------------
   function openFinalizeModal(itemId, itemNo, itemDesc, rowEl) {
+    let activeItem = { itemId, itemNo, itemDesc, rowEl };
     const wrap = document.createElement('div');
     wrap.className = 'admin-inline-modal';
     wrap.innerHTML = `
-      <div class="admin-inline-card" role="dialog" aria-modal="true" aria-labelledby="admin-bid-modal-title">
-        <h3 id="admin-bid-modal-title">Record Bid</h3>
-        <p class="admin-inline-copy">Lot #${itemNo}: ${itemDesc}</p>
-        <div class="admin-inline-field">
-          <label for="paddle">Paddle #</label>
-          <input id="paddle" class="admin-inline-input" type="number" min="1" max="999" inputmode="numeric" autofocus>
-        </div>
-        <div class="admin-inline-field">
-          <label for="price">Hammer ${window.localStorage.getItem("currencySymbol") || "£"}</label>
-          <input id="price" class="admin-inline-input" type="number" min="1" step="0.01" inputmode="decimal">
-        </div>
-        <div class="admin-inline-actions">
-          <button id="cancel" type="button" class="admin-inline-cancel">Cancel</button>
-          <button id="ok" type="button" class="admin-inline-confirm">Record Bid</button>
+      <div class="admin-inline-card admin-inline-card--bid" role="dialog" aria-modal="true" aria-labelledby="admin-bid-modal-title">
+        <aside class="known-bidder-panel" aria-label="Known bidders">
+          <div class="known-bidder-title">Known Bidders</div>
+          <div class="known-bidder-list" data-known-bidder-list>
+            <div class="known-bidder-empty">Loading bidders...</div>
+          </div>
+        </aside>
+        <div class="admin-bid-entry">
+          <h3 id="admin-bid-modal-title">Record Bid</h3>
+          <p class="admin-inline-copy" data-lot-summary>Lot #${escapeHtml(itemNo)}: ${escapeHtml(itemDesc)}</p>
+          <div class="admin-inline-field">
+            <label for="paddle">Paddle #</label>
+            <input id="paddle" class="admin-inline-input" type="number" min="1" max="999" inputmode="numeric" autofocus>
+          </div>
+          <div class="admin-inline-field">
+            <label for="price">Hammer ${window.localStorage.getItem("currencySymbol") || "£"}</label>
+            <input id="price" class="admin-inline-input" type="number" min="1" step="0.01" inputmode="decimal">
+          </div>
+          <div class="admin-inline-field">
+            <label for="bidder-name">Name</label>
+            <input id="bidder-name" class="admin-inline-input" type="text" maxlength="100" autocomplete="off">
+          </div>
+          <div class="admin-inline-actions">
+            <button id="cancel" type="button" class="admin-inline-cancel">Cancel</button>
+            <button id="record-next" type="button" class="admin-inline-secondary">Record and Next</button>
+            <button id="ok" type="button" class="admin-inline-confirm">Record Bid</button>
+          </div>
         </div>
       </div>`;
     document.body.appendChild(wrap);
     const cancelButton = wrap.querySelector('#cancel');
     const okButton = wrap.querySelector('#ok');
-    wrap.querySelector('#paddle').focus();
+    const recordNextButton = wrap.querySelector('#record-next');
+    const paddleInput = wrap.querySelector('#paddle');
+    const priceInput = wrap.querySelector('#price');
+    const bidderNameInput = wrap.querySelector('#bidder-name');
+    const lotSummary = wrap.querySelector('[data-lot-summary]');
+    const knownBidderList = wrap.querySelector('[data-known-bidder-list]');
+
+    const currentAuctionId = () => parseInt(document.getElementById("auction-select").value, 10);
+    const updateLotSummary = () => {
+      lotSummary.textContent = `Lot #${activeItem.itemNo}: ${activeItem.itemDesc}`;
+    };
+    const clearBidFields = ({ keepBidder = true } = {}) => {
+      if (!keepBidder) {
+        paddleInput.value = '';
+        bidderNameInput.value = '';
+      }
+      priceInput.value = '';
+    };
+    const selectKnownBidder = (paddle, name) => {
+      paddleInput.value = paddle;
+      bidderNameInput.value = name;
+      priceInput.focus();
+      priceInput.select();
+    };
+    const reloadKnownBidders = async () => {
+      renderKnownBidders(knownBidderList, await fetchKnownBidders(currentAuctionId()), selectKnownBidder);
+    };
+
+    void reloadKnownBidders();
+    paddleInput.focus();
+
+    paddleInput.addEventListener('blur', async () => {
+      const paddle = paddleInput.value.trim();
+      const auctionId = currentAuctionId();
+      if (!paddle || !Number.isInteger(Number(paddle)) || Number(paddle) <= 0 || !auctionId) {
+        bidderNameInput.value = '';
+        return;
+      }
+      try {
+        const res = await fetch(BIDDER_LOOKUP_API(auctionId, paddle), {
+          headers: { 'Authorization': getToken() }
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        bidderNameInput.value = data?.bidder?.name || '';
+      } catch (_error) {
+        // Lookup is a convenience only; bid recording remains available.
+      }
+    });
 
     wrap.addEventListener('keydown', e => {
       if (e.key === 'Escape') { e.preventDefault(); cancelButton.click(); }
@@ -280,53 +410,79 @@ const API = "/api"
 
 
     cancelButton.onclick = () => wrap.remove();
-    okButton.onclick = async () => {
+    const recordBid = async ({ advance = false } = {}) => {
       const paddle = wrap.querySelector('#paddle').value.trim();
       const price  = wrap.querySelector('#price').value.trim();
-      const currentAuctionId = parseInt(document.getElementById("auction-select").value, 10);
+      const bidderName = bidderNameInput.value.trim();
+      const auctionId = currentAuctionId();
 
       if (!paddle || !price) {
         showMessage("Enter paddle & price", "error");
         return;
       }
       try {
-        const res = await fetch(FINALIZE_API(itemId), {
+        const nextContext = advance ? findNextFinalizeContext(activeItem.itemId, activeItem.rowEl) : null;
+        okButton.disabled = true;
+        recordNextButton.disabled = true;
+        const res = await fetch(FINALIZE_API(activeItem.itemId), {
           method:'POST',
           headers:{ 'Content-Type':'application/json', 'Authorization': getToken() },
-          body: JSON.stringify({ paddle:Number(paddle), price:Number(price), auctionId:Number(currentAuctionId) })
+          body: JSON.stringify({ paddle:Number(paddle), price:Number(price), bidderName, auctionId:Number(auctionId) })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Error');
-        rowEl.dataset.sold = '1';
-        rowEl.classList.add('sold-row');
-        rowEl.querySelector('.btn-finalize').remove();
+        activeItem.rowEl.dataset.sold = '1';
+        activeItem.rowEl.classList.add('sold-row');
+        activeItem.rowEl.querySelector('.btn-finalize')?.remove();
         enhanceRows(); // re-show UNDO button
-        showMessage(`Item ${itemNo} sold to bidder #${paddle} for £${price}`, "success");
+        const displayBidder = formatBidderLabel(paddle, bidderName || data.bidder_name);
+        showMessage(`Item ${activeItem.itemNo} sold to bidder #${displayBidder} for £${price}`, "success");
 
         /* --- update paddle & price cells immediately --- */
-        const cells = rowEl.children;        
+        const cells = activeItem.rowEl.children;
         if (cells.length >= 7) {
-          cells[5].textContent = paddle;                 // Paddle #
+          cells[5].textContent = document.getElementById('show-bidder-names')?.checked
+            ? displayBidder
+            : paddle;                 // Paddle #
           cells[6].textContent = '£' + Number(price).toFixed(2);  // Hammer £
         }
 
         // Check if that was the last item (done on the backend)
         if (data.auction_status === "settlement") {
           showMessage(`All bids recorded - Auction now in settlement mode`, "success");
+          await refreshAdminItems();
+          wrap.remove();
         } else {
-
-        /* move focus to the next visible finalize button in the current table DOM */
-            const nextBtn = findNextFinalizeButton(itemId, rowEl);
+          await refreshAdminItems();
+          await reloadKnownBidders();
+          if (advance && nextContext) {
+            const refreshedRow = TABLE_BODY.querySelector(`tr[data-item-id="${nextContext.itemId}"]`);
+            activeItem = {
+              ...nextContext,
+              rowEl: refreshedRow || nextContext.rowEl
+            };
+            updateLotSummary();
+            clearBidFields({ keepBidder: true });
+            priceInput.focus();
+          } else {
+            /* move focus to the next visible finalize button in the current table DOM */
+            const nextBtn = findNextFinalizeButton(activeItem.itemId, activeItem.rowEl);
+            wrap.remove();
             nextBtn?.focus();
+          }
+        }
+
+      } catch(err) {
+        showMessage(err.message||err, "error");
+
+   //     alert(err.message||err);
+      } finally {
+        okButton.disabled = false;
+        recordNextButton.disabled = false;
       }
-
-      } catch(err) { 
-                showMessage(err.message||err, "error");
-
-   //     alert(err.message||err); 
-   }
-      wrap.remove();
     };
+    okButton.onclick = () => recordBid({ advance: false });
+    recordNextButton.onclick = () => recordBid({ advance: true });
   }
 
   // --------------- undo finalize -----------------------------
@@ -374,6 +530,7 @@ const API = "/api"
             cells[6].textContent = "";
           }
 
+          await refreshAdminItems();
           modal.close();
         } catch(err) {
           showMessage(err.message||err, "error");
