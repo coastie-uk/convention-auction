@@ -236,9 +236,42 @@ function sanitiseBackupNote(note) {
   return sanitiseText(note || "", BACKUP_NOTE_MAX_LENGTH).trim();
 }
 
+function verifyMaintenancePassword(req, password) {
+  const username = req.user?.username;
+  if (!username || !password) {
+    const error = new Error("Missing password.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const user = getUserByUsername(username);
+  if (!user || !user.password) {
+    const error = new Error("Incorrect password");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const stored = String(user.password || '');
+  const valid = stored.startsWith('$2')
+    ? bcrypt.compareSync(password, stored)
+    : stored === password;
+
+  if (!valid) {
+    const error = new Error("Incorrect password");
+    error.statusCode = 403;
+    throw error;
+  }
+}
+
 function collectAuctionBackupSummary() {
   return db.all(`
-    SELECT a.id, a.short_name, a.full_name, a.status, COUNT(i.id) AS item_count
+    SELECT a.id,
+           a.short_name,
+           a.full_name,
+           a.status,
+           COUNT(i.id) AS item_count,
+           SUM(CASE WHEN COALESCE(i.is_deleted, 0) = 0 THEN 1 ELSE 0 END) AS active_item_count,
+           SUM(CASE WHEN COALESCE(i.is_deleted, 0) = 1 THEN 1 ELSE 0 END) AS deleted_item_count
       FROM auctions a
       LEFT JOIN items i ON i.auction_id = a.id
      GROUP BY a.id
@@ -248,7 +281,9 @@ function collectAuctionBackupSummary() {
     short_name: row.short_name,
     full_name: row.full_name,
     status: row.status,
-    item_count: Number(row.item_count || 0)
+    item_count: Number(row.item_count || 0),
+    active_item_count: Number(row.active_item_count || 0),
+    deleted_item_count: Number(row.deleted_item_count || 0)
   }));
 }
 
@@ -1119,6 +1154,101 @@ router.post("/reset", checkAuctionState(['setup', 'archived']), (req, res) => {
 })
 
 //--------------------------------------------------------------------------
+// POST /auctions/purge-deleted-items
+// Permanently remove soft-deleted items and their photo files.
+//--------------------------------------------------------------------------
+
+router.post("/auctions/purge-deleted-items", (req, res) => {
+  const { auction_id, password } = req.body || {};
+  const auctionId = Number(auction_id);
+
+  if (!auctionId || !password) {
+    return res.status(400).json({ error: "Missing auction_id or password." });
+  }
+
+  try {
+    verifyMaintenancePassword(req, password);
+  } catch (err) {
+    if (err.statusCode === 403) {
+      logFromRequest(req, logLevels.WARN, `Incorrect password attempt for deleted item purge by ${req.user?.username || "unknown"}`);
+    }
+    return res.status(err.statusCode || 500).json({ error: err.message || "Error verifying password" });
+  }
+
+  try {
+    const auction = db.get("SELECT id, short_name FROM auctions WHERE id = ?", [auctionId]);
+    if (!auction) {
+      return res.status(400).json({ error: "Auction not found." });
+    }
+
+    const deletedItems = db.all(`
+      SELECT id, description, photo, auction_id, winning_bidder_id, hammer_price
+        FROM items
+       WHERE auction_id = ?
+         AND COALESCE(is_deleted, 0) = 1
+       ORDER BY id ASC
+    `, [auctionId]);
+
+    const bidBlocked = deletedItems.filter((item) => item.winning_bidder_id != null || item.hammer_price != null);
+    if (bidBlocked.length > 0) {
+      logFromRequest(req, logLevels.WARN, `Purge blocked for auction ${auctionId}; deleted items with bids: ${bidBlocked.map((item) => item.id).join(", ")}`);
+      return res.status(400).json({ error: "Deleted items with bids cannot be purged.", item_ids: bidBlocked.map((item) => item.id) });
+    }
+
+    const itemIds = deletedItems.map((item) => Number(item.id));
+    if (itemIds.length === 0) {
+      return res.json({ ok: true, auction_id: auctionId, purged: { items: 0, photos: 0, photo_errors: [] } });
+    }
+
+    deletedItems.forEach((item) => {
+      audit(getAuditActor(req), 'purge deleted item', 'item', item.id, {
+        auction_id: item.auction_id,
+        description: item.description || ''
+      });
+    });
+
+    const placeholders = itemIds.map(() => "?").join(",");
+    const deletedRowCount = db.prepare(`DELETE FROM items WHERE auction_id = ? AND id IN (${placeholders}) AND COALESCE(is_deleted, 0) = 1`).run(auctionId, ...itemIds).changes;
+
+    let photosDeleted = 0;
+    const photoErrors = [];
+    const photoNames = Array.from(new Set(deletedItems.map((item) => item.photo).filter(Boolean)));
+    photoNames.forEach((photo) => {
+      [photo, `preview_${photo}`].forEach((filename) => {
+        const filePath = path.join(UPLOAD_DIR, filename);
+        if (!fs.existsSync(filePath)) return;
+        try {
+          fs.unlinkSync(filePath);
+          photosDeleted += 1;
+        } catch (err) {
+          photoErrors.push({ file: filename, error: err.message });
+          logFromRequest(req, logLevels.WARN, `Failed to delete purged item photo ${filename}: ${err.message}`);
+        }
+      });
+    });
+
+    audit(getAuditActor(req), 'purge deleted items', 'auction', auctionId, {
+      item_count: deletedRowCount,
+      item_ids: itemIds
+    });
+    logFromRequest(req, logLevels.INFO, `Purged ${deletedRowCount} deleted item(s) and ${photosDeleted} photo file(s) from auction ${auctionId}`);
+
+    return res.json({
+      ok: true,
+      auction_id: auctionId,
+      purged: {
+        items: deletedRowCount,
+        photos: photosDeleted,
+        photo_errors: photoErrors
+      }
+    });
+  } catch (err) {
+    logFromRequest(req, logLevels.ERROR, `Deleted item purge failed for auction ${auctionId}: ${err.message}`);
+    return res.status(500).json({ error: "Purge failed" });
+  }
+});
+
+//--------------------------------------------------------------------------
 // GET /export
 // API to export items, bidders, and payments to CSV
 //--------------------------------------------------------------------------
@@ -1237,7 +1367,7 @@ router.post("/import", async (req, res) => {
 
     // ── 4. Prepare helpers  ──────────────────────────────────────────────────
     const nextItemStmt = db.prepare(
-      "SELECT IFNULL(MAX(item_number),0)+1 AS next FROM items WHERE auction_id = ?"
+      "SELECT IFNULL(MAX(item_number),0)+1 AS next FROM items WHERE auction_id = ? AND COALESCE(is_deleted, 0) = 0"
     );
     const insertStmt = db.prepare(
       `INSERT INTO items
@@ -1804,7 +1934,7 @@ router.post("/cleanup-orphan-photos", (req, res) => {
 
 
 function getNextItemNumber(auction_id, callback) {
-  db.get(`SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ?`, [auction_id], (err, row) => {
+  db.get(`SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ? AND COALESCE(is_deleted, 0) = 0`, [auction_id], (err, row) => {
     if (err) return callback(err);
     const itemNumber = row?.next || 1;
     callback(null, itemNumber);
@@ -2300,7 +2430,9 @@ router.post("/auctions/list", async (req, res) => {
 
   const sql = `
     SELECT a.id, a.short_name, a.full_name, a.logo, a.status, a.admin_can_change_state,
-           COUNT(i.id) AS item_count
+           COUNT(i.id) AS item_count,
+           SUM(CASE WHEN COALESCE(i.is_deleted, 0) = 0 THEN 1 ELSE 0 END) AS active_item_count,
+           SUM(CASE WHEN COALESCE(i.is_deleted, 0) = 1 THEN 1 ELSE 0 END) AS deleted_item_count
     FROM auctions a
     LEFT JOIN items i ON i.auction_id = a.id
     GROUP BY a.id
@@ -2557,7 +2689,7 @@ router.post("/generate-bids", checkAuctionState(['live', 'settlement']), (req, r
       logFromRequest(req, logLevels.DEBUG, `Generate bid request received`);
 
   // Step 1: get items without bids
-  db.all("SELECT id, description FROM items WHERE auction_id = ? AND winning_bidder_id IS NULL", [auction_id], (err, items) => {
+  db.all("SELECT id, description FROM items WHERE auction_id = ? AND winning_bidder_id IS NULL AND COALESCE(is_deleted, 0) = 0", [auction_id], (err, items) => {
     if (err) return res.status(500).json({ error: err.message });
 
     const availableItems = items.map(i => i.id);
@@ -2636,13 +2768,14 @@ router.post("/delete-test-bids", checkAuctionState(['live', 'settlement']), (req
           test_bid = NULL,
           last_bid_update = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
       WHERE auction_id = ? AND test_bid = 1
+        AND COALESCE(is_deleted, 0) = 0
     `).run(auction_id);
 
     // Remove unused bidders
     const deleted = db.prepare(`
       DELETE FROM bidders
       WHERE auction_id = ?
-        AND id NOT IN (SELECT winning_bidder_id FROM items WHERE auction_id = ? AND winning_bidder_id IS NOT NULL)
+        AND id NOT IN (SELECT winning_bidder_id FROM items WHERE auction_id = ? AND winning_bidder_id IS NOT NULL AND COALESCE(is_deleted, 0) = 0)
     `).run(auction_id, auction_id);
     db.pragma('foreign_keys = ON');
 

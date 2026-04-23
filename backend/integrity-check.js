@@ -24,6 +24,7 @@ function asPositiveNumber(value) {
 }
 
 function toInteger(value) {
+  if (value === null || value === undefined || value === '') return null;
   const numeric = Number(value);
   if (!Number.isInteger(numeric)) return null;
   return numeric;
@@ -37,7 +38,8 @@ function buildContext() {
   `);
   const items = db.all(`
     SELECT id, auction_id, item_number, description, contributor, artist, photo,
-           winning_bidder_id, hammer_price, collected_at, last_bid_update
+           winning_bidder_id, hammer_price, collected_at, last_bid_update,
+           COALESCE(is_deleted, 0) AS is_deleted
     FROM items
     ORDER BY id ASC
   `);
@@ -61,6 +63,7 @@ function buildContext() {
 
   const auctionsById = new Map(auctions.map((auction) => [Number(auction.id), auction]));
   const itemsByAuctionId = new Map();
+  const activeItemsByAuctionId = new Map();
   const biddersById = new Map(bidders.map((bidder) => [Number(bidder.id), bidder]));
   const biddersByAuctionId = new Map();
   const paymentsById = new Map(payments.map((payment) => [Number(payment.id), payment]));
@@ -72,12 +75,16 @@ function buildContext() {
     if (auctionId !== null) {
       if (!itemsByAuctionId.has(auctionId)) itemsByAuctionId.set(auctionId, []);
       itemsByAuctionId.get(auctionId).push(item);
+      if (Number(item.is_deleted || 0) !== 1) {
+        if (!activeItemsByAuctionId.has(auctionId)) activeItemsByAuctionId.set(auctionId, []);
+        activeItemsByAuctionId.get(auctionId).push(item);
+      }
     }
 
     const bidderId = toInteger(item.winning_bidder_id);
     const hammerPrice = asPositiveNumber(item.hammer_price);
     const bidder = bidderId !== null ? biddersById.get(bidderId) : null;
-    if (bidder && hammerPrice !== null && toInteger(bidder.auction_id) === auctionId) {
+    if (Number(item.is_deleted || 0) !== 1 && bidder && hammerPrice !== null && toInteger(bidder.auction_id) === auctionId) {
       soldItemCountsByBidderId.set(bidderId, (soldItemCountsByBidderId.get(bidderId) || 0) + 1);
     }
   }
@@ -98,6 +105,7 @@ function buildContext() {
     paymentIntents,
     auctionsById,
     itemsByAuctionId,
+    activeItemsByAuctionId,
     biddersById,
     biddersByAuctionId,
     paymentsById,
@@ -220,7 +228,7 @@ function collectIntegrityChecks(mode = VERBOSE_MODE) {
 
   for (const auction of ctx.auctions) {
     const auctionId = Number(auction.id);
-    const items = ctx.itemsByAuctionId.get(auctionId) || [];
+    const items = ctx.activeItemsByAuctionId.get(auctionId) || [];
     const invalidItems = items.filter((item) => asPositiveInteger(item.item_number) === null);
     for (const item of invalidItems) {
       addProblem(invalidItemNumberCheck, createProblem({
@@ -298,6 +306,12 @@ function collectIntegrityChecks(mode = VERBOSE_MODE) {
   const collectedWithoutSaleCheck = createCheck({
     code: 'item_collected_without_sale',
     title: 'Collected items without a valid sale',
+    priority: 'workflow',
+    severity: 'error'
+  });
+  const deletedWithSaleCheck = createCheck({
+    code: 'deleted_item_has_sale_or_collection',
+    title: 'Deleted items with sale or collection data',
     priority: 'workflow',
     severity: 'error'
   });
@@ -425,10 +439,27 @@ function collectIntegrityChecks(mode = VERBOSE_MODE) {
         }
       }));
     }
+
+    if (Number(item.is_deleted || 0) === 1 && (bidderId !== null || hasAnyHammer || item.collected_at)) {
+      addProblem(deletedWithSaleCheck, createProblem({
+        code: 'deleted_item_has_sale_or_collection',
+        severity: 'error',
+        entityType: 'item',
+        entityId: itemId,
+        auctionId,
+        message: `Deleted item ${itemId} still has sale or collection data.`,
+        details: {
+          winning_bidder_id: item.winning_bidder_id,
+          hammer_price: item.hammer_price,
+          collected_at: item.collected_at
+        }
+      }));
+    }
   }
   addCheck(salePairCheck);
   addCheck(bidderMismatchCheck);
   addCheck(collectedWithoutSaleCheck);
+  addCheck(deletedWithSaleCheck);
 
   const liveCompleteCheck = createCheck({
     code: 'auction_live_but_complete',
@@ -438,7 +469,7 @@ function collectIntegrityChecks(mode = VERBOSE_MODE) {
   });
   for (const auction of ctx.auctions) {
     const auctionId = Number(auction.id);
-    const items = ctx.itemsByAuctionId.get(auctionId) || [];
+    const items = ctx.activeItemsByAuctionId.get(auctionId) || [];
     const unsoldCount = items.filter((item) => item.hammer_price === null || item.hammer_price === undefined).length;
     if (String(auction.status) === 'live' && items.length > 0 && unsoldCount === 0) {
       addProblem(liveCompleteCheck, createProblem({
@@ -784,10 +815,19 @@ function collectIntegrityChecks(mode = VERBOSE_MODE) {
 }
 
 function listRenumberRows(auctionId) {
+  db.run(
+    `UPDATE items
+        SET item_number = NULL
+      WHERE auction_id = ?
+        AND COALESCE(is_deleted, 0) = 1
+        AND item_number IS NOT NULL`,
+    [auctionId]
+  );
   return db.all(
     `SELECT id, item_number
      FROM items
      WHERE auction_id = ?
+       AND COALESCE(is_deleted, 0) = 0
      ORDER BY COALESCE(item_number, ?), id`,
     [auctionId, SQLITE_SENTINEL]
   );

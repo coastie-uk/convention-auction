@@ -20,8 +20,8 @@ function getBidderPaymentTotals(db, bidderId, auctionId = null) {
 
   const useAuctionFilter = Number.isInteger(Number(auctionId)) && Number(auctionId) > 0;
   const itemSql = useAuctionFilter
-    ? `SELECT SUM(hammer_price) FROM items WHERE winning_bidder_id = ? AND auction_id = ?`
-    : `SELECT SUM(hammer_price) FROM items WHERE winning_bidder_id = ?`;
+    ? `SELECT SUM(hammer_price) FROM items WHERE winning_bidder_id = ? AND auction_id = ? AND COALESCE(is_deleted, 0) = 0`
+    : `SELECT SUM(hammer_price) FROM items WHERE winning_bidder_id = ? AND COALESCE(is_deleted, 0) = 0`;
   const params = useAuctionFilter
     ? [Number(bidderId), Number(auctionId), Number(bidderId), Number(bidderId), Number(bidderId)]
     : [Number(bidderId), Number(bidderId), Number(bidderId), Number(bidderId)];

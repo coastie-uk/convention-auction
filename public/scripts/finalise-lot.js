@@ -196,6 +196,7 @@ const API = "/api"
     if (hideFinaliseStates.includes(auctionStatus)) return;
 
     TABLE_BODY.querySelectorAll('tr').forEach(tr => {
+      if (tr.dataset.deleted === '1') return;
 
       const id      = Number(tr.dataset.itemId);
       const item_no = Number(tr.dataset.item_number);

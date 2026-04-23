@@ -82,6 +82,20 @@ context.managedBackupFilename = null;
 context.managedBackupNote = null;
 context.managedBackupArchive = null;
 context.managedUser = managedUsers.lifecycle;
+context.purgeItemId = null;
+
+async function createPublicItem(publicId, description = "Maintenance purge item") {
+  const form = new FormData();
+  form.append("description", description);
+  form.append("contributor", "Maintenance Tests");
+  const { res, json, text } = await fetchJson(`${baseUrl}/auctions/${publicId}/newitem`, {
+    method: "POST",
+    body: form
+  });
+  await expectStatus(res, 200);
+  assert.ok(json && json.id, `Create item failed: ${text}`);
+  return Number(json.id);
+}
 
 function createTempDbBuffer(sourceBuffer, mutator) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "auction-integrity-"));
@@ -395,8 +409,61 @@ addTest("M-009","maintenance/auctions/list success", async () => {
   assert.ok(Array.isArray(json), `Unexpected list response: ${text}`);
   const found = json.find(a => a.short_name === context.testAuctionShortName);
   assert.ok(found, "Test auction not found in list");
+  assert.ok(Object.prototype.hasOwnProperty.call(found, "deleted_item_count"), "Auction list should include deleted_item_count");
   context.testAuctionId = found.id;
   context.auctionCount = json.length;
+});
+
+addTest("M-009a","maintenance/auctions/purge-deleted-items failure wrong password", async () => {
+  const { res } = await fetchJson(`${baseUrl}/maintenance/auctions/purge-deleted-items`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ auction_id: context.testAuctionId, password: "badpass" })
+  });
+  await expectStatus(res, 403);
+});
+
+addTest("M-009b","maintenance/auctions/purge-deleted-items success", async () => {
+  const auctions = await fetchJson(`${baseUrl}/list-auctions`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({})
+  });
+  await expectStatus(auctions.res, 200);
+  const auction = (auctions.json || []).find((row) => Number(row.id) === Number(context.testAuctionId));
+  assert.ok(auction?.public_id, "Expected public_id for test auction");
+
+  context.purgeItemId = await createPublicItem(auction.public_id, "Maintenance purge deleted item");
+
+  const del = await fetchJson(`${baseUrl}/items/${context.purgeItemId}`, {
+    method: "DELETE",
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(del.res, 200);
+
+  const listed = await fetchJson(`${baseUrl}/maintenance/auctions/list`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({})
+  });
+  await expectStatus(listed.res, 200);
+  const beforePurge = listed.json.find((row) => Number(row.id) === Number(context.testAuctionId));
+  assert.ok(Number(beforePurge.deleted_item_count || 0) >= 1, "Expected deleted item count before purge");
+
+  const purge = await fetchJson(`${baseUrl}/maintenance/auctions/purge-deleted-items`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ auction_id: context.testAuctionId, password: bootstrapPassword })
+  });
+  await expectStatus(purge.res, 200);
+  assert.ok(purge.json?.ok, `Unexpected purge response: ${purge.text}`);
+  assert.ok(Number(purge.json?.purged?.items || 0) >= 1, "Expected purged item count");
+
+  const after = await fetchJson(`${baseUrl}/auctions/${context.testAuctionId}/items?show_deleted=true`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(after.res, 200);
+  assert.ok(!(after.json.items || []).some((item) => Number(item.id) === Number(context.purgeItemId)), "Purged item should be gone");
 });
 
 addTest("M-010","maintenance/auctions/list failure unauthenticated", async () => {
@@ -612,6 +679,11 @@ addTest("M-020C","maintenance/check-integrity/fix repairs deterministic workflow
       `).run(context.testAuctionId, bidderSold);
 
       tempDb.prepare(`
+        INSERT INTO items (description, contributor, auction_id, item_number, is_deleted, winning_bidder_id, hammer_price, collected_at, date)
+        VALUES ('Clean deleted item', 'Contributor Deleted', ?, NULL, 1, NULL, NULL, NULL, '2026-01-01 12:04:30')
+      `).run(context.testAuctionId);
+
+      tempDb.prepare(`
         INSERT INTO items (description, contributor, auction_id, item_number, winning_bidder_id, hammer_price, date)
         VALUES ('Secondary auction sold item', 'Contributor F', ?, 1, ?, 25, '2026-01-01 12:05:00')
       `).run(otherAuctionId, bidderOtherAuction);
@@ -674,6 +746,7 @@ addTest("M-020C","maintenance/check-integrity/fix repairs deterministic workflow
       "payment_reversal_invalid",
       "payment_intent_missing_bidder"
     ].forEach((code) => assert.ok(codesBefore.has(code), `Expected integrity code ${code} before fix`));
+    assert.ok(!codesBefore.has("deleted_item_has_sale_or_collection"), "Clean deleted items should not be flagged as having sale or collection data");
 
     const fixRun = await fetchJson(`${baseUrl}/maintenance/check-integrity/fix`, {
       method: "POST",
@@ -702,6 +775,7 @@ addTest("M-020C","maintenance/check-integrity/fix repairs deterministic workflow
         SELECT id, description, item_number, winning_bidder_id, collected_at
         FROM items
         WHERE auction_id = ?
+          AND COALESCE(is_deleted, 0) = 0
         ORDER BY item_number ASC, id ASC
       `).all(context.testAuctionId);
       assert.equal(repairedItems.length, 5, "Expected five scenario items after fix");

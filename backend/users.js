@@ -93,11 +93,13 @@ function normaliseAdminPreferences(raw) {
   const sortField = normaliseString(source.sort_field);
   const sortOrder = normaliseString(source.sort_order);
   const showBidderNames = normaliseBoolean(source.show_bidder_names);
+  const showDeleted = normaliseBoolean(source.show_deleted);
 
   if (auctionId !== undefined) result.selected_auction_id = auctionId;
   if (ADMIN_SORT_FIELDS.has(sortField)) result.sort_field = sortField;
   if (ADMIN_SORT_ORDERS.has(sortOrder)) result.sort_order = sortOrder;
   if (showBidderNames !== undefined) result.show_bidder_names = showBidderNames;
+  if (showDeleted !== undefined) result.show_deleted = showDeleted;
   return result;
 }
 

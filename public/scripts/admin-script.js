@@ -43,6 +43,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const sortOrderMenu = document.getElementById("sort-order-menu");
     const photoPreviewSizeMenu = document.getElementById("photo-preview-size-menu");
     const showBidderNamesInput = document.getElementById("show-bidder-names");
+    const showDeletedItemsInput = document.getElementById("show-deleted-items");
     const currentAuctionPill = document.getElementById("current-auction-pill");
     const currentStatePill = document.getElementById("current-state-pill");
     const connectionPill = document.getElementById("admin-connection-pill");
@@ -100,6 +101,7 @@ document.addEventListener("DOMContentLoaded", function () {
     let selectedOrder = adminPreferences.sort_order || "asc";
     let selectedSort = adminPreferences.sort_field || "item_number";
     let showBidderNames = adminPreferences.show_bidder_names === true;
+    let showDeletedItems = adminPreferences.show_deleted === true;
     let selectedPhotoPreviewSize = adminPreferences.photo_preview_size || "small";
     let currencySymbol = localStorage.getItem("currencySymbol") || "£";
     let pptxStatusPollTimer = null;
@@ -119,6 +121,7 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("sort-order").value = selectedOrder;
     document.getElementById("photo-preview-size").value = selectedPhotoPreviewSize;
     if (showBidderNamesInput) showBidderNamesInput.checked = showBidderNames;
+    if (showDeletedItemsInput) showDeletedItemsInput.checked = showDeletedItems;
 
     // controls whether to show bidder & amount columns
     const showBidStates = ['live', 'settlement', 'archived'];
@@ -148,7 +151,10 @@ document.addEventListener("DOMContentLoaded", function () {
         "test_item",
         "test_bid",
         "winning_bidder_id",
-        "hammer_price"
+        "hammer_price",
+        "is_deleted",
+        "deleted_at",
+        "deleted_by"
     ]);
     const SORT_FIELD_LABELS = Object.freeze({
         item_number: "Number",
@@ -216,8 +222,19 @@ document.addEventListener("DOMContentLoaded", function () {
         return item?.winning_bidder_id != null || item?.hammer_price != null || item?.paddle_no != null;
     }
 
+    function isDeletedItem(item) {
+        return Number(item?.is_deleted || 0) === 1;
+    }
+
     function getItemEditState(item) {
         const auctionStatus = getSelectedAuctionStatus();
+        if (isDeletedItem(item)) {
+            return {
+                canEdit: false,
+                reason: "This item has been deleted. Restore it before making changes."
+            };
+        }
+
         if (!EDITABLE_AUCTION_STATUSES.has(auctionStatus)) {
             return {
                 canEdit: false,
@@ -415,7 +432,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
     function updateEditModeUI() {
         const titleVerb = currentEditCanEdit ? "Edit" : "View";
-        document.getElementById("edit-title").innerHTML = `<h2>${titleVerb} item #${escapeHtml(String(currentEditItem?.item_number ?? ""))}</h2>`;
+        const titleNumber = isDeletedItem(currentEditItem)
+            ? `deleted item ${escapeHtml(String(currentEditItem?.id ?? ""))}`
+            : `item #${escapeHtml(String(currentEditItem?.item_number ?? ""))}`;
+        document.getElementById("edit-title").innerHTML = `<h2>${titleVerb} ${titleNumber}</h2>`;
         if (editModeBanner) {
             if (currentEditCanEdit) {
                 editModeBanner.hidden = true;
@@ -514,6 +534,13 @@ document.addEventListener("DOMContentLoaded", function () {
                 <path d="m8 5-4 4 4 4"></path>
                 <path d="M4 9h10a4 4 0 0 1 0 8h-2"></path>
                 <path d="m16 13 4 4-4 4"></path>
+            </svg>
+        `,
+        restore: `
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M3 12a9 9 0 1 0 3-6.7"></path>
+                <path d="M3 4v5h5"></path>
+                <path d="M12 8v5h5"></path>
             </svg>
         `
     });
@@ -698,6 +725,33 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         } catch (error) {
             showMessage("Error deleting item: " + error.message, "error");
+        }
+    }
+
+    async function restoreItemById(itemId) {
+        const token = getTokenOrLogout();
+        if (!token) return;
+
+        const numericItemId = Number(itemId);
+        if (!Number.isInteger(numericItemId) || numericItemId <= 0) {
+            showMessage("Cannot restore item: missing item id", "error");
+            return;
+        }
+
+        try {
+            const response = await fetch(`${API}/items/${numericItemId}/restore`, {
+                method: "POST",
+                headers: { Authorization: token }
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || "Unknown error");
+            }
+
+            showMessage(data.message || "Item restored successfully", "success");
+            await loadItems();
+        } catch (error) {
+            showMessage("Error restoring item: " + error.message, "error");
         }
     }
 
@@ -1954,6 +2008,13 @@ document.addEventListener("DOMContentLoaded", function () {
         loadItems();
     });
 
+    showDeletedItemsInput?.addEventListener("change", () => {
+        showDeletedItems = Boolean(showDeletedItemsInput.checked);
+        saveAdminPreferences({ show_deleted: showDeletedItems });
+        closeMenuGroups();
+        loadItems();
+    });
+
     manageBiddersButton?.addEventListener("click", () => {
         void openManageBiddersModal();
     });
@@ -2402,7 +2463,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
     function getItemContextMenuActions(row) {
         const itemId = Number(row?.dataset?.itemId);
+        const isDeleted = row?.dataset?.deleted === "1";
         const editButton = getRowActionButton(row, ".edit-item-button, .view-item-button");
+        const restoreButton = getRowActionButton(row, ".restore-item-button");
         const duplicateButton = getRowActionButton(row, ".duplicate-item-button");
         const moveButton = getRowActionButton(row, ".move-toggle");
         const printButton = getRowActionButton(row, ".print-slip-button");
@@ -2413,6 +2476,33 @@ document.addEventListener("DOMContentLoaded", function () {
         const deleteReason = isView
             ? getUnavailableActionReason(editButton, "This item cannot be deleted")
             : "This item cannot be deleted";
+
+        if (isDeleted) {
+            return [
+                buildContextMenuAction({
+                    id: "view",
+                    label: "View",
+                    button: editButton,
+                    disabled: isUnavailableActionButton(editButton),
+                    run: () => editButton?.click()
+                }),
+                buildContextMenuAction({
+                    id: "history",
+                    label: "History",
+                    button: historyButton,
+                    disabled: isUnavailableActionButton(historyButton),
+                    run: () => historyButton?.click()
+                }),
+                buildContextMenuAction({
+                    id: "restore",
+                    label: "Restore",
+                    button: restoreButton,
+                    disabled: isUnavailableActionButton(restoreButton),
+                    disabledReason: getUnavailableActionReason(restoreButton, "This item cannot be restored"),
+                    run: () => restoreItemById(itemId)
+                })
+            ];
+        }
 
         return [
             buildContextMenuAction({
@@ -2538,7 +2628,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
         try {
 
-            const response = await fetch(`${API}/auctions/${auctionId}/items?sort=${selectedOrder}&field=${selectedSort}`, { headers: { Authorization: token } })
+            const deletedParam = showDeletedItems ? "&show_deleted=true" : "";
+            const response = await fetch(`${API}/auctions/${auctionId}/items?sort=${selectedOrder}&field=${selectedSort}${deletedParam}`, { headers: { Authorization: token } })
 
             // Check for 403 (unauthorized)
             if (response.status === 403) {
@@ -2594,7 +2685,10 @@ document.addEventListener("DOMContentLoaded", function () {
                     item_number: item.item_number,
                     auction_id: item.auction_id,
                     winning_bidder_id: item.winning_bidder_id,
-                    hammer_price: item.hammer_price
+                    hammer_price: item.hammer_price,
+                    is_deleted: item.is_deleted,
+                    deleted_at: item.deleted_at,
+                    deleted_by: item.deleted_by
                 });
 
                 const modToken = item.mod_date ? `?v=${encodeURIComponent(item.mod_date)}` : '';
@@ -2602,11 +2696,17 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 const row = document.createElement("tr");
                 const hasBid = itemHasBid(item);
+                const isDeleted = isDeletedItem(item);
                 const itemEditState = getItemEditState(item);
                 const editTitle = itemEditState.canEdit
                     ? "Edit item"
                     : `View item details (${itemEditState.reason})`;
                 const editIcon = itemEditState.canEdit ? ACTION_ICONS.edit : ACTION_ICONS.view;
+                const itemNumberDisplay = isDeleted ? "Deleted" : escapeHtml(String(item.item_number ?? ""));
+                const restoreEnabled = isDeleted && EDITABLE_AUCTION_STATUSES.has(auctionStatus);
+                const restoreTitle = restoreEnabled
+                    ? "Restore item to the end of the auction"
+                    : `Restore unavailable because this auction is currently in ${auctionStatus || "an unknown"} state.`;
 
             
 
@@ -2614,16 +2714,18 @@ document.addEventListener("DOMContentLoaded", function () {
                 row.dataset.itemId = item.id;                         // used by add‑on
                 row.dataset.sold = hasBid ? "1" : "0";               // 1 = already sold/has bid
                 row.dataset.hasBid = hasBid ? "1" : "0";
-                row.dataset.item_number = item.item_number;
+                row.dataset.deleted = isDeleted ? "1" : "0";
+                row.dataset.item_number = item.item_number ?? "";
                 row.dataset.description = item.description;
                 row.dataset.bidderName = item.bidder_name || "";
+                if (isDeleted) row.classList.add("item-row--deleted");
                 const moveTitle = hasBid ? "Item has bids and cannot be moved" : "Move item within auction or to a different auction";
                 const bidderDisplay = showBidderNames
                     ? formatBidderLabel(item.paddle_no, item.bidder_name)
                     : (item.paddle_no ?? '');
 
                 row.innerHTML = `
-                <td>${item.item_number}</td>
+                <td>${itemNumberDisplay}</td>
                 <td>${escapedDescription}</td>
                 <td>${escapedContributor}</td>
                 <td>${escapedArtist}</td>
@@ -2638,7 +2740,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 <td class="status-cell">${renderItemStatusIndicator(item.status_code, item.status_label)}</td>
                 <td class="actions-cell">
                     <div class="item-actions">
-                        ${renderPrintButton(item.id, printStatus)}
+                        ${isDeleted ? "" : renderPrintButton(item.id, printStatus)}
                         ${renderIconButton({
                             className: "history-button",
                             title: "Display item history",
@@ -2651,20 +2753,26 @@ document.addEventListener("DOMContentLoaded", function () {
                             icon: editIcon,
                             attributes: `onclick="editItem('${encodedItem}')" data-default-title="Edit item" data-auction-status="${escapeHtml(auctionStatus)}"`
                         })}
-                        ${renderIconButton({
+                        ${isDeleted ? renderIconButton({
+                            className: "restore-item-button",
+                            title: restoreTitle,
+                            icon: ACTION_ICONS.restore,
+                            attributes: `data-id="${item.id}" data-default-title="Restore item to the end of the auction" ${restoreEnabled ? "" : "disabled"}`
+                        }) : ""}
+                        ${isDeleted ? "" : renderIconButton({
                             className: "duplicate-item-button",
                             title: "Duplicate this item immediately after itself",
                             icon: ACTION_ICONS.duplicate,
                             attributes: `data-id="${item.id}" data-default-title="Duplicate this item immediately after itself"`
                         })}
-                        ${renderIconButton({
+                        ${isDeleted ? "" : renderIconButton({
                             className: "move-toggle",
                             title: moveTitle,
                             icon: ACTION_ICONS.move,
                             attributes: `data-id="${item.id}" data-default-title="Move item within auction or to a different auction" aria-expanded="false" ${hasBid ? "disabled" : ""}`
                         })}
                     </div>
-                    <div class="move-panel" data-id="${item.id}" style="display:none;">
+                    ${isDeleted ? "" : `<div class="move-panel" data-id="${item.id}" style="display:none;">
                         <select class="move-auction-select" data-id="${item.id}">
                         <option value="">Move to auction...</option>
                         ${auctions
@@ -2679,17 +2787,25 @@ document.addEventListener("DOMContentLoaded", function () {
                     <select class="move-after-dropdown" data-id="${item.id}">
                     <option value="">Move after...</option>
                     ${items
-                        .filter(i => i.id !== item.id)
+                        .filter(i => i.id !== item.id && !isDeletedItem(i))
                         .map(i => `<option value="${i.id}">After #${i.item_number} ${i.description.slice(0, 20)}</option>`)
                         .join("")}
                     </select>
-                </div>
+                </div>`}
                 </td>
             `;
                 itemsTableBody.appendChild(row);
             });
 
             attachImagePopupEvent();
+
+            document.querySelectorAll(".restore-item-button").forEach((button) => {
+                button.addEventListener("click", async function () {
+                    const itemId = parseInt(this.dataset.id, 10);
+                    if (!itemId || isNaN(itemId)) return;
+                    await restoreItemById(itemId);
+                });
+            });
 
             document.querySelectorAll('.live-only').forEach(th => {
                 th.style.display = showBidCols ? '' : 'none';
@@ -3095,7 +3211,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!token || !currentEditId) return;
 
         itemDetailsTableBody.innerHTML = `<tr><td colspan="2">Loading...</td></tr>`;
-        itemDetailsModalSummary.textContent = `Item #${currentEditItem?.item_number ?? currentEditId} saved row from the items table.`;
+        itemDetailsModalSummary.textContent = `${isDeletedItem(currentEditItem) ? `Deleted item ${currentEditId}` : `Item #${currentEditItem?.item_number ?? currentEditId}`} saved row from the items table.`;
         itemDetailsModal.hidden = false;
 
         try {

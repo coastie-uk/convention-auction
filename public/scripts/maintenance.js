@@ -31,6 +31,7 @@ const editAuctionLogoSelect = document.getElementById("edit-auction-logo-select"
 const editAuctionAdminStatePermissionInput = document.getElementById("edit-auction-admin-state-permission");
 const editAuctionDeleteButton = document.getElementById("edit-auction-delete");
 const editAuctionResetButton = document.getElementById("edit-auction-reset");
+const editAuctionPurgeDeletedButton = document.getElementById("edit-auction-purge-deleted");
 const popoutLogsButton = document.getElementById("popout-logs");
 const autoRefreshLogsCheckbox = document.getElementById("auto-refresh-logs");
 const integrityCheckButton = document.getElementById("integrity-check");
@@ -289,7 +290,7 @@ function renderBackupDetails() {
           <td>${escapeHtml(auction.short_name)}</td>
           <td>${escapeHtml(auction.full_name)}</td>
           <td>${escapeHtml(auction.status)}</td>
-          <td>${escapeHtml(auction.item_count)}</td>
+          <td>${escapeHtml(auction.item_count)}${Number(auction.deleted_item_count || 0) > 0 ? ` (${escapeHtml(auction.deleted_item_count)} deleted)` : ""}</td>
         </tr>
       `).join("");
     }
@@ -512,8 +513,14 @@ function openEditAuctionModal(auction) {
   const canReset = auction.status === "archived" || auction.status === "setup";
   editAuctionResetButton.disabled = !canReset;
   editAuctionResetButton.title = canReset ? "" : "Only auctions in state setup or archived may be reset";
+  const deletedCount = Number(auction.deleted_item_count || 0);
+  if (editAuctionPurgeDeletedButton) {
+    editAuctionPurgeDeletedButton.disabled = deletedCount <= 0;
+    editAuctionPurgeDeletedButton.title = deletedCount > 0 ? "" : "No deleted items to purge";
+  }
   editAuctionModal.dataset.auctionStatus = auction.status || "";
   editAuctionModal.dataset.auctionItemCount = String(auction.item_count ?? 0);
+  editAuctionModal.dataset.auctionDeletedItemCount = String(deletedCount);
   editAuctionModal.dataset.auctionFullName = auction.full_name || "";
   editAuctionModal.hidden = false;
   editAuctionFullNameInput.focus();
@@ -589,6 +596,32 @@ async function resetAuctionById(auctionId) {
   }
 
   showMessage(`Reset auction ${auctionId}: Removed ${data.deleted.items} items, ${data.deleted.bidders} bidders, ${data.deleted.payments} payments`, "success");
+  return true;
+}
+
+async function purgeDeletedItemsByAuctionId(auctionId) {
+  const deletedCount = Number(editAuctionModal?.dataset.auctionDeletedItemCount || 0);
+  const confirmMsg = `Permanently delete ${deletedCount} deleted item(s) from auction ${auctionId}? Associated photo files will also be removed.`;
+  const password = await promptPassword(`Enter maintenance password to purge deleted items`, confirmMsg);
+  if (!password) return false;
+
+  const res = await fetch(`${API}/maintenance/auctions/purge-deleted-items`, {
+    method: "POST",
+    headers: {
+      Authorization: token,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ auction_id: auctionId, password })
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    showMessage(data.error || "Purge failed", "error");
+    return false;
+  }
+
+  const purged = data.purged || {};
+  showMessage(`Purged ${purged.items || 0} deleted item(s) and ${purged.photos || 0} photo file(s)`, "success");
   return true;
 }
 
@@ -2047,7 +2080,7 @@ try {
     <td><a href="${baseUrl}/?auction=${encodeURIComponent(auction.short_name)}" target="_blank">${auction.short_name}</a></td>
     <td>${auction.full_name}</td>
     <td style="text-align:center;"><img src="${logoSrc}" alt="Logo" style="height:40px; max-width:100px; object-fit:contain;"></td>
-    <td>${auction.item_count}</td>
+    <td>${auction.item_count}${Number(auction.deleted_item_count || 0) > 0 ? ` (${auction.deleted_item_count} deleted)` : ""}</td>
     <td> <select class="status-select" data-id="${auction.id}">
         ${statusOptions.map(opt =>
       `<option value="${opt}" ${auction.status === opt ? "selected" : ""}>${opt}</option>`
@@ -2167,6 +2200,7 @@ saveEditAuctionButton?.addEventListener("click", async () => {
   saveEditAuctionButton.disabled = true;
   editAuctionDeleteButton.disabled = true;
   editAuctionResetButton.disabled = true;
+  if (editAuctionPurgeDeletedButton) editAuctionPurgeDeletedButton.disabled = true;
 
   try {
     const updateRes = await fetch(`${API}/maintenance/auctions/update`, {
@@ -2204,6 +2238,7 @@ saveEditAuctionButton?.addEventListener("click", async () => {
     saveEditAuctionButton.disabled = false;
     editAuctionDeleteButton.disabled = Number(editAuctionModal?.dataset.auctionItemCount || 0) > 0;
     editAuctionResetButton.disabled = !["archived", "setup"].includes(editAuctionModal?.dataset.auctionStatus || "");
+    if (editAuctionPurgeDeletedButton) editAuctionPurgeDeletedButton.disabled = Number(editAuctionModal?.dataset.auctionDeletedItemCount || 0) <= 0;
   }
 });
 
@@ -2240,6 +2275,24 @@ editAuctionResetButton?.addEventListener("click", async () => {
     refreshAuctions();
   } finally {
     editAuctionResetButton.disabled = !["archived", "setup"].includes(editAuctionModal?.dataset.auctionStatus || "");
+  }
+});
+
+editAuctionPurgeDeletedButton?.addEventListener("click", async () => {
+  const auctionId = Number(editAuctionIdInput.value);
+  if (!auctionId) {
+    showMessage("Missing auction ID.", "error");
+    return;
+  }
+
+  editAuctionPurgeDeletedButton.disabled = true;
+  try {
+    const purged = await purgeDeletedItemsByAuctionId(auctionId);
+    if (!purged) return;
+    closeEditAuctionModal();
+    refreshAuctions();
+  } finally {
+    editAuctionPurgeDeletedButton.disabled = Number(editAuctionModal?.dataset.auctionDeletedItemCount || 0) <= 0;
   }
 });
 

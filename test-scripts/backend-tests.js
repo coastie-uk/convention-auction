@@ -126,6 +126,7 @@ const testData = {
   itemB: null,
   deleteItem: null,
   photoItem: null,
+  rotatePhotoItem: null,
   duplicatedPhotoItem: null,
   allSlipItemIds: [],
   bidderReportBidderAId: null,
@@ -412,6 +413,14 @@ console.log(`Created test auction id=${testData.auctionId} public_id=${testData.
     notes: "Notes Photo",
     photo: { blob: photoBlob, filename: `photo_${Date.now()}.png` }
   });
+  testData.rotatePhotoItem = await createItem({
+    publicId: testData.auctionPublicId,
+    description: "Backend Rotate Photo Item",
+    contributor: "Contributor Rotate",
+    artist: "Artist Rotate",
+    notes: "Notes Rotate",
+    photo: { blob: photoBlob, filename: `rotate_${Date.now()}.png` }
+  });
 }, { timeout: 10000 });
 
 // /login
@@ -591,7 +600,8 @@ addTest("B-007a","POST /preferences saves normalized preferences and persists to
     admin: {
       selected_auction_id: testData.auctionId,
       sort_field: "description",
-      sort_order: "desc"
+      sort_order: "desc",
+      show_deleted: true
     },
     cashier: {
       selected_auction_id: testData.auctionId,
@@ -625,7 +635,8 @@ addTest("B-007b","POST /preferences normalizes malformed payload", async () => {
     admin: {
       selected_auction_id: -9,
       sort_field: "nope",
-      sort_order: "sideways"
+      sort_order: "sideways",
+      show_deleted: "yes"
     },
     cashier: {
       selected_auction_id: "abc",
@@ -993,12 +1004,94 @@ addTest("B-027","DELETE /items/:id success", async () => {
   await setAuctionStatus("setup");
   await sleep(1000);
   const tempItemId = testData.deleteItem;
+  const before = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(before.res, 200);
+  const activeBefore = before.json.items || [];
+  const deletedItemBefore = activeBefore.find((item) => Number(item.id) === Number(tempItemId));
+  assert.ok(deletedItemBefore, "Expected delete target to be active before delete");
+
   const { res, json } = await fetchJson(`${baseUrl}/items/${tempItemId}`, {
     method: "DELETE",
     headers: authHeaders(context.token)
   });
   await expectStatus(res, 200);
   assert.ok(json && json.message, "Missing delete message");
+
+  const hidden = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(hidden.res, 200);
+  assert.ok(!(hidden.json.items || []).some((item) => Number(item.id) === Number(tempItemId)), "Soft-deleted item should be hidden by default");
+  assert.deepEqual((hidden.json.items || []).map((item) => Number(item.item_number)), Array.from({ length: hidden.json.items.length }, (_, i) => i + 1), "Active items should be renumbered after soft delete");
+
+  const shown = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items?show_deleted=true`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(shown.res, 200);
+  const deletedItem = (shown.json.items || []).find((item) => Number(item.id) === Number(tempItemId));
+  assert.ok(deletedItem, "Soft-deleted item should be returned when show_deleted=true");
+  assert.equal(Number(deletedItem.is_deleted), 1, "Deleted item should be flagged");
+  assert.equal(deletedItem.item_number, null, "Deleted item should not retain item_number");
+  assert.equal(Number(shown.json.totals.item_count), hidden.json.items.length, "Totals should count active items only");
+
+  const details = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/${tempItemId}`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(details.res, 200);
+  assert.equal(Number(details.json.is_deleted), 1, "Deleted item detail should be available for read-only viewing");
+  assert.equal(details.json.can_edit, false, "Deleted item detail should be read-only");
+});
+
+addTest("B-027a","soft-deleted item mutation guards", async () => {
+  const tempItemId = testData.deleteItem;
+  const form = new FormData();
+  form.append("description", "Should Not Update Deleted Item");
+
+  const update = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/${tempItemId}/update`, {
+    method: "POST",
+    headers: authHeaders(context.token),
+    body: form
+  });
+  await expectStatus(update.res, 400);
+
+  const move = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/${tempItemId}/move-after/${testData.itemA}`, {
+    method: "POST",
+    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({})
+  });
+  await expectStatus(move.res, 400);
+
+  const print = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/${tempItemId}/print-slip`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(print.res, 400);
+});
+
+addTest("B-027b","POST /items/:id/restore success restores to end", async () => {
+  const tempItemId = testData.deleteItem;
+  const before = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(before.res, 200);
+  const expectedNext = (before.json.items || []).length + 1;
+
+  const { res, json } = await fetchJson(`${baseUrl}/items/${tempItemId}/restore`, {
+    method: "POST",
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(res, 200);
+  assert.equal(Number(json.item_number), expectedNext, "Restored item should be appended at the end");
+
+  const after = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items`, {
+    headers: authHeaders(context.token)
+  });
+  await expectStatus(after.res, 200);
+  const restored = (after.json.items || []).find((item) => Number(item.id) === Number(tempItemId));
+  assert.ok(restored, "Restored item should be visible by default");
+  assert.equal(Number(restored.item_number), expectedNext, "Restored item should keep appended item number");
+  assert.equal(Number(restored.is_deleted || 0), 0, "Restored item should not be flagged deleted");
 });
 
 addTest("B-028","DELETE /items/:id failure unauthenticated", async () => {
@@ -1596,7 +1689,7 @@ addTest("B-043","POST /rotate-photo success", async () => {
   const { res, json } = await fetchJson(`${baseUrl}/rotate-photo`, {
     method: "POST",
     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ id: testData.photoItem, direction: "left" })
+    body: JSON.stringify({ id: testData.rotatePhotoItem, direction: "left" })
   });
   await expectStatus(res, 200);
   assert.ok(json && json.message, "Missing rotate message");
@@ -1606,7 +1699,7 @@ addTest("B-044","POST /rotate-photo failure unauthenticated", async () => {
   const res = await fetch(`${baseUrl}/rotate-photo`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: testData.photoItem, direction: "left" })
+    body: JSON.stringify({ id: testData.rotatePhotoItem, direction: "left" })
   });
   await expectStatus(res, 403);
 });
@@ -1615,7 +1708,7 @@ addTest("B-045","POST /rotate-photo failure wrong role", async () => {
   const res = await fetch(`${baseUrl}/rotate-photo`, {
     method: "POST",
     headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ id: testData.photoItem, direction: "left" })
+    body: JSON.stringify({ id: testData.rotatePhotoItem, direction: "left" })
   });
   await expectStatus(res, 403);
 });
@@ -2122,7 +2215,7 @@ addTest("B-087","POST /maintenance/generate-bids failure missing auction id", as
 
 // /auctions/:auctionId/newitem
 addTest("B-088","POST /auctions/:auctionId/newitem rate limit reset", async () => {
-//  await sleep(30000); // Wait to ensure rate limit window has passed.
+  await sleep(5000); // Wait to ensure the short test-server rate limit window has passed.
   
   await setAuctionStatus("setup");
   const form = new FormData();

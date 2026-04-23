@@ -155,6 +155,10 @@ h2 {
     z-index: 20;
 }
 
+.menu-panel--view {
+    min-width: 220px;
+}
+
 .menu-group[open] .menu-panel {
     display: grid;
 }
@@ -283,6 +287,28 @@ h2 {
     width: 16px;
 }
 
+.menu-checkbox-row {
+    align-items: center;
+    background: #f8fbff;
+    border: 1px solid #dbe6f5;
+    border-radius: 10px;
+    box-sizing: border-box;
+    color: var(--admin-text);
+    cursor: pointer;
+    display: flex;
+    font-weight: 600;
+    gap: 10px;
+    min-height: 40px;
+    padding: 8px 12px;
+}
+
+.menu-checkbox-row input[type="checkbox"] {
+    flex: 0 0 auto;
+    height: 16px;
+    margin: 0;
+    width: 16px;
+}
+
 .menu-label {
     color: var(--admin-muted);
     font-size: 0.75rem;
@@ -300,6 +326,10 @@ h2 {
     min-height: 40px;
     padding: 8px 10px;
     width: 100%;
+}
+
+.menu-select-control {
+    appearance: auto;
 }
 
 .menu-divider {
@@ -613,6 +643,25 @@ h2 {
 .item-action-icon--print svg {
     fill: currentColor;
     stroke: none;
+}
+
+.item-row--deleted {
+    color: #6b7280;
+    background: #f3f4f6;
+}
+
+.item-row--deleted td {
+    border-color: #d6d9de;
+}
+
+.item-row--deleted .item-thumb {
+    filter: grayscale(1);
+    opacity: 0.45;
+}
+
+.item-row--deleted .item-photo-placeholder,
+.item-row--deleted .item-status-indicator {
+    opacity: 0.65;
 }
 
 .status-column,
@@ -1703,6 +1752,7 @@ footer {
 :root[data-theme="dark"] .menu-item-button,
 :root[data-theme="dark"] .menu-item-link,
 :root[data-theme="dark"] .menu-choice-button,
+:root[data-theme="dark"] .menu-checkbox-row,
 :root[data-theme="dark"] .move-panel,
 :root[data-theme="dark"] .app-modal-close,
 :root[data-theme="dark"] .image-tools button,
@@ -1717,6 +1767,7 @@ footer {
 :root[data-theme="dark"] .menu-item-button:hover,
 :root[data-theme="dark"] .menu-item-link:hover,
 :root[data-theme="dark"] .menu-choice-button:hover,
+:root[data-theme="dark"] .menu-checkbox-row:hover,
 :root[data-theme="dark"] .image-tools button:hover,
 :root[data-theme="dark"] .item-action-button:hover,
 :root[data-theme="dark"] .item-context-menu-action:hover,

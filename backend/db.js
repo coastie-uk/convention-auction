@@ -9,7 +9,7 @@ const Database = require('better-sqlite3');
 const path     = require('path');
 const fs       = require('fs');
 const crypto   = require('crypto');
-const schemaVersion = '2.9';
+const schemaVersion = '3.0';
 const { logLevels, log } = require('./logger');
 const bcrypt = require('bcryptjs');
 const { ROLE_LIST, PERMISSION_LIST, ROOT_USERNAME } = require('./auth-constants');
@@ -27,10 +27,11 @@ const {
 // 2.3  Adds reversals
 // 2.4  Adds username-based users with multi-role permissions
 // 2.5  Adds items.last_print for item slip print tracking, add seconds to timekstamps
-// 2.6  Adds items.last_slide_export and items.last_card_export for export tracking, Adds items.last_bid_update for authoritative bid/retract ordering. Adds bidder ready state/fingerprint and item collection tracking for live feed. Adds donation tracking columns for cashier payments and SumUp intents
-// 2.7  Adds users.permissions for shared-login capability permissions
-// 2.8  Adds users.session_invalid_before for remote session invalidation
-// 2.9  Adds users.preferences for persisted per-user UI preferences
+// 3.0  Adds items.last_slide_export and items.last_card_export for export tracking, Adds items.last_bid_update for authoritative bid/retract ordering. Adds bidder ready state/fingerprint and item collection tracking for live feed. Adds donation tracking columns for cashier payments and SumUp intents
+//      Adds users.permissions for shared-login capability permissions
+//      Adds users.session_invalid_before for remote session invalidation
+//      Adds users.preferences for persisted per-user UI preferences
+//      Adds soft-delete metadata to items
 
  
 
@@ -111,6 +112,9 @@ if(existingSchemaVersion > schemaVersion) {
         collected_at TEXT,
         text_mod_date TEXT,
         item_number INTEGER,
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        deleted_at TEXT,
+        deleted_by TEXT,
         auction_id INTEGER REFERENCES auctions(id),
         test_item INTEGER,
         test_bid INTEGER,
@@ -237,6 +241,9 @@ if(existingSchemaVersion > schemaVersion) {
   try { db.exec("ALTER TABLE items ADD COLUMN last_bid_update TEXT"); } catch (e) { /* already exists */ }
   try { db.exec("ALTER TABLE items ADD COLUMN collected_at TEXT"); } catch (e) { /* already exists */ }
   try { db.exec("ALTER TABLE items ADD COLUMN text_mod_date TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE items ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE items ADD COLUMN deleted_at TEXT"); } catch (e) { /* already exists */ }
+  try { db.exec("ALTER TABLE items ADD COLUMN deleted_by TEXT"); } catch (e) { /* already exists */ }
   try { db.exec("ALTER TABLE bidders ADD COLUMN ready_for_collection INTEGER NOT NULL DEFAULT 0"); } catch (e) { /* already exists */ }
   try { db.exec("ALTER TABLE bidders ADD COLUMN ready_fingerprint TEXT"); } catch (e) { /* already exists */ }
   try { db.exec("ALTER TABLE bidders ADD COLUMN ready_updated_at TEXT"); } catch (e) { /* already exists */ }

@@ -304,7 +304,9 @@ module.exports = function phase1Patch (app) {
              i.photo
         FROM items i
         LEFT JOIN bidders b ON b.id = i.winning_bidder_id
-       WHERE i.auction_id = ? AND i.hammer_price IS NOT NULL
+       WHERE i.auction_id = ?
+         AND i.hammer_price IS NOT NULL
+         AND COALESCE(i.is_deleted, 0) = 0
        ORDER BY i.last_bid_update DESC, i.ROWID DESC
     `, [auctionId]);
 
@@ -323,7 +325,9 @@ module.exports = function phase1Patch (app) {
                  NULL            AS collected_at,
                  1               AS unsold
             FROM items i
-           WHERE i.auction_id = ? AND i.hammer_price IS NULL
+           WHERE i.auction_id = ?
+             AND i.hammer_price IS NULL
+             AND COALESCE(i.is_deleted, 0) = 0
            ORDER BY i.item_number
         `, [auctionId])
       : [];
@@ -342,9 +346,10 @@ module.exports = function phase1Patch (app) {
              p.last_paid_at
         FROM bidders b
         LEFT JOIN items i
-               ON i.winning_bidder_id = b.id
+              ON i.winning_bidder_id = b.id
               AND i.auction_id = b.auction_id
               AND i.hammer_price IS NOT NULL
+              AND COALESCE(i.is_deleted, 0) = 0
         LEFT JOIN (
           SELECT bidder_id,
                  SUM(${SETTLEMENT_AMOUNT_SQL}) AS payments_total,
@@ -497,6 +502,7 @@ module.exports = function phase1Patch (app) {
         FROM items i
         LEFT JOIN bidders b ON b.id = i.winning_bidder_id
        WHERE i.id = ? AND i.auction_id = ? AND i.hammer_price IS NOT NULL
+         AND COALESCE(i.is_deleted, 0) = 0
     `, [itemId, auctionId]);
     if (!item) return res.status(404).json({ error: 'Sold item not found for this auction' });
 
@@ -514,6 +520,7 @@ module.exports = function phase1Patch (app) {
       UPDATE items
          SET collected_at = CASE WHEN ? = 1 THEN strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime') ELSE NULL END
        WHERE id = ? AND auction_id = ?
+         AND COALESCE(is_deleted, 0) = 0
     `, [collected ? 1 : 0, itemId, auctionId]);
 
     if (collected) {
@@ -567,6 +574,7 @@ module.exports = function phase1Patch (app) {
       UPDATE items
          SET collected_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
        WHERE auction_id = ? AND winning_bidder_id = ? AND hammer_price IS NOT NULL
+         AND COALESCE(is_deleted, 0) = 0
     `, [auctionId, bidderId]);
 
     const payload = getLiveFeedPayload(auctionId, false);
@@ -613,7 +621,8 @@ module.exports = function phase1Patch (app) {
           LEFT JOIN (
             SELECT winning_bidder_id AS bidder_id, SUM(hammer_price) AS lots_total
               FROM items
-             WHERE auction_id = ? AND hammer_price IS NOT NULL
+           WHERE auction_id = ? AND hammer_price IS NOT NULL
+             AND COALESCE(is_deleted, 0) = 0
              GROUP BY winning_bidder_id
           ) l ON l.bidder_id = b.id
           LEFT JOIN (
@@ -624,6 +633,7 @@ module.exports = function phase1Patch (app) {
          WHERE i.auction_id = ?
            AND i.hammer_price IS NOT NULL
            AND i.collected_at IS NULL
+           AND COALESCE(i.is_deleted, 0) = 0
          ORDER BY b.paddle_number, i.item_number
       `, [auctionId, auctionId]);
 
@@ -671,8 +681,9 @@ module.exports = function phase1Patch (app) {
         LEFT JOIN (
           SELECT winning_bidder_id AS bidder_id,
                  SUM(CASE WHEN hammer_price IS NULL THEN 0 ELSE hammer_price END) AS lots_total
-            FROM items
+           FROM items
            WHERE auction_id = ?
+             AND COALESCE(is_deleted, 0) = 0
            GROUP BY winning_bidder_id
         ) i ON i.bidder_id = b.id
         LEFT JOIN (
@@ -990,7 +1001,7 @@ logFromRequest(req, logLevels.DEBUG, `Reversal inserted with id=${info.lastInser
              SUM(i.hammer_price) AS lots_total,
              IFNULL((SELECT SUM(${SETTLEMENT_AMOUNT_SQL}) FROM payments p WHERE p.bidder_id = b.id),0) AS payments_total
         FROM bidders b
-   LEFT JOIN items i ON i.winning_bidder_id = b.id
+   LEFT JOIN items i ON i.winning_bidder_id = b.id AND COALESCE(i.is_deleted, 0) = 0
    WHERE b.auction_id = ?
     GROUP BY b.id`,[auctionId]);
 
@@ -1040,6 +1051,7 @@ const stmt = db.prepare(`
          last_bid_update = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
    WHERE id = ?
      AND hammer_price IS NULL          -- ← only if not finalised yet
+     AND COALESCE(is_deleted, 0) = 0
 `);
 
 const info = stmt.run(bidder.id, price, itemId);
@@ -1061,7 +1073,8 @@ if (info.changes === 0) {
     `SELECT COUNT(*) AS cnt
        FROM items
       WHERE auction_id = ?
-        AND hammer_price IS NULL`,
+        AND hammer_price IS NULL
+        AND COALESCE(is_deleted, 0) = 0`,
     [auctionId]
   ).cnt;
 
@@ -1113,8 +1126,9 @@ if (info.changes === 0) {
              i.hammer_price,
              b.paddle_number
         FROM items i
-        LEFT JOIN bidders b ON b.id = i.winning_bidder_id
+       LEFT JOIN bidders b ON b.id = i.winning_bidder_id
        WHERE i.id = ?
+         AND COALESCE(i.is_deleted, 0) = 0
     `, [itemId]);
 
     if (!item) {
@@ -1203,6 +1217,7 @@ if (info.changes === 0) {
                hammer_price = NULL,
                last_bid_update = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')
          WHERE id = ?
+           AND COALESCE(is_deleted, 0) = 0
       `, [itemId]);
       if (paid) {
         logFromRequest(req, logLevels.INFO, `Bid retracted for item ${itemId} by bidder ${bidderId} but payment exists`);
@@ -1242,6 +1257,7 @@ if (!auctionId || !id) return res.status(400).json({ error: 'item # and auction_
       SELECT item_number, description, hammer_price, test_item, test_bid, photo
         FROM items
        WHERE winning_bidder_id = ? AND auction_id = ?
+         AND COALESCE(is_deleted, 0) = 0
        ORDER BY item_number`, [id, auctionId]);
 
   const payments = db.all(`
@@ -1292,7 +1308,7 @@ settlement.get('/summary', authenticateRole('cashier'), (req, res) => {
 
   // 1. Total hammer price
   const { total } = db.get(
-    `SELECT SUM(hammer_price) AS total FROM items WHERE auction_id = ?`,
+    `SELECT SUM(hammer_price) AS total FROM items WHERE auction_id = ? AND COALESCE(is_deleted, 0) = 0`,
     [aid]
   ) || { total: 0 };
 

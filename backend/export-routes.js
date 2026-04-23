@@ -217,9 +217,10 @@ function registerExportRoutes({
                         ELSE ''
                     END AS bidder_label,
                     i.hammer_price
-               FROM items i
+              FROM items i
           LEFT JOIN bidders b ON b.id = i.winning_bidder_id
               WHERE i.auction_id = ?
+                AND COALESCE(i.is_deleted, 0) = 0
               ORDER BY i.item_number ASC`,
             [auctionId]
         );
@@ -310,6 +311,7 @@ function registerExportRoutes({
                     `UPDATE items
                         SET ${trackingColumn} = ?
                       WHERE auction_id = ?
+                        AND COALESCE(is_deleted, 0) = 0
                         AND id IN (${placeholders})`,
                     [exportStamp, auctionId, ...chunk]
                 );
@@ -326,7 +328,8 @@ function registerExportRoutes({
         const info = db.run(
             `UPDATE items
                 SET ${trackingColumn} = NULL
-              WHERE auction_id = ?`,
+              WHERE auction_id = ?
+                AND COALESCE(is_deleted, 0) = 0`,
             [auctionId]
         );
         return Number(info?.changes || 0);
@@ -451,7 +454,7 @@ function registerExportRoutes({
         const config = JSON.parse(configData);
         const pptx = new pptxgen();
         const totalItems = db.get(
-            "SELECT COUNT(*) AS count FROM items WHERE auction_id = ?",
+            "SELECT COUNT(*) AS count FROM items WHERE auction_id = ? AND COALESCE(is_deleted, 0) = 0",
             [auctionId]
         )?.count ?? 0;
 
@@ -944,6 +947,7 @@ function registerExportRoutes({
               WHERE al.object_type = 'item'
                 AND al.action = 'finalize'
                 AND i.auction_id = ?
+                AND COALESCE(i.is_deleted, 0) = 0
               ORDER BY al.created_at ASC, al.id ASC`,
             [auctionId]
         );
@@ -1726,6 +1730,7 @@ function registerExportRoutes({
                  ON i.winning_bidder_id = b.id
                 AND i.auction_id = ?
                 AND i.hammer_price IS NOT NULL
+                AND COALESCE(i.is_deleted, 0) = 0
                LEFT JOIN (
                     SELECT bidder_id, SUM(amount - COALESCE(donation_amount, 0)) AS payments_total
                       FROM payments
@@ -1749,6 +1754,7 @@ function registerExportRoutes({
               WHERE i.auction_id = ?
                 AND i.hammer_price IS NOT NULL
                 AND i.winning_bidder_id IS NOT NULL
+                AND COALESCE(i.is_deleted, 0) = 0
               ORDER BY i.winning_bidder_id ASC, i.item_number ASC`,
             [auctionId]
         );
@@ -2699,7 +2705,8 @@ function registerExportRoutes({
                         END AS bidder_label
                    FROM items i
               LEFT JOIN bidders b ON b.id = i.winning_bidder_id
-                  WHERE i.id = ? AND i.auction_id = ?`,
+                  WHERE i.id = ? AND i.auction_id = ?
+                    AND COALESCE(i.is_deleted, 0) = 0`,
                 [itemId, auctionId]
             );
 
@@ -2753,7 +2760,9 @@ function registerExportRoutes({
             const foundRows = db.all(
                 `SELECT id
                  FROM items
-                 WHERE auction_id = ? AND id IN (${placeholders})`,
+                 WHERE auction_id = ?
+                   AND COALESCE(is_deleted, 0) = 0
+                   AND id IN (${placeholders})`,
                 [auctionId, ...itemIds]
             );
             const foundIdSet = new Set((foundRows || []).map((row) => Number(row.id)));
@@ -2876,6 +2885,7 @@ function registerExportRoutes({
                        FROM items i
                   LEFT JOIN bidders b ON b.id = i.winning_bidder_id
                       WHERE i.auction_id = ?
+                        AND COALESCE(i.is_deleted, 0) = 0
                         AND i.id IN (${itemIds.map(() => "?").join(",")})
                    ORDER BY i.item_number ASC`,
                     [selection.auctionId, ...itemIds]

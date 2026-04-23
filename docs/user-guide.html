@@ -353,7 +353,9 @@ document.addEventListener("DOMContentLoaded", () => {
             <li><strong>Print item slip</strong> generates a single-item PDF and asks for print confirmation before updating <code>last_print</code>.</li>
             <li><strong>History</strong> opens the item audit trail from the shared audit log.</li>
             <li><strong>Photo tools</strong> in the edit and add forms support live capture, rotate left, rotate right, and crop.</li>
-            <li><strong>Delete Item</strong> is available only while item editing is allowed. Deleting an item is permanent and cannot be undone.</li>
+            <li><strong>Delete Item</strong> is available only while item editing is allowed. Deleting an item hides it, removes its item number, and renumbers the remaining items. It is not permanently removed until purged using the "Manage Auctions" interface.</li>
+            <li><strong>Show deleted items:</strong> use <strong>View &gt; Show deleted items</strong> to reveal deleted rows. Deleted rows are shown at the bottom of the table.</li>
+            <li><strong>Restore</strong> returns a deleted item to the end of the auction with the next available item number. Restore is available only in setup or locked states.</li>
           </ul>
 
           <h3>Manage Items Action Icons</h3>
@@ -462,6 +464,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <li><strong>During bid entry:</strong> enter a name if useful. A non-empty name updates the stored name for that paddle; leaving the field empty does not clear an existing name.</li>
             <li><strong>Manage Bidders:</strong> open <strong>Operations &gt; Manage Bidders...</strong> to edit or clear names for known paddle numbers, or add a new paddle/name pair.</li>
             <li><strong>Show names:</strong> use <strong>View &gt; Show bidder names</strong> to display names beside paddle numbers in the Manage Items table. The option is off by default.</li>
+            <li><strong>Show deleted items:</strong> use <strong>View &gt; Show deleted items</strong>.  Deleted items remain hidden in other views and reports.</li>
             <li><strong>Archived auctions:</strong> bidder names are read-only once the auction is archived.</li>
           </ul>
         </div>
@@ -826,7 +829,8 @@ document.addEventListener("DOMContentLoaded", () => {
           <ul class="compact-list">
             <li><strong>Auction Management</strong> lists existing auctions with ID, URL tag, name, logo, item count, status, and the <strong>Admin Can Set State</strong> flag.</li>
             <li><strong>Edit Auction</strong> opens a modal for the auction name, URL tag, logo, and the <strong>Allow admins to change the auction state</strong> checkbox.</li>
-            <li><strong>Reset Auction</strong> and <strong>Delete Auction</strong> remain maintenance-only operations and are offered from the edit modal.</li>
+            <li><strong>Reset Auction</strong> and <strong>Delete Auction</strong>. Reset removes all auction items, bidders, and payments. Delete removes the auction entirely.</li>
+            <li><strong>Purge Deleted Items</strong> permanently removes deleted items and their photo files from the selected auction after maintenance password confirmation.</li>
             <li><strong>Add New Auction</strong> has dedicated fields for the display name, URL tag, and logo.</li>
           </ul>
         </div>

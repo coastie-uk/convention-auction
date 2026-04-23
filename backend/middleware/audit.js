@@ -116,6 +116,7 @@ function recomputeBalanceAndAudit(bidder_id, req) {
         FROM items i
         LEFT JOIN bidders b ON b.id = i.winning_bidder_id
         WHERE winning_bidder_id = ?
+          AND COALESCE(i.is_deleted, 0) = 0
       `,
       [bidder_id]
     );

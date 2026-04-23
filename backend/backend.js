@@ -120,6 +120,12 @@ const ADMIN_ITEM_STATUS_LABELS = Object.freeze({
   collected: 'Item collected'
 });
 
+const ACTIVE_ITEM_WHERE = "COALESCE(is_deleted, 0) = 0";
+
+function isItemDeleted(item) {
+  return Number(item?.is_deleted || 0) === 1;
+}
+
 function getAdminItemStatus(item) {
   const isSold = item?.hammer_price != null && item?.winning_bidder_id != null;
   if (!isSold) {
@@ -161,6 +167,13 @@ function getAdminItemStatus(item) {
 
 function getItemEditState(item, auctionStatus) {
   const normalizedStatus = String(auctionStatus || '').toLowerCase();
+
+  if (isItemDeleted(item)) {
+    return {
+      can_edit: false,
+      edit_block_reason: 'Deleted items are read-only. Restore the item before editing it.'
+    };
+  }
 
   if (normalizedStatus !== 'setup' && normalizedStatus !== 'locked') {
     return {
@@ -620,7 +633,7 @@ app.post('/change-password', authenticateAccess({ roles: ROLE_LIST, permissions:
 
 // Get the next item number for a given auction ID
 function getNextItemNumber(auction_id, callback) {
-    db.get(`SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ?`, [auction_id], (err, row) => {
+    db.get(`SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ? AND ${ACTIVE_ITEM_WHERE}`, [auction_id], (err, row) => {
         if (err) return callback(err);
         const itemNumber = row?.next || 1;
         callback(null, itemNumber);
@@ -798,10 +811,19 @@ app.get('/auctions/:auctionId/items', authenticateRole("admin"), (req, res) => {
     const auction_id = Number(req.params.auctionId);
     const sort = (req.query.sort || "asc").toUpperCase();
     const field = req.query.field || "item_number";
+    const showDeleted = String(req.query.show_deleted || "").toLowerCase() === "true";
 
-    const allowedFields = ["item_number", "paddle_number", "hammer_price", "description", "contributor", "artist"];
-    const sortField = allowedFields.includes(field) ? field : "item_number";
+    const allowedFields = {
+        item_number: "i.item_number",
+        paddle_number: "b.paddle_number",
+        hammer_price: "i.hammer_price",
+        description: "i.description",
+        contributor: "i.contributor",
+        artist: "i.artist"
+    };
+    const sortField = allowedFields[field] || allowedFields.item_number;
     const sortOrder = sort.toUpperCase() === "DESC" ? "DESC" : "ASC";
+    const deletedFilter = showDeleted ? "" : `AND ${ACTIVE_ITEM_WHERE.replaceAll("is_deleted", "i.is_deleted")}`;
 
     if (!auction_id) {
         return res.status(400).json({ error: "Missing auction_id" });
@@ -827,7 +849,10 @@ app.get('/auctions/:auctionId/items', authenticateRole("admin"), (req, res) => {
            i.date,
            i.mod_date,
            i.text_mod_date,
-           i.last_print
+           i.last_print,
+           COALESCE(i.is_deleted, 0) AS is_deleted,
+           i.deleted_at,
+           i.deleted_by
     FROM items   i
     LEFT JOIN bidders b ON b.id = i.winning_bidder_id
     LEFT JOIN (
@@ -835,6 +860,7 @@ app.get('/auctions/:auctionId/items', authenticateRole("admin"), (req, res) => {
              SUM(sold.hammer_price) AS lots_total
         FROM items sold
        WHERE sold.auction_id = ?
+         AND COALESCE(sold.is_deleted, 0) = 0
          AND sold.hammer_price IS NOT NULL
          AND sold.winning_bidder_id IS NOT NULL
        GROUP BY sold.winning_bidder_id
@@ -846,7 +872,8 @@ app.get('/auctions/:auctionId/items', authenticateRole("admin"), (req, res) => {
        GROUP BY bidder_id
     ) payments ON payments.bidder_id = i.winning_bidder_id
     WHERE i.auction_id = ?
-    ORDER BY ${sortField} COLLATE NOCASE ${sortOrder}, item_number ${sortOrder}
+      ${deletedFilter}
+    ORDER BY COALESCE(i.is_deleted, 0) ASC, ${sortField} COLLATE NOCASE ${sortOrder}, i.item_number ${sortOrder}
   `;
 
     try {
@@ -865,6 +892,7 @@ app.get('/auctions/:auctionId/items', authenticateRole("admin"), (req, res) => {
                     SUM(i.hammer_price) AS hammer_total
                 FROM items i
                 WHERE i.auction_id = ?
+                  AND COALESCE(i.is_deleted, 0) = 0
             `).get(auction_id);
 
         } catch (err) {
@@ -943,7 +971,7 @@ try {
     
   await awaitMiddleware(upload.single('photo'))(req, res);
 
-    db.get('SELECT photo, auction_id, description, contributor, artist, notes, winning_bidder_id, hammer_price FROM items WHERE id = ?', [id], async (err, row) => {
+    db.get('SELECT photo, auction_id, description, contributor, artist, notes, winning_bidder_id, hammer_price, is_deleted FROM items WHERE id = ?', [id], async (err, row) => {
         if (err) {
             logFromRequest(req, logLevels.ERROR, `Update: Error ${err.message}`);
             return res.status(500).json({ error: err.message });
@@ -955,6 +983,10 @@ try {
         else if (row.auction_id !== req.auction.id) {
             logFromRequest(req, logLevels.ERROR, `Update: Item ${id} auction ID mismatch. Item is in auction ${row.auction_id}, request is for auction ${req.auction.id}`);
             return res.status(400).json({ error: "Item auction ID mismatch" });
+        }
+        else if (isItemDeleted(row)) {
+            logFromRequest(req, logLevels.WARN, `Edit blocked: item ${id} is deleted`);
+            return res.status(400).json({ error: "Deleted items cannot be edited. Restore the item first." });
         }
         else if (row.winning_bidder_id != null || row.hammer_price != null) {
                  logFromRequest(req, logLevels.WARN, `Edit blocked: item ${id} has bids`);
@@ -1104,7 +1136,14 @@ app.post('/auctions/:auctionId/items/:id/move-auction/:targetAuctionId', authent
             }
             
             // Moving an item with bids messes up our data integrity - block it
-            const itemBidState = db.get("SELECT winning_bidder_id, hammer_price FROM items WHERE id = ?", [id]);
+            const itemBidState = db.get("SELECT winning_bidder_id, hammer_price, is_deleted FROM items WHERE id = ?", [id]);
+            if (!itemBidState) {
+                return res.status(400).json({ error: "Item not found" });
+            }
+            if (isItemDeleted(itemBidState)) {
+                logFromRequest(req, logLevels.WARN, `Move blocked: item ${id} is deleted`);
+                return res.status(400).json({ error: "Deleted items cannot be moved. Restore the item first." });
+            }
             if (itemBidState?.winning_bidder_id != null || itemBidState?.hammer_price != null) {
                 logFromRequest(req, logLevels.WARN, `Move blocked: item ${id} has bids`);
                 return res.status(400).json({ error: "Item has bids and cannot be moved" });
@@ -1130,7 +1169,7 @@ app.post('/auctions/:auctionId/items/:id/move-auction/:targetAuctionId', authent
             }
 
             logFromRequest(req, logLevels.DEBUG, `Moving ${id} from auction ${oldAuctionId} to auction ${newAuctionId}`);
-            db.get("SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ?", [newAuctionId], (err2, result) => {
+            db.get(`SELECT MAX(item_number) + 1 AS next FROM items WHERE auction_id = ? AND ${ACTIVE_ITEM_WHERE}`, [newAuctionId], (err2, result) => {
                 if (err2) {
                     logFromRequest(req, logLevels.ERROR, `Update: Error getting next item number → ${err2.message}`);
                     return res.status(500).json({ error: err2.message });
@@ -1171,69 +1210,123 @@ app.post('/auctions/:auctionId/items/:id/move-auction/:targetAuctionId', authent
 
 //--------------------------------------------------------------------------
 // DELETE /items/:id
-// API to delete an item, including photos
+// API to soft-delete an item. Photos are retained until purge.
 //--------------------------------------------------------------------------
 
 app.delete('/items/:id', authenticateRole("admin"), checkAuctionState(['setup', 'locked']), (req, res) => {
-    const { id: itemId } = req.params;
+    const itemId = Number(req.params.id);
 
     logFromRequest(req, logLevels.DEBUG, `Delete: Request Recieved for ${itemId}`);
 
     try {
-
-    db.get('SELECT description, photo, auction_id, winning_bidder_id, hammer_price FROM items WHERE id = ?', [itemId], (err, row) => {
-        if (err) {
-            logFromRequest(req, logLevels.ERROR, `Delete: error ${err.message}`);
-            return res.status(500).json({ error: err.message });
-        }
-        else if (!row) {
+        const row = db.get('SELECT description, item_number, auction_id, winning_bidder_id, hammer_price, is_deleted FROM items WHERE id = ?', [itemId]);
+        if (!row) {
             logFromRequest(req, logLevels.ERROR, `Delete: Item id ${itemId} not found`);
             return res.status(400).json({ error: 'Item not found' });
         }
-       else if (row.winning_bidder_id != null || row.hammer_price != null) {
+        else if (row.winning_bidder_id != null || row.hammer_price != null) {
             logFromRequest(req, logLevels.WARN, `Delete blocked: item ${itemId} has bids`);
             return res.status(400).json({ error: "Item has bids and cannot be deleted" });
+        }
+        else if (isItemDeleted(row)) {
+            logFromRequest(req, logLevels.WARN, `Delete blocked: item ${itemId} is already deleted`);
+            return res.status(400).json({ error: "Item is already deleted" });
         }
         else if (row.auction_id !== req.auction.id) {
             logFromRequest(req, logLevels.ERROR, `Delete: Item ${itemId} auction ID mismatch. Item is in auction ${row.auction_id}, request is for auction ${req.auction.id}`);
             return res.status(400).json({ error: "Item auction ID mismatch" });
         }
 
-        if (row.photo) {
-            const photoPath = path.join(UPLOAD_DIR, row.photo);
-            if (fs.existsSync(photoPath)) {
-                fs.unlinkSync(photoPath);
-            }
+        db.run(`
+            UPDATE items
+               SET is_deleted = 1,
+                   deleted_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'),
+                   deleted_by = ?,
+                   item_number = NULL,
+                   mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime')
+             WHERE id = ?
+        `, [getAuditActor(req), itemId]);
 
-            const oldPreviewPath = path.join(UPLOAD_DIR, `preview_${row.photo}`);
-            if (fs.existsSync(oldPreviewPath)) {
-                fs.unlinkSync(oldPreviewPath);
-            }
-        }
+        logFromRequest(req, logLevels.INFO, `Soft-deleted item ${itemId} from auction ${row.auction_id}. Description: ${row.description}`);
 
-        db.run('DELETE FROM items WHERE id = ?', [itemId], function (err) {
+        renumberAuctionItems(row.auction_id, (err, count) => {
             if (err) {
-                logFromRequest(req, logLevels.ERROR, `Delete: error ${err.message}`);
-                return res.status(500).json({ error: err.message });
+                logFromRequest(req, logLevels.ERROR, `Failed to renumber items after soft delete:` + err.message);
+            } else {
+                logFromRequest(req, logLevels.INFO, `Renumbered ${count} active items in auction ${row.auction_id} after soft deletion`);
             }
-
-            logFromRequest(req, logLevels.INFO, `Deleted item ${itemId} from auction ${row.auction_id}. Description: ${row.description}`);
-
-            renumberAuctionItems(row.auction_id, (err, count) => {
-                if (err) {
-                    logFromRequest(req, logLevels.ERROR, `Failed to renumber items after delete:` + err.message);
-
-                } else {
-                    logFromRequest(req, logLevels.INFO, `Renumbered ${count} items in auction ${row.auction_id} after deletion`);
-                }
-            });
-            audit(getAuditActor(req), 'delete', 'item', itemId, { auction_id: row.auction_id, description: row.description });
-            res.json({ message: 'Item deleted' });
         });
-    });
-} catch (err) {
+        audit(getAuditActor(req), 'soft delete', 'item', itemId, {
+            auction_id: row.auction_id,
+            description: row.description,
+            previous_item_number: row.item_number
+        });
+        res.json({ message: 'Item deleted' });
+    } catch (err) {
         logFromRequest(req, logLevels.ERROR, `Delete: error ${err.message}`);
         res.status(500).json({ error: err.message });
+    }
+});
+
+//--------------------------------------------------------------------------
+// POST /items/:id/restore
+// Restore a soft-deleted item to the end of its auction.
+//--------------------------------------------------------------------------
+
+app.post('/items/:id/restore', authenticateRole("admin"), checkAuctionState(['setup', 'locked']), (req, res) => {
+    const itemId = Number(req.params.id);
+
+    try {
+        const row = db.get('SELECT id, description, auction_id, winning_bidder_id, hammer_price, is_deleted FROM items WHERE id = ?', [itemId]);
+        if (!row) {
+            logFromRequest(req, logLevels.ERROR, `Restore: Item id ${itemId} not found`);
+            return res.status(400).json({ error: 'Item not found' });
+        }
+        if (row.auction_id !== req.auction.id) {
+            logFromRequest(req, logLevels.ERROR, `Restore: Item ${itemId} auction ID mismatch. Item is in auction ${row.auction_id}, request is for auction ${req.auction.id}`);
+            return res.status(400).json({ error: "Item auction ID mismatch" });
+        }
+        if (!isItemDeleted(row)) {
+            logFromRequest(req, logLevels.WARN, `Restore blocked: item ${itemId} is not deleted`);
+            return res.status(400).json({ error: "Item is not deleted" });
+        }
+        if (row.winning_bidder_id != null || row.hammer_price != null) {
+            logFromRequest(req, logLevels.WARN, `Restore blocked: item ${itemId} has bids`);
+            return res.status(400).json({ error: "Deleted item has bids and cannot be restored" });
+        }
+
+        getNextItemNumber(row.auction_id, (err, newNumber) => {
+            if (err) {
+                logFromRequest(req, logLevels.ERROR, `Restore: failed to calculate next item number: ${err.message}`);
+                return res.status(500).json({ error: "Database error" });
+            }
+
+            db.run(`
+                UPDATE items
+                   SET is_deleted = 0,
+                       deleted_at = NULL,
+                       deleted_by = NULL,
+                       item_number = ?,
+                       mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime')
+                 WHERE id = ?
+            `, [newNumber, itemId], function (updateErr) {
+                if (updateErr) {
+                    logFromRequest(req, logLevels.ERROR, `Restore: error ${updateErr.message}`);
+                    return res.status(500).json({ error: updateErr.message });
+                }
+
+                logFromRequest(req, logLevels.INFO, `Restored item ${itemId} to auction ${row.auction_id} as item #${newNumber}`);
+                audit(getAuditActor(req), 'restore', 'item', itemId, {
+                    auction_id: row.auction_id,
+                    description: row.description,
+                    restored_item_number: newNumber
+                });
+                return res.json({ message: 'Item restored', item_number: newNumber });
+            });
+        });
+    } catch (err) {
+        logFromRequest(req, logLevels.ERROR, `Restore: error ${err.message}`);
+        return res.status(500).json({ error: err.message });
     }
 });
 
@@ -1273,6 +1366,7 @@ app.post('/rotate-photo', authenticateRole("admin"), async (req, res) => {
             SELECT i.photo,
                    i.winning_bidder_id,
                    i.hammer_price,
+                   i.is_deleted,
                    a.status AS auction_status
               FROM items i
               LEFT JOIN auctions a ON a.id = i.auction_id
@@ -1335,7 +1429,8 @@ app.get('/auctions/:publicId/slideshow-items', authenticateRole("slideshow"), ch
            FROM items
           WHERE photo IS NOT NULL
             AND photo <> ''
-            AND auction_id = ?`,
+            AND auction_id = ?
+            AND ${ACTIVE_ITEM_WHERE}`,
             [Number(auction_id)]          // one array of bind values
         );
 
@@ -1555,13 +1650,13 @@ app.post('/auctions/:auctionId/items/:id/move-after/:after_id', authenticateRole
         const sourceItem = db.get(
             `SELECT id, description, contributor, artist, notes, photo, auction_id, test_item
              FROM items
-             WHERE id = ? AND auction_id = ?`,
+             WHERE id = ? AND auction_id = ? AND ${ACTIVE_ITEM_WHERE}`,
             [id, auctionId]
         );
         if (!sourceItem) return res.status(400).json({ error: "Item not found" });
 
         const rows = db.all(
-            "SELECT id FROM items WHERE auction_id = ? ORDER BY item_number ASC",
+            `SELECT id FROM items WHERE auction_id = ? AND ${ACTIVE_ITEM_WHERE} ORDER BY item_number ASC`,
             [auctionId]
         );
         if (!rows.length) return res.status(400).json({ error: "Auction empty" });
@@ -1688,8 +1783,18 @@ app.post('/auctions/:auctionId/items/:id/move-after/:after_id', authenticateRole
 
 
 function renumberAuctionItems(auctionId, callback) {
+    try {
+        db.run(
+            `UPDATE items SET item_number = NULL WHERE auction_id = ? AND COALESCE(is_deleted, 0) = 1 AND item_number IS NOT NULL`,
+            [auctionId]
+        );
+    } catch (err) {
+        log('Renumber', logLevels.ERROR, `Renumber: Failed to clear deleted item numbers for auction ${auctionId}:` + err);
+        return callback(err);
+    }
+
     db.all(
-        "SELECT id FROM items WHERE auction_id = ? ORDER BY item_number ASC",
+        `SELECT id FROM items WHERE auction_id = ? AND ${ACTIVE_ITEM_WHERE} ORDER BY item_number ASC`,
         [auctionId],
         (err, rows) => {
             if (err) {

@@ -91,15 +91,20 @@
 
                     <details class="menu-group">
                         <summary class="menu-trigger">View</summary>
-                        <div class="menu-panel">
-                            <label class="menu-field" for="sort-field">
-                            <label class="menu-field menu-checkbox-field" for="show-bidder-names">
-                                <span class="menu-label">Show bidder names</span>
+                        <div class="menu-panel menu-panel--view">
+                            <span class="menu-label">Show...</span>
+                            <label class="menu-checkbox-row" for="show-bidder-names">
                                 <input id="show-bidder-names" type="checkbox">
+                                <span>Bidder names</span>
+                            </label>
+                            <label class="menu-checkbox-row" for="show-deleted-items">
+                                <input id="show-deleted-items" type="checkbox">
+                                <span>Deleted items</span>
                             </label>
                             <div class="menu-divider" role="separator"></div>
+                            <label class="menu-field" for="sort-field">
                                 <span class="menu-label">Sort by</span>
-                                <select id="sort-field" class="menu-native-select" aria-hidden="true" tabindex="-1">
+                                <select id="sort-field" class="menu-select-control">
                                     <option value="item_number">Number</option>
                                     <option value="description">Name</option>
                                     <option value="contributor">Contributor</option>
@@ -107,26 +112,21 @@
                                     <option value="paddle_number">Bidder</option>
                                     <option value="hammer_price">Price</option>
                                 </select>
-                                <div id="sort-field-menu" class="menu-choice-list" role="menu" aria-label="Sort field options"></div>
                             </label>
-                            <div class="menu-divider" role="separator"></div>
+                            <label class="menu-field" for="sort-order">
+                                <span class="menu-label">Order by</span>
+                                <select id="sort-order" class="menu-select-control">
+                                    <option value="asc">Ascending</option>
+                                    <option value="desc">Descending</option>
+                                </select>
+                            </label>
                             <label class="menu-field" for="photo-preview-size">
-                                <span class="menu-label">Photo preview</span>
-                                <select id="photo-preview-size" class="menu-native-select" aria-hidden="true" tabindex="-1">
+                                <span class="menu-label">Photo size</span>
+                                <select id="photo-preview-size" class="menu-select-control">
                                     <option value="small">Small</option>
                                     <option value="medium">Medium</option>
                                     <option value="large">Large</option>
                                 </select>
-                                <div id="photo-preview-size-menu" class="menu-choice-list" role="menu" aria-label="Photo preview size options"></div>
-                            </label>
-                            <div class="menu-divider" role="separator"></div>
-                            <label class="menu-field" for="sort-order">
-                                <span class="menu-label">Order</span>
-                                <select id="sort-order" class="menu-native-select" aria-hidden="true" tabindex="-1">
-                                    <option value="asc">Ascending</option>
-                                    <option value="desc">Descending</option>
-                                </select>
-                                <div id="sort-order-menu" class="menu-choice-list" role="menu" aria-label="Sort order options"></div>
                             </label>
                         </div>
                     </details>
