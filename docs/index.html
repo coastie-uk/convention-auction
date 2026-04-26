@@ -24,8 +24,8 @@
         <h1>Integrated end-to-end management of live auctions</h1>
         <p>
           Convention Auction is a web platform for fan-convention style auctions: public item intake, organisation tools,
-          slide deck generation, live bid recording, and cashier settlement.
-          It supports multiple auctions, mobile-friendly flows, and SumUp payments.
+          slide deck generation, live bid recording, payments and pickup management.
+          It supports multiple auctions, multiple users, mobile-friendly flows, and SumUp payments.
         </p>
         <div class="hero-actions">
           <a class="btn" href="https://github.com/coastie-uk/convention-auction" target="_blank" rel="noreferrer">Repository</a>
@@ -53,16 +53,27 @@
           <h3>Core features</h3>
           <ul>
             <li>Multiple simultaneous auctions with managed lifecycle states.</li>
-            <li>Public item submission with optional photos and QR support.</li>
-            <li>Admin tools for editing, photos, moving items, and exports.</li>
+            <li>Public item submission with photos upload and QR support.</li>
+            <li>Admin tools for editing, photos, moving/copying items, and exports.</li>
             <li>Automatic PowerPoint slide deck and item card / slip generation with customisable templates</li>
             <li>Live bid recording with undo and running totals.</li>
-            <li>Cashier panel to collate bidders' items, handle payments and refunds</li>
+            <li>Automatic collation of bidders' items; payment and refund handling</li>
             <li>Auto-updating slideshow for in-venue displays.</li>
+            <li>Comprehensive maintenance panel for data management, diagnostics, and auction control.</li>
+            <li>Support for multiple user accounts with configurable permissions</li>
             <li>SumUp payment integration (web checkout and card reader).</li>
           </ul>
         </div>
         <div class="panel">
+                    <h3>New in Version 3</h3>
+          <ul>
+            <li>New responsive menu-driven UI with light/dark themes.</li>
+            <li>Enhanced item management & photo tools.</li>
+            <li>New item assembly & collection workflow.</li>
+            <li>New report generation functions.</li>
+            <li>Support for donations & receipt printing.</li>
+            <li>Single login portal with finer user access controls.</li>
+          </ul>
           <h3>Stack</h3>
           <ul>
             <li>Node.js + Express backend.</li>
@@ -101,17 +112,17 @@
         </div>
       </div>
       <div class="panel">
-        <h3>Admin Panel</h3>
+        <h3>Item Management Panel</h3>
         <p>Manage items, record bids, and generate exports for the live auction.</p>
         <div class="grid">
           <div>
             <ul>
-              <li>Create, edit, reorder, and delete items.</li>
+              <li>Create, edit, reorder, delete and restore items.</li>
               <li>Rotate, crop, and replace item photos.</li>
-              <li>Move items between auctions</li>
+              <li>Move/Copy items between auctions</li>
               <li>Record bids with undo support.</li>
-              <li>Generate auction slides and item cards.</li>
-              <li>Launch public intake, live feed, cashier, and maintenance pages.</li>
+              <li>Generate auction slides and item cards/slips</li>
+              <li>Manage optional bidder names.</li>
             </ul>
           </div>
           <img class="screenshot" src="images/admin-overview.png" alt="Admin panel overview">
@@ -119,7 +130,7 @@
       </div>
 
       <div class="panel" style="margin-top: 24px;">
-        <h3>Cashier Panel</h3>
+        <h3>Payment Management Panel</h3>
         <p>Close out balances, manage refunds, and track payment methods.</p>
         <div class="grid">
           <img class="screenshot" src="images/cashier-overview.png" alt="Cashier overview">
@@ -128,7 +139,7 @@
               <li>List bidders, totals due, and settlement status.</li>
               <li>Supports cash, PayPal, manual card, or SumUp payments.</li>
               <li>Payment methods can be enabled/disabled in server setup</li>
-              <li>Payment operations are logged for audit trail</li>
+              <li>Supports pop-out buyer-facing view</li>
               <li>View detailed payment history and issue refunds.</li>
               <li>Export CSV summaries by bidder and payment method.</li>
             </ul>
@@ -137,15 +148,16 @@
       </div>
 
       <div class="panel" style="margin-top: 24px;">
-        <h3>Live Feed</h3>
+        <h3>Collection Management Panel</h3>
         <p>Real-time view of finalized bids to help organize winning lots.</p>
         <div class="grid">
           <div>
             <ul>
               <li>Shows paddle number, lot, title, and hammer price.</li>
-              <li>Filter by paddle or include unsold items.</li>
+              <li>Custom filter and sort options with automatic change highlighting</li>
               <li>Updates automatically as bids are taken.</li>
-              <li>Hover lot titles to preview photos.</li>
+              <li>Allows tracking of which items have been collected</li>
+              <li>Export uncollected item lists</li>
             </ul>
           </div>
           <img class="screenshot" src="images/live-feed-overview.png" alt="Live feed overview">
@@ -153,18 +165,18 @@
       </div>
 
       <div class="panel" style="margin-top: 24px;">
-        <h3>Maintenance Panel</h3>
+        <h3>Auction Management Panel</h3>
         <p>Full control over auctions, data management, templates, and diagnostics.</p>
         <div class="grid">
           <img class="screenshot" src="images/maintenance-overview.png" alt="Maintenance overview">
           <div>
             <ul>
               <li>Create and manage auctions and states.</li>
-              <li>Import/export CSV, back up or restore the database.</li>
+              <li>Import/export CSV, back up or restore database and files</li>
               <li>Automatically generate test items and bids.</li>
-              <li>Manage PowerPoint templates and image resources.</li>
-              <li>Review audits and backend logs.</li>
-              <li>Manage passwords</li>
+              <li>Manage export templates and image resources.</li>
+              <li>Review audit and backend logs.</li>
+              <li>Manage users, permissions and passwords</li>
             </ul>
           </div>
         </div>

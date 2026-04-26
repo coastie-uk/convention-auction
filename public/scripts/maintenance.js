@@ -17,9 +17,12 @@ const userManagementPanel = document.querySelector('[data-tab-panel="user-manage
 const openAboutModalButton = document.getElementById("open-about-modal");
 const aboutModal = document.getElementById("about-modal");
 const closeAboutModalButton = document.getElementById("close-about-modal");
-const aboutVersionBackendEl = document.getElementById("about-version-backend");
-const aboutVersionSchemaEl = document.getElementById("about-version-schema");
-const aboutVersionPaymentEl = document.getElementById("about-version-payment");
+const aboutVersionSummaryEl = document.getElementById("about-version-summary");
+const aboutDatabaseIdEl = document.getElementById("about-database-id");
+const aboutDatabaseCreatedAtEl = document.getElementById("about-database-created-at");
+const aboutDatabaseCreatedByBackendEl = document.getElementById("about-database-created-by-backend");
+const aboutDatabaseRestoreEl = document.getElementById("about-database-restore");
+const aboutBackendUptimeEl = document.getElementById("about-backend-uptime");
 const editAuctionModal = document.getElementById("edit-auction-modal");
 const closeEditAuctionModalButton = document.getElementById("close-edit-auction-modal");
 const cancelEditAuctionButton = document.getElementById("cancel-edit-auction");
@@ -41,6 +44,7 @@ const integritySummaryPanel = document.getElementById("integrity-summary-panel")
 const integrityFixSummary = document.getElementById("integrity-fix-summary");
 const integrityDetailsPanel = document.getElementById("integrity-details-panel");
 const openCreateBackupModalButton = document.getElementById("open-create-backup-modal");
+const openAddUserModalButton = document.getElementById("open-add-user-modal");
 const backupNoteInput = document.getElementById("backup-note");
 const backupOperationStatus = document.getElementById("backup-operation-status");
 const createBackupLog = document.getElementById("create-backup-log");
@@ -55,6 +59,10 @@ const cancelBackupRestoreButton = document.getElementById("cancel-backup-restore
 const createBackupModal = document.getElementById("create-backup-modal");
 const closeCreateBackupModalButton = document.getElementById("close-create-backup-modal");
 const cancelCreateBackupButton = document.getElementById("cancel-create-backup");
+const addUserModal = document.getElementById("add-user-modal");
+const closeAddUserModalButton = document.getElementById("close-add-user-modal");
+const cancelAddUserButton = document.getElementById("cancel-add-user");
+const addUserAccessNote = document.getElementById("add-user-access-note");
 const backupDetailTitle = document.getElementById("backup-detail-title");
 const backupDetailSubtitle = document.getElementById("backup-detail-subtitle");
 const backupDetailGrid = document.getElementById("backup-detail-grid");
@@ -127,6 +135,28 @@ function canManageUsers(user = currentMaintenanceUser) {
   return Array.isArray(user?.permissions) && user.permissions.includes("manage_users");
 }
 
+function hasRole(user, role) {
+  if (window.AppAuth?.hasRole) {
+    return window.AppAuth.hasRole(user, role);
+  }
+  return Array.isArray(user?.roles) && user.roles.includes(role);
+}
+
+function hasPermission(user, permission) {
+  if (window.AppAuth?.hasPermission) {
+    return window.AppAuth.hasPermission(user, permission);
+  }
+  return Array.isArray(user?.permissions) && user.permissions.includes(permission);
+}
+
+function canGrantRole(role, user = currentMaintenanceUser) {
+  return hasRole(user, role);
+}
+
+function canGrantPermission(permission, user = currentMaintenanceUser) {
+  return hasPermission(user, permission);
+}
+
 function clearUserManagementData() {
   const tableBody = document.getElementById("user-table-body");
   if (tableBody) {
@@ -161,6 +191,36 @@ function formatDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString();
+}
+
+function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts = [];
+  if (days) parts.push(`${days}d`);
+  if (hours || days) parts.push(`${hours}h`);
+  if (minutes || hours || days) parts.push(`${minutes}m`);
+  parts.push(`${seconds}s`);
+  return parts.join(" ");
+}
+
+function formatUptime(startedAt) {
+  if (!startedAt) return "Unknown";
+  const started = new Date(startedAt);
+  if (Number.isNaN(started.getTime())) return "Unknown";
+  return formatDuration(Date.now() - started.getTime());
+}
+
+function formatRestoreSummary(versions = {}) {
+  if (!versions.restored_at) return "Never";
+  const backupId = versions.restored_from_backup_id === "uploaded-database"
+    ? "Uploaded database"
+    : (versions.restored_from_backup_id ? `Backup #${versions.restored_from_backup_id}` : "Unknown backup");
+  const sourceDatabaseId = versions.restored_from_database_id ? `, source DB ${versions.restored_from_database_id}` : "";
+  return `${backupId} on ${formatDateTime(versions.restored_at)}${sourceDatabaseId}`;
 }
 
 function formatBackupDisplayLabel(backup) {
@@ -198,6 +258,18 @@ function closeModal(modal) {
   if (modal) {
     modal.hidden = true;
   }
+}
+
+function resetAddUserForm() {
+  const usernameInput = document.getElementById("new-user-username");
+  const passwordInput = document.getElementById("new-user-password");
+  const confirmPasswordInput = document.getElementById("new-user-confirm-password");
+  if (usernameInput) usernameInput.value = "";
+  if (passwordInput) passwordInput.value = "";
+  if (confirmPasswordInput) confirmPasswordInput.value = "";
+  document.querySelectorAll('input[name="new-user-role"]').forEach((el) => { el.checked = el.defaultChecked; });
+  document.querySelectorAll('input[name="new-user-permission"]').forEach((el) => { el.checked = el.defaultChecked; });
+  syncAccessEditorState(document);
 }
 
 function createBackupActionButton(icon, title, onClick, { danger = false, disabled = false } = {}) {
@@ -261,6 +333,8 @@ function renderBackupDetails() {
     ["Backup ID", `#${detail.backup_id}`],
     ["Created", formatDateTime(detail.created_at)],
     ["User", detail.created_by || "Unknown"],
+    ["Database ID", detail.database_id || "Unknown"],
+    ["Last Restore", detail.restored_at ? formatRestoreSummary(detail) : "Never"],
     ["Schema", detail.schema_version || "Unknown"],
     ["Archive Size", formatBytes(detail.archive_size_bytes)],
     ["Format", `v${detail.format_version || "?"}`],
@@ -478,14 +552,23 @@ function updateVersionDisplays(versions = {}) {
   const backend = currentVersions.backend || "N/A";
   const schema = currentVersions.schema || "N/A";
   const payment = currentVersions.payment_processor || "N/A";
+  const versionSummary = `Backend ${backend} / Schema ${schema} / Payment ${payment}`;
+  const databaseId = currentVersions.database_id || "Unknown";
+  const databaseCreatedAt = formatDateTime(currentVersions.database_created_at);
+  const databaseCreatedByBackend = currentVersions.database_created_by_backend_version || "Unknown";
+  const restoreSummary = formatRestoreSummary(currentVersions);
+  const uptime = formatUptime(currentVersions.last_started_at);
 
   if (softwareVersion) {
     softwareVersion.textContent = `Backend: ${backend}, Schema: ${schema}, Payment: ${payment}`;
   }
 
-  if (aboutVersionBackendEl) aboutVersionBackendEl.textContent = backend;
-  if (aboutVersionSchemaEl) aboutVersionSchemaEl.textContent = schema;
-  if (aboutVersionPaymentEl) aboutVersionPaymentEl.textContent = payment;
+  if (aboutVersionSummaryEl) aboutVersionSummaryEl.textContent = versionSummary;
+  if (aboutDatabaseIdEl) aboutDatabaseIdEl.textContent = databaseId;
+  if (aboutDatabaseCreatedAtEl) aboutDatabaseCreatedAtEl.textContent = databaseCreatedAt;
+  if (aboutDatabaseCreatedByBackendEl) aboutDatabaseCreatedByBackendEl.textContent = databaseCreatedByBackend;
+  if (aboutDatabaseRestoreEl) aboutDatabaseRestoreEl.textContent = restoreSummary;
+  if (aboutBackendUptimeEl) aboutBackendUptimeEl.textContent = uptime;
 }
 
 function openAboutModal() {
@@ -729,6 +812,19 @@ function bindMaintenanceShell() {
   createBackupModal?.addEventListener("click", (event) => {
     if (event.target === createBackupModal) {
       closeModal(createBackupModal);
+    }
+  });
+
+  openAddUserModalButton?.addEventListener("click", () => {
+    resetAddUserForm();
+    openModal(addUserModal);
+    document.getElementById("new-user-username")?.focus();
+  });
+  closeAddUserModalButton?.addEventListener("click", () => closeModal(addUserModal));
+  cancelAddUserButton?.addEventListener("click", () => closeModal(addUserModal));
+  addUserModal?.addEventListener("click", (event) => {
+    if (event.target === addUserModal) {
+      closeModal(addUserModal);
     }
   });
 }
@@ -1115,6 +1211,9 @@ restoreSelectedBackupButton?.addEventListener("click", async () => {
     setBackupOperationStatus(data.message || "Restore completed.", "success");
     showMessage(data.message || "Restore completed.", "success");
     closeModal(backupRestoreModal);
+    if (restoreDb) {
+      await window.AppAuth?.refreshSession?.();
+    }
     await loadManagedBackups();
     await refreshAuctions();
     await loadPptxImageList();
@@ -1189,6 +1288,7 @@ document.getElementById("restore-db").onclick = async () => {
 
   if (res.ok) {
     showMessage(data.message, "success");
+    await window.AppAuth?.refreshSession?.();
   } else {
     showMessage(data.error || "Restore failed", "error");
   }
@@ -1295,6 +1395,15 @@ function createUserActionButton(icon, title, { disabled = false } = {}) {
   return button;
 }
 
+function syncGrantableRoleCheckboxes(scope = document) {
+  scope.querySelectorAll('input[name="new-user-role"], input[data-access-role]').forEach((roleInput) => {
+    const actorCanGrant = roleInput.dataset.actorCanGrant !== "false";
+    const lockedForSelf = roleInput.dataset.lockedSelf === "true";
+    const lockedForRoot = roleInput.dataset.lockedRoot === "true";
+    roleInput.disabled = !actorCanGrant || lockedForSelf || lockedForRoot;
+  });
+}
+
 function syncDependentAccessCheckboxes(scope = document) {
   ACCESS_DEPENDENCIES.forEach(({ permission, role }) => {
     scope.querySelectorAll(`input[value="${permission}"]`).forEach((permissionInput) => {
@@ -1303,13 +1412,44 @@ function syncDependentAccessCheckboxes(scope = document) {
         ? scope.querySelector(`input[name="new-user-role"][value="${role}"]`)
         : scope.querySelector(`input[data-access-role="${role}"]`);
 
-      const allowed = Boolean(roleInput?.checked);
+      const allowedByRole = Boolean(roleInput?.checked);
+      const actorCanGrant = permissionInput.dataset.actorCanGrant !== "false";
+      const lockedForSelf = permissionInput.dataset.lockedSelf === "true";
+      const lockedForRoot = permissionInput.dataset.lockedRoot === "true";
+      const allowed = allowedByRole && actorCanGrant && !lockedForSelf && !lockedForRoot;
       permissionInput.disabled = !allowed;
-      if (!allowed) {
+      if (!allowedByRole) {
         permissionInput.checked = false;
       }
     });
   });
+}
+
+function syncAccessEditorState(scope = document) {
+  syncGrantableRoleCheckboxes(scope);
+  syncDependentAccessCheckboxes(scope);
+  if (scope === document) {
+    updateCreateUserAccessAvailability();
+  }
+}
+
+function updateCreateUserAccessAvailability() {
+  let hasUnavailableAccess = false;
+
+  document.querySelectorAll('input[name="new-user-role"], input[name="new-user-permission"]').forEach((input) => {
+    const item = input.closest(".user-access-item");
+    if (!item) return;
+
+    const blockedByActor = input.dataset.actorCanGrant === "false";
+    item.classList.toggle("user-access-item--unavailable", blockedByActor);
+    if (blockedByActor) {
+      hasUnavailableAccess = true;
+    }
+  });
+
+  if (addUserAccessNote) {
+    addUserAccessNote.hidden = !hasUnavailableAccess;
+  }
 }
 
 document.getElementById("change-own-password").onclick = async () => {
@@ -1372,12 +1512,8 @@ document.getElementById("add-user-button").onclick = async () => {
   const data = await res.json();
   if (res.ok) {
     showMessage(data.message || "User created.", "success");
-    document.getElementById("new-user-username").value = "";
-    document.getElementById("new-user-password").value = "";
-    document.getElementById("new-user-confirm-password").value = "";
-    document.querySelectorAll('input[name="new-user-role"]').forEach((el) => { el.checked = false; });
-    document.querySelectorAll('input[name="new-user-permission"]').forEach((el) => { el.checked = false; });
-    syncDependentAccessCheckboxes(document);
+    resetAddUserForm();
+    closeModal(addUserModal);
     loadUsers();
   } else {
     showMessage(data.error || "Failed to create user.", "error");
@@ -1431,9 +1567,10 @@ async function loadUsers() {
     const tr = document.createElement("tr");
     const roleCheckboxes = {};
     const permissionCheckboxes = {};
+    const isCurrentUser = user.username === currentUsername;
 
     const usernameTd = document.createElement("td");
-    usernameTd.textContent = user.username === currentUsername ? `${user.username} (you)` : user.username;
+    usernameTd.textContent = isCurrentUser ? `${user.username} (you)` : user.username;
     tr.appendChild(usernameTd);
 
     USER_ROLE_ORDER.forEach((role) => {
@@ -1442,7 +1579,13 @@ async function loadUsers() {
       const cb = document.createElement("input");
       cb.type = "checkbox";
       cb.checked = Array.isArray(user.roles) && user.roles.includes(role);
-      cb.disabled = Boolean(user.is_root);
+      cb.disabled = Boolean(user.is_root) || isCurrentUser;
+      cb.dataset.accessRole = role;
+      cb.dataset.actorCanGrant = canGrantRole(role) ? "true" : "false";
+      cb.dataset.originalChecked = cb.checked ? "true" : "false";
+      cb.dataset.lockedSelf = isCurrentUser ? "true" : "false";
+      cb.dataset.lockedRoot = user.is_root ? "true" : "false";
+      cb.addEventListener("change", () => syncAccessEditorState(tr));
       roleCheckboxes[role] = cb;
       td.appendChild(cb);
       tr.appendChild(td);
@@ -1454,18 +1597,19 @@ async function loadUsers() {
       const cb = document.createElement("input");
       cb.type = "checkbox";
       cb.checked = Array.isArray(user.permissions) && user.permissions.includes(permission);
-      cb.disabled = Boolean(user.is_root);
+      cb.disabled = Boolean(user.is_root) || isCurrentUser;
       cb.dataset.accessPermission = permission;
+      cb.dataset.actorCanGrant = canGrantPermission(permission) ? "true" : "false";
+      cb.dataset.originalChecked = cb.checked ? "true" : "false";
+      cb.dataset.lockedSelf = isCurrentUser ? "true" : "false";
+      cb.dataset.lockedRoot = user.is_root ? "true" : "false";
+      cb.addEventListener("change", () => syncAccessEditorState(tr));
       permissionCheckboxes[permission] = cb;
       td.appendChild(cb);
       tr.appendChild(td);
     });
 
-    roleCheckboxes.admin.dataset.accessRole = "admin";
-    roleCheckboxes.maintenance.dataset.accessRole = "maintenance";
-    roleCheckboxes.admin.addEventListener("change", () => syncDependentAccessCheckboxes(tr));
-    roleCheckboxes.maintenance.addEventListener("change", () => syncDependentAccessCheckboxes(tr));
-    syncDependentAccessCheckboxes(tr);
+    syncAccessEditorState(tr);
 
     const actionsTd = document.createElement("td");
     const actionsWrap = document.createElement("div");
@@ -1501,7 +1645,11 @@ async function loadUsers() {
     };
 
     if (!user.is_root) {
-      const saveRolesBtn = createUserActionButton(USER_ACTION_ICONS.save, "Save access changes");
+      const saveRolesBtn = createUserActionButton(
+        USER_ACTION_ICONS.save,
+        isCurrentUser ? "You cannot change your own access" : "Save access changes",
+        { disabled: isCurrentUser }
+      );
       saveRolesBtn.onclick = async () => {
         const roles = USER_ROLE_ORDER.filter((role) => roleCheckboxes[role].checked);
         const permissions = USER_PERMISSION_ORDER.filter((permission) => permissionCheckboxes[permission].checked);
@@ -1592,13 +1740,25 @@ async function loadUsers() {
   });
 }
 
-document.querySelector('input[name="new-user-role"][value="admin"]')?.addEventListener("change", () => {
-  syncDependentAccessCheckboxes(document);
+document.querySelectorAll('input[name="new-user-role"]').forEach((input) => {
+  input.dataset.actorCanGrant = canGrantRole(input.value) ? "true" : "false";
+  input.dataset.originalChecked = "false";
+  input.dataset.lockedSelf = "false";
+  input.dataset.lockedRoot = "false";
+  input.addEventListener("change", () => {
+    syncAccessEditorState(document);
+  });
 });
-document.querySelector('input[name="new-user-role"][value="maintenance"]')?.addEventListener("change", () => {
-  syncDependentAccessCheckboxes(document);
+document.querySelectorAll('input[name="new-user-permission"]').forEach((input) => {
+  input.dataset.actorCanGrant = canGrantPermission(input.value) ? "true" : "false";
+  input.dataset.originalChecked = "false";
+  input.dataset.lockedSelf = "false";
+  input.dataset.lockedRoot = "false";
+  input.addEventListener("change", () => {
+    syncAccessEditorState(document);
+  });
 });
-syncDependentAccessCheckboxes(document);
+syncAccessEditorState(document);
 
 window.addEventListener(window.AppAuth?.SESSION_EVENT || "appauth:session", (event) => {
   const session = event.detail || null;
@@ -1607,6 +1767,13 @@ window.addEventListener(window.AppAuth?.SESSION_EVENT || "appauth:session", (eve
   currentUsername = session?.user?.username || currentUsername;
   setMaintenanceUserMenu(currentUsername);
   applyUserManagementAccess(currentMaintenanceUser);
+  document.querySelectorAll('input[name="new-user-role"]').forEach((input) => {
+    input.dataset.actorCanGrant = canGrantRole(input.value, currentMaintenanceUser) ? "true" : "false";
+  });
+  document.querySelectorAll('input[name="new-user-permission"]').forEach((input) => {
+    input.dataset.actorCanGrant = canGrantPermission(input.value, currentMaintenanceUser) ? "true" : "false";
+  });
+  syncAccessEditorState(document);
   updateVersionDisplays(session?.versions || currentVersions);
   if (canManageUsers(currentMaintenanceUser)) {
     void loadUsers();

@@ -303,6 +303,7 @@ document.addEventListener("DOMContentLoaded", () => {
               <h3>Operations</h3>
               <ul>
                 <li>Create New Item...</li>
+                <li>Manage Bidders...</li>
                 <li>Refresh</li>
                 <li>Export...</li>
               </ul>
@@ -310,8 +311,11 @@ document.addEventListener("DOMContentLoaded", () => {
             <div class="menu-map-group">
               <h3>View</h3>
               <ul>
+                <li>Image size</li>
                 <li>Sort by</li>
                 <li>Order</li>
+                <li>Show bidder names</li>
+                <li>Show deleted items</li>
               </ul>
             </div>
             <div class="menu-map-group">
@@ -337,8 +341,6 @@ document.addEventListener("DOMContentLoaded", () => {
             <li><strong>View:</strong> Sort by <strong>Number</strong>, <strong>Name</strong>, <strong>Contributor</strong>, <strong>Creator</strong>, <strong>Bidder</strong>, or <strong>Price</strong>, switch between ascending and descending order, and choose whether bidder names are shown beside paddle numbers in the item table.</li>
             <li><strong>Status pills:</strong> The sticky header shows the current <strong>Auction</strong>, <strong>State</strong>, connection <strong>Status</strong>, and auction <strong>Total</strong>.</li>
           </ul>
-          <img class="placeholder screenshot-small" src="images/admin-auction-tools.png" alt="Manage Items menus and header screenshot">
-          <img class="placeholder screenshot-small" src="images/admin-other-pg.png" alt="Manage Items open menu screenshot">
         </div>
 
         <div class="section">
@@ -455,6 +457,7 @@ document.addEventListener("DOMContentLoaded", () => {
           </ul>
           <img class="placeholder screenshot-small" src="images/admin-bid-ctrl.png" alt="Manage Items bid control icons screenshot">
           <img class="placeholder screenshot-small" src="images/admin-bidding.png" alt="Manage Items record bid workflow screenshot">
+          <img class="placeholder screenshot-small" src="images/new-admin-retract.png" alt="Manage Items bid retraction preview screenshot">
         </div>
 
         <div class="section">
@@ -467,6 +470,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <li><strong>Show deleted items:</strong> use <strong>View &gt; Show deleted items</strong>.  Deleted items remain hidden in other views and reports.</li>
             <li><strong>Archived auctions:</strong> bidder names are read-only once the auction is archived.</li>
           </ul>
+          <img class="placeholder screenshot-small" src="images/new-admin-manage-bidders.png" alt="Manage Items manage bidders screenshot">
         </div>
 
         <div class="section">
@@ -594,7 +598,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <li><strong>Picture toggle:</strong> the <strong>Show pictures</strong> option controls the item preview strip in the bidder detail and the linked buyer display.</li>
             <li><strong>Buyer Display:</strong> opens a pop-out screen for the currently selected paddle, including totals and optional thumbnails.</li>
           </ul>
-          <img class="placeholder screenshot-small" src="images/cashier-paid.png" alt="Manage Payments bidder detail screenshot">
+          <img class="placeholder screenshot-small" src="images/new-cashier-buyer-display.png" alt="Manage Payments buyer display screenshot">
         </div>
 
         <div class="section">
@@ -610,6 +614,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <li><strong>Operations menu:</strong> <strong>Payment Summary</strong> shows a payment-method breakdown, including donation totals, and <strong>Download CSV Summary</strong> exports the settlement summary for the selected auction.</li>
           </ul>
           <img class="placeholder screenshot-small" src="images/cashier-payment-buttons.png" alt="Manage Payments payment button screenshot">
+          <img class="placeholder screenshot-small" src="images/new-cashier-receipt-print.png" alt="Manage Payments receipt print preview screenshot">
           <img class="placeholder screenshot-small" src="images/cashier-summary.png" alt="Manage Payments summary screenshot">
         </div>
 
@@ -822,6 +827,12 @@ document.addEventListener("DOMContentLoaded", () => {
               </ul>
             </div>
           </div>
+          <ul class="compact-list">
+            <li><strong>Help &gt; About:</strong> opens the current build and environment details for the maintenance console.</li>
+            <li><strong>User menu:</strong> access theme selection, password change, and logout from the signed-in user menu.</li>
+          </ul>
+          <img class="placeholder screenshot-small" src="images/new-maintenance-about.png" alt="Manage Auctions about dialog screenshot">
+          <img class="placeholder screenshot-small" src="images/new-maintenance-user-menu.png" alt="Manage Auctions user menu screenshot">
         </div>
 
         <div class="section">
@@ -833,6 +844,8 @@ document.addEventListener("DOMContentLoaded", () => {
             <li><strong>Purge Deleted Items</strong> permanently removes deleted items and their photo files from the selected auction after maintenance password confirmation.</li>
             <li><strong>Add New Auction</strong> has dedicated fields for the display name, URL tag, and logo.</li>
           </ul>
+          <img class="placeholder screenshot-small" src="images/new-maintenance-add-auction.png" alt="Manage Auctions add new auction screenshot">
+          <img class="placeholder screenshot-small" src="images/new-maintenance-edit-auction.png" alt="Manage Auctions edit auction screenshot">
         </div>
 
         <div class="section">
@@ -925,6 +938,7 @@ document.addEventListener("DOMContentLoaded", () => {
               <span>Remove the user account after confirmation.</span>
             </div>
           </div>
+          <img class="placeholder screenshot-small" src="images/maintenance-security-add-user.png" alt="Manage Auctions add user screenshot">
           <img class="placeholder screenshot-small" src="images/maintenance-security.png" alt="Manage Auctions user management screenshot">
         </div>
 

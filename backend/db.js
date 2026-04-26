@@ -4,11 +4,13 @@
  * @author      Chris Staples
  * @license     GPL3
  */
+const linuxusername = process.env.USER || "Unknown";
 
 const Database = require('better-sqlite3');
 const path     = require('path');
 const fs       = require('fs');
 const crypto   = require('crypto');
+const { version: backendVersion = 'Unknown' } = require('./package.json');
 const schemaVersion = '3.0';
 const { logLevels, log } = require('./logger');
 const bcrypt = require('bcryptjs');
@@ -54,6 +56,25 @@ let db = new Database(dbPath);
 let connectionId = 1;
 let maintenanceLock = false;
 
+function parseSchemaVersion(version) {
+  if (version == null) return null;
+  const match = String(version).trim().match(/^(\d+)\.(\d+)$/);
+  if (!match) return null;
+  return {
+    raw: String(version).trim(),
+    major: Number(match[1]),
+    minor: Number(match[2])
+  };
+}
+
+function compareSchemaVersions(left, right) {
+  const a = parseSchemaVersion(left);
+  const b = parseSchemaVersion(right);
+  if (!a || !b) return null;
+  if (a.major !== b.major) return a.major - b.major;
+  return a.minor - b.minor;
+}
+
 let existingSchemaVersion = null;
 try {
   const row = db.prepare("SELECT value FROM metadata WHERE data = 'schema_version'").get();
@@ -64,7 +85,11 @@ try {
   existingSchemaVersion = null;
 }
 
-if(existingSchemaVersion > schemaVersion) {
+const parsedExistingSchema = parseSchemaVersion(existingSchemaVersion);
+const parsedCurrentSchema = parseSchemaVersion(schemaVersion);
+const schemaComparison = existingSchemaVersion == null ? null : compareSchemaVersions(existingSchemaVersion, schemaVersion);
+
+if (schemaComparison != null && schemaComparison > 0) {
   log(
     'General',
     logLevels.WARN,
@@ -72,31 +97,19 @@ if(existingSchemaVersion > schemaVersion) {
   );
 }
 
-// if(existingSchemaVersion < schemaVersion || isNewDatabase || 1==1)
-  if(existingSchemaVersion < schemaVersion || isNewDatabase)
-{
-  log(
-    'General',
-    logLevels.WARN,
-    `Schema version missing or mismatched (db=${existingSchemaVersion ?? 'missing'}, expected=${schemaVersion}); Running DB setup`
-  );
-
-
-// Initial schema setup
-
-
-  try {
-
-    db.exec(`CREATE TABLE IF NOT EXISTS auctions (
+function createSchema() {
+  db.exec(`CREATE TABLE IF NOT EXISTS auctions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         short_name TEXT UNIQUE NOT NULL,
         full_name TEXT NOT NULL,
         created_at TEXT DEFAULT (strftime('%d-%m-%Y %H:%M:%S','now','localtime')),
         logo TEXT,
+        public_id TEXT,
+        admin_can_change_state INTEGER NOT NULL DEFAULT 0,
         status TEXT DEFAULT 'setup'
         )`);
 
-    db.exec(`CREATE TABLE IF NOT EXISTS items (
+  db.exec(`CREATE TABLE IF NOT EXISTS items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         description TEXT,
         contributor TEXT,
@@ -122,8 +135,7 @@ if(existingSchemaVersion > schemaVersion) {
         hammer_price REAL
     )`);
 
-
-    db.exec(`CREATE TABLE IF NOT EXISTS users (
+  db.exec(`CREATE TABLE IF NOT EXISTS users (
         username TEXT PRIMARY KEY COLLATE NOCASE,
         password TEXT NOT NULL,
         roles TEXT NOT NULL,
@@ -135,7 +147,7 @@ if(existingSchemaVersion > schemaVersion) {
         updated_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
     )`);
 
-    db.exec(`CREATE TABLE IF NOT EXISTS bidders (
+  db.exec(`CREATE TABLE IF NOT EXISTS bidders (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         paddle_number INTEGER NOT NULL,
         name          TEXT,
@@ -146,7 +158,7 @@ if(existingSchemaVersion > schemaVersion) {
         auction_id INTEGER
       )`);
 
-    db.exec(`CREATE TABLE IF NOT EXISTS payments (
+  db.exec(`CREATE TABLE IF NOT EXISTS payments (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         bidder_id   INTEGER NOT NULL,
         amount      REAL    NOT NULL,
@@ -154,12 +166,19 @@ if(existingSchemaVersion > schemaVersion) {
         method      TEXT    NOT NULL DEFAULT 'cash',
         note        TEXT,
         created_by  TEXT,
+        provider    TEXT    NOT NULL DEFAULT 'unknown',
+        provider_txn_id TEXT,
+        intent_id   TEXT,
+        currency    TEXT,
+        raw_payload TEXT,
+        reverses_payment_id INTEGER,
+        reversal_reason TEXT,
         created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')),
-        FOREIGN KEY (bidder_id) REFERENCES bidders(id)
+        FOREIGN KEY (bidder_id) REFERENCES bidders(id),
+        FOREIGN KEY (intent_id) REFERENCES payment_intents(intent_id)
       )`);
 
-
-    db.exec(`CREATE TABLE IF NOT EXISTS audit_log (
+  db.exec(`CREATE TABLE IF NOT EXISTS audit_log (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         user        TEXT,
         action      TEXT,
@@ -169,13 +188,8 @@ if(existingSchemaVersion > schemaVersion) {
         created_at  TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
       )`);
 
-    // create uniqueness on (auction_id, paddle_number)
-    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_bidder_auction_paddle ON bidders(auction_id, paddle_number)");
-
-
-
-    // Pending SumUp (and future) payment requests the server creates
-    db.exec(`CREATE TABLE IF NOT EXISTS payment_intents (
+  // Pending SumUp (and future) payment requests the server creates
+  db.exec(`CREATE TABLE IF NOT EXISTS payment_intents (
       intent_id TEXT PRIMARY KEY,
       bidder_id INTEGER NOT NULL,
       amount_minor INTEGER NOT NULL,       -- pence, to avoid floating issues
@@ -187,66 +201,147 @@ if(existingSchemaVersion > schemaVersion) {
       sumup_checkout_id TEXT,              -- only for hosted flow (optional)
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
       expires_at TEXT,
+      note TEXT,
       FOREIGN KEY (bidder_id) REFERENCES bidders(id)
     )`);
 
-      db.exec("CREATE TABLE IF NOT EXISTS metadata (data TEXT UNIQUE NOT NULL, value TEXT)");
+  db.exec("CREATE TABLE IF NOT EXISTS metadata (data TEXT UNIQUE NOT NULL, value TEXT)");
 
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_bidder_auction_paddle ON bidders(auction_id, paddle_number)");
+  db.exec("CREATE INDEX IF NOT EXISTS ix_payments_reverses_payment_id ON payments(reverses_payment_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS ix_payments_bidder_created_at ON payments(bidder_id, created_at)");
 
-  } catch (err) {
-    log('General', logLevels.ERROR, `Database error: ${err.message}`);
+  // These are critical to prevent duplicate payment records for the same provider transaction.
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS ux_provider_payments_txn ON payments(provider, provider_txn_id)");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS ux_provider_payments_intent ON payments(provider, intent_id)");
+
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_single_root ON users(is_root) WHERE is_root = 1");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username_nocase ON users(username COLLATE NOCASE)");
+}
+
+function migrateSchemaWithinV3(existingVersion) {
+  const parsed = parseSchemaVersion(existingVersion);
+  if (!parsed || parsed.major !== parsedCurrentSchema.major) {
+    return;
   }
 
-  // Modifications to existing tables for schema version upgrades - Try to add columns/indexes, ignore errors if they already exist
+  // Placeholder for future 3.x migrations.
+  if (parsed.minor < 0) {
+    log('General', logLevels.INFO, 'Running 3.x schema migrations');
 
-  // 2.2 - 2.3: Add reversals to payments table (deprecates delete payment)
-  try { db.exec("ALTER TABLE payments ADD COLUMN reverses_payment_id INTEGER"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE payments ADD COLUMN reversal_reason TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("CREATE INDEX IF NOT EXISTS ix_payments_reverses_payment_id ON payments(reverses_payment_id)"); } catch (e) { /* already exists */ }
-  try { db.exec("CREATE INDEX IF NOT EXISTS ix_payments_bidder_created_at ON payments(bidder_id, created_at)"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE auctions ADD COLUMN public_id TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("CREATE TABLE IF NOT EXISTS metadata (data TEXT UNIQUE NOT NULL, value TEXT)"); } catch (e) { }
+    recordStartupAudit("Database migrated within v3", {
+      method: "db.js migrateSchemaWithinV3",
+      user: linuxusername,
+      from_version: existingVersion,
+      to_version: schemaVersion
+    });
+  }
+}
 
+function writeSchemaVersion() {
+  try {
+    const updateSchema = db.prepare("UPDATE metadata SET value = ? WHERE data = 'schema_version'");
+    const result = updateSchema.run(schemaVersion);
+    if (result.changes === 0) {
+      db.prepare("INSERT INTO metadata (data, value) VALUES ('schema_version', ?)").run(schemaVersion);
+    }
+  } catch (e) {
+    log('General', logLevels.ERROR, `Failed to write schema version metadata: ${e.message}`);
+  }
+}
 
-  // 2.1 -> 2.2: Add payment provider metadata to payments table
-  try { db.exec("ALTER TABLE payments ADD COLUMN provider TEXT not null default 'unknown'"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE payments ADD COLUMN provider_txn_id TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE payments ADD COLUMN intent_id TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE payments ADD COLUMN currency TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE payments ADD COLUMN raw_payload TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE payments ADD COLUMN donation_amount REAL NOT NULL DEFAULT 0"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE payments ADD COLUMN FOREIGN KEY (intent_id) REFERENCES payment_intents(intent_id)"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE payment_intents ADD COLUMN note TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE payment_intents ADD COLUMN donation_minor INTEGER NOT NULL DEFAULT 0"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE payment_intents ADD COLUMN created_by TEXT"); } catch (e) { /* already exists */ }
+function writeCreationMetadata() {
+  try {
+    const insertMetadata = db.prepare("INSERT OR IGNORE INTO metadata (data, value) VALUES (?, ?)");
+    insertMetadata.run('database_created_at', new Date().toISOString());
+    insertMetadata.run('database_created_by_backend_version', String(backendVersion || 'Unknown'));
+  } catch (e) {
+    log('General', logLevels.ERROR, `Failed to write database creation metadata: ${e.message}`);
+  }
+}
 
+function insertMetadataIfMissing(key, value) {
+  try {
+    db.prepare("INSERT OR IGNORE INTO metadata (data, value) VALUES (?, ?)").run(key, value);
+  } catch (e) {
+    log('General', logLevels.ERROR, `Failed to insert metadata "${key}": ${e.message}`);
+  }
+}
 
-  // These are critical to prevent duplicate payment records for the same provider transaction - SumUp may send multiple notifications for the same payment
-  try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_provider_payments_txn ON payments(provider, provider_txn_id)`); } catch (e) { /* already exists */ }
-  try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_provider_payments_intent ON payments(provider, intent_id)`); } catch (e) { /* already exists */ }
+function setMetadataValue(key, value) {
+  try {
+    db.prepare(`
+      INSERT INTO metadata (data, value) VALUES (?, ?)
+      ON CONFLICT(data) DO UPDATE SET value = excluded.value
+    `).run(key, value);
+  } catch (e) {
+    log('General', logLevels.ERROR, `Failed to set metadata "${key}": ${e.message}`);
+  }
+}
 
-  
-  try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_users_single_root ON users(is_root) WHERE is_root = 1`); } catch (e) { /* already exists */ }
-  try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username_nocase ON users(username COLLATE NOCASE)`); } catch (e) { /* already exists */ }
-  try { db.exec(`ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'`); } catch (e) { /* already exists */ }
-  try { db.exec(`ALTER TABLE users ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}'`); } catch (e) { /* already exists */ }
-  try { db.exec(`ALTER TABLE users ADD COLUMN session_invalid_before INTEGER NOT NULL DEFAULT 0`); } catch (e) { /* already exists */ }
+function getMetadataValue(key) {
+  try {
+    const row = db.prepare("SELECT value FROM metadata WHERE data = ?").get(key);
+    return row?.value ?? null;
+  } catch (e) {
+    log('General', logLevels.ERROR, `Failed to read metadata "${key}": ${e.message}`);
+    return null;
+  }
+}
 
+function recordStartupAudit(action, details = {}) {
+  try {
+    db.prepare(`
+      INSERT INTO audit_log (user, action, object_type, object_id, details, created_at)
+      VALUES (?, ?, 'server', NULL, ?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
+    `).run('system', action, JSON.stringify(details));
+  } catch (e) {
+    log('General', logLevels.ERROR, `Failed to record startup audit event: ${e.message}`);
+  }
+}
 
-  // 2.0 -> 2.1 Add admin_state_change
-  try { db.exec("ALTER TABLE auctions ADD COLUMN admin_can_change_state INTEGER NOT NULL DEFAULT 0; -- 0=false, 1=true"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE items ADD COLUMN last_print TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE items ADD COLUMN last_slide_export TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE items ADD COLUMN last_card_export TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE items ADD COLUMN last_bid_update TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE items ADD COLUMN collected_at TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE items ADD COLUMN text_mod_date TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE items ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE items ADD COLUMN deleted_at TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE items ADD COLUMN deleted_by TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE bidders ADD COLUMN ready_for_collection INTEGER NOT NULL DEFAULT 0"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE bidders ADD COLUMN ready_fingerprint TEXT"); } catch (e) { /* already exists */ }
-  try { db.exec("ALTER TABLE bidders ADD COLUMN ready_updated_at TEXT"); } catch (e) { /* already exists */ }
+if (isNewDatabase) {
+  log(
+    'General',
+    logLevels.WARN,
+    `Schema version missing or mismatched (db=${existingSchemaVersion ?? 'missing'}, expected=${schemaVersion}); Running DB setup`
+  );
+
+  try {
+    createSchema();
+  } catch (err) {
+    log('General', logLevels.ERROR, `Database error: ${err.message}`);
+    throw err;
+  }
+} else if (!parsedExistingSchema) {
+  const error = new Error(
+    `Unsupported database schema: existing database at ${dbPath} does not report a valid schema_version metadata value. Only 3.x databases are supported by this backend.`
+  );
+  log('General', logLevels.ERROR, error.message);
+  throw error;
+} else if (parsedExistingSchema.major < parsedCurrentSchema.major) {
+  const error = new Error(
+    `Unsupported database schema version ${existingSchemaVersion} at ${dbPath}. Automatic upgrade from 2.x or earlier is not supported.`
+  );
+  log('General', logLevels.ERROR, error.message);
+  throw error;
+} else if (schemaComparison < 0) {
+  log(
+    'General',
+    logLevels.WARN,
+    `Schema version mismatch within supported range (db=${existingSchemaVersion}, expected=${schemaVersion}); Running DB setup`
+  );
+
+  try {
+    migrateSchemaWithinV3(existingSchemaVersion);
+    createSchema();
+  } catch (err) {
+    log('General', logLevels.ERROR, `Database migration error: ${err.message}`);
+    throw err;
+  }
+} else {
+  log('General', logLevels.INFO, `Database schema version is current, skipping DB setup`);
+}
 
 
   // 2.4: Move to username-based accounts with multi-role permissions.
@@ -295,20 +390,20 @@ if(existingSchemaVersion > schemaVersion) {
     log('General', logLevels.ERROR, `User account migration failed: ${e.message}`);
   }
 
-  try {
-    const updateSchema = db.prepare("UPDATE metadata SET value = ? WHERE data = 'schema_version'");
-    const result = updateSchema.run(schemaVersion);
-    if (result.changes === 0) {
-      db.prepare("INSERT INTO metadata (data, value) VALUES ('schema_version', ?)").run(schemaVersion);
-    }
-  } catch (e) {
-    log('General', logLevels.ERROR, `Failed to write schema version metadata: ${e.message}`);
+if (isNewDatabase || (schemaComparison != null && schemaComparison < 0)) {
+  writeSchemaVersion();
+  if (isNewDatabase) {
+    writeCreationMetadata();
   }
-} else {
-    log('General', logLevels.INFO, `Database schema version is current, skipping DB setup`);
-
-
+  recordStartupAudit("Database created", {
+    method: "db.js",
+    user: linuxusername,
+    schema_version: schemaVersion
+  });
 }
+
+insertMetadataIfMissing('database_id', crypto.randomUUID());
+setMetadataValue('last_started_at', new Date().toISOString());
 
 log('General', logLevels.INFO, 'Database opened');
 
@@ -339,6 +434,9 @@ function callCb(cb, err, rowsOrInfo) {
 
 module.exports = {
   schemaVersion,
+  getMetadataValue,
+  insertMetadataIfMissing,
+  setMetadataValue,
   /** run() – INSERT / UPDATE / DELETE */
   run(sql, params = [], cb) {
     try {

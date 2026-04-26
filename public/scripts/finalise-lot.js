@@ -439,6 +439,8 @@ const API = "/api"
         const displayBidder = formatBidderLabel(paddle, bidderName || data.bidder_name);
         showMessage(`Item ${activeItem.itemNo} sold to bidder #${displayBidder} for £${price}`, "success");
 
+        // clea
+
         /* --- update paddle & price cells immediately --- */
         const cells = activeItem.rowEl.children;
         if (cells.length >= 7) {
@@ -463,8 +465,8 @@ const API = "/api"
               rowEl: refreshedRow || nextContext.rowEl
             };
             updateLotSummary();
-            clearBidFields({ keepBidder: true });
-            priceInput.focus();
+            clearBidFields({ keepBidder: false });
+            paddleInput.focus();
           } else {
             /* move focus to the next visible finalize button in the current table DOM */
             const nextBtn = findNextFinalizeButton(activeItem.itemId, activeItem.rowEl);

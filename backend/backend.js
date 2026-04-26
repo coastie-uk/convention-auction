@@ -270,7 +270,18 @@ function buildSessionResponse(user, token) {
     token,
     currency: CURRENCY_SYMBOL,
     landing_path: getLandingPath(user),
-    versions: { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer },
+    versions: {
+      backend: backendVersion,
+      schema: schemaVersion,
+      payment_processor: paymentProcessorVer,
+      database_id: db.getMetadataValue('database_id'),
+      database_created_at: db.getMetadataValue('database_created_at'),
+      database_created_by_backend_version: db.getMetadataValue('database_created_by_backend_version'),
+      restored_at: db.getMetadataValue('restored_at'),
+      restored_from_backup_id: db.getMetadataValue('restored_from_backup_id'),
+      restored_from_database_id: db.getMetadataValue('restored_from_database_id'),
+      last_started_at: db.getMetadataValue('last_started_at')
+    },
     user: buildSessionUser(user, { includePreferences: true })
   };
 }
@@ -443,7 +454,18 @@ app.post('/validate', async (req, res) => {
         res.json({
             token: refreshedToken,
             landing_path: getLandingPath(sessionUser),
-            versions: { backend: backendVersion, schema: schemaVersion, payment_processor: paymentProcessorVer },
+            versions: {
+              backend: backendVersion,
+              schema: schemaVersion,
+              payment_processor: paymentProcessorVer,
+              database_id: db.getMetadataValue('database_id'),
+              database_created_at: db.getMetadataValue('database_created_at'),
+              database_created_by_backend_version: db.getMetadataValue('database_created_by_backend_version'),
+              restored_at: db.getMetadataValue('restored_at'),
+              restored_from_backup_id: db.getMetadataValue('restored_from_backup_id'),
+              restored_from_database_id: db.getMetadataValue('restored_from_database_id'),
+              last_started_at: db.getMetadataValue('last_started_at')
+            },
             user: buildSessionUser(sessionUser)
         });
       //  logFromRequest(req, logLevels.DEBUG, `Token validated successfully for user ${currentUser.username} `);

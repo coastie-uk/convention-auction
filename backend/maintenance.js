@@ -80,6 +80,58 @@ function ensureDirectory(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
+function isSelfUserManagementTarget(req, username) {
+  return normaliseUsername(req.user?.username) === normaliseUsername(username);
+}
+
+function getCurrentRequestUser(req) {
+  const username = normaliseUsername(req.user?.username);
+  if (!username) return null;
+  return getUserByUsername(username);
+}
+
+function getGrantablePermissionsForUser(user) {
+  const isRootUser = Number(user?.is_root) === 1 || normaliseUsername(user?.username) === ROOT_USERNAME;
+  if (isRootUser) {
+    return new Set(PERMISSION_LIST);
+  }
+  return new Set(normalisePermissions(user?.permissions, user?.roles));
+}
+
+function getGrantableRolesForUser(user) {
+  const isRootUser = Number(user?.is_root) === 1 || normaliseUsername(user?.username) === ROOT_USERNAME;
+  if (isRootUser) {
+    return new Set(ROLE_LIST);
+  }
+  return new Set(normaliseRoles(user?.roles));
+}
+
+function getUnauthorizedGrantedRoles(req, requestedRoles) {
+  const actor = getCurrentRequestUser(req) || req.user;
+  const grantableRoles = getGrantableRolesForUser(actor);
+  return requestedRoles.filter((role) => !grantableRoles.has(role));
+}
+
+function getUnauthorizedGrantedPermissions(req, requestedPermissions) {
+  const actor = getCurrentRequestUser(req) || req.user;
+  const grantablePermissions = getGrantablePermissionsForUser(actor);
+  return requestedPermissions.filter((permission) => !grantablePermissions.has(permission));
+}
+
+function getUnauthorizedRemovedRoles(req, existingUser, requestedRoles) {
+  const actor = getCurrentRequestUser(req) || req.user;
+  const grantableRoles = getGrantableRolesForUser(actor);
+  const existingRoles = normaliseRoles(existingUser?.roles);
+  return existingRoles.filter((role) => !grantableRoles.has(role) && !requestedRoles.includes(role));
+}
+
+function getUnauthorizedRemovedPermissions(req, existingUser, requestedPermissions) {
+  const actor = getCurrentRequestUser(req) || req.user;
+  const grantablePermissions = getGrantablePermissionsForUser(actor);
+  const existingPermissions = normalisePermissions(existingUser?.permissions, existingUser?.roles);
+  return existingPermissions.filter((permission) => !grantablePermissions.has(permission) && !requestedPermissions.includes(permission));
+}
+
 function toPosixPath(filePath) {
   return String(filePath || "").split(path.sep).join("/");
 }
@@ -450,6 +502,10 @@ function publicManagedBackupSummary(record) {
     created_at: record.created_at,
     created_by: record.created_by,
     note: record.note || "",
+    database_id: record.database_id || null,
+    restored_at: record.restored_at || null,
+    restored_from_backup_id: record.restored_from_backup_id || null,
+    restored_from_database_id: record.restored_from_database_id || null,
     schema_version: record.schema_version,
     archive_size_bytes: Number(record.archive_size_bytes || 0),
     component_manifest: record.component_manifest || {},
@@ -466,8 +522,21 @@ function publicManagedBackupDetail(record) {
   };
 }
 
+function captureCurrentRootPasswordHash() {
+  const rootUser = getUserByUsername(ROOT_USERNAME);
+  return typeof rootUser?.password === "string" && rootUser.password
+    ? rootUser.password
+    : null;
+}
+
+function preserveRootPasswordHash(passwordHash) {
+  if (!passwordHash) return { changes: 0 };
+  return setUserPassword(ROOT_USERNAME, passwordHash);
+}
+
 function requireManageUsers(req, res, next) {
-  if (Array.isArray(req.user?.permissions) && req.user.permissions.includes("manage_users")) {
+  const actor = getCurrentRequestUser(req) || req.user;
+  if (Array.isArray(actor?.permissions) && actor.permissions.includes("manage_users")) {
     return next();
   }
 
@@ -585,6 +654,10 @@ router.post("/backup", async (req, res) => {
   try {
     const snapshot = createSafeDatabaseSnapshot(tempDbPath);
     backupLog.info(`Database snapshot created (${snapshot.size_bytes} bytes)`);
+    const databaseId = db.getMetadataValue('database_id');
+    const restoredAt = db.getMetadataValue('restored_at');
+    const restoredFromBackupId = db.getMetadataValue('restored_from_backup_id');
+    const restoredFromDatabaseId = db.getMetadataValue('restored_from_database_id');
 
     const photoFiles = listFilesRecursively(UPLOAD_DIR);
     const resourceImages = listManagedResourceImages();
@@ -610,6 +683,10 @@ router.post("/backup", async (req, res) => {
       created_at: createdAt,
       created_by: createdBy,
       schema_version: String(db.schemaVersion),
+      database_id: databaseId,
+      restored_at: restoredAt,
+      restored_from_backup_id: restoredFromBackupId,
+      restored_from_database_id: restoredFromDatabaseId,
       note,
       backup_log_included: true,
       component_manifest: {
@@ -836,6 +913,7 @@ router.post("/restore", async (req, res) => {
     const dbFilePath = path.join(DB_PATH, DB_NAME);
     const walPath = `${dbFilePath}-wal`;
     const shmPath = `${dbFilePath}-shm`;
+    const currentRootPasswordHash = captureCurrentRootPasswordHash();
 
     db.setMaintenanceLock(true);
     try {
@@ -846,6 +924,10 @@ router.post("/restore", async (req, res) => {
       fs.rmSync(shmPath, { force: true });
       if (typeof db.reopen === "function") {
         db.reopen({ skipClose: true });
+        preserveRootPasswordHash(currentRootPasswordHash);
+        db.setMetadataValue('restored_at', new Date().toISOString());
+        db.setMetadataValue('restored_from_backup_id', 'uploaded-database');
+        db.setMetadataValue('restored_from_database_id', '');
       }
     } finally {
       db.setMaintenanceLock(false);
@@ -871,6 +953,7 @@ async function restoreManagedBackup(backup, selection, req) {
   const liveWalPath = `${liveDbPath}-wal`;
   const liveShmPath = `${liveDbPath}-shm`;
   const rollbackPaths = {};
+  const currentRootPasswordHash = selection.restoreDb ? captureCurrentRootPasswordHash() : null;
   let databaseClosed = false;
   let databaseReopened = false;
   let photosApplied = false;
@@ -985,8 +1068,20 @@ async function restoreManagedBackup(backup, selection, req) {
           db.reopen({ skipClose: true });
           databaseReopened = true;
           databaseClosed = false;
+          const preservedRootPassword = preserveRootPasswordHash(currentRootPasswordHash);
+          if (currentRootPasswordHash && preservedRootPassword.changes > 0) {
+            restoreLog.info("Preserved current root password in restored database");
+          } else if (currentRootPasswordHash) {
+            restoreLog.warn("Root password preservation did not update any rows");
+          } else {
+            restoreLog.warn("Skipped root password preservation because no current root password was available");
+          }
+          db.setMetadataValue('restored_at', new Date().toISOString());
+          db.setMetadataValue('restored_from_backup_id', String(archiveMetadata.backup_id));
+          db.setMetadataValue('restored_from_database_id', archiveMetadata.database_id ? String(archiveMetadata.database_id) : '');
           const liveValidation = validateSqliteSnapshot(liveDbPath, { expectedSchemaVersion: String(db.schemaVersion) });
           restoreLog.info(`Reopened restored database successfully (schema ${liveValidation.schemaVersion})`);
+          restoreLog.info(`Recorded restore provenance from backup ${archiveMetadata.backup_id}`);
         }
       }
     } catch (swapErr) {
@@ -1517,6 +1612,20 @@ router.post("/users", requireManageUsers, (req, res) => {
     return res.status(400).json({ error: "Assign at least one role or permission." });
   }
 
+  const unauthorizedRoles = getUnauthorizedGrantedRoles(req, normalizedRoles);
+  if (unauthorizedRoles.length > 0) {
+    return res.status(403).json({
+      error: `You can only grant roles you already have: ${unauthorizedRoles.join(", ")}.`
+    });
+  }
+
+  const unauthorizedPermissions = getUnauthorizedGrantedPermissions(req, normalizedPermissions);
+  if (unauthorizedPermissions.length > 0) {
+    return res.status(403).json({
+      error: `You can only grant permissions you already have: ${unauthorizedPermissions.join(", ")}.`
+    });
+  }
+
   try {
     const hashed = bcrypt.hashSync(password, 12);
     createUser({
@@ -1560,15 +1669,50 @@ router.patch("/users/:username/access", requireManageUsers, (req, res) => {
     return res.status(400).json({ error: "Invalid username." });
   }
 
+  if (isSelfUserManagementTarget(req, target)) {
+    return res.status(403).json({ error: "You cannot change your own access." });
+  }
+
   if (roles.length === 0 && permissions.length === 0) {
     return res.status(400).json({ error: "Assign at least one role or permission." });
   }
 
+  const existingUser = getUserByUsername(target);
+  if (!existingUser) {
+    return res.status(404).json({ error: "User not found." });
+  }
+
+  const unauthorizedRoles = getUnauthorizedGrantedRoles(req, roles);
+  if (unauthorizedRoles.length > 0) {
+    return res.status(403).json({
+      error: `You can only grant roles you already have: ${unauthorizedRoles.join(", ")}.`
+    });
+  }
+
+  const unauthorizedPermissions = getUnauthorizedGrantedPermissions(req, permissions);
+  if (unauthorizedPermissions.length > 0) {
+    return res.status(403).json({
+      error: `You can only grant permissions you already have: ${unauthorizedPermissions.join(", ")}.`
+    });
+  }
+
+  const unauthorizedRemovedRoles = getUnauthorizedRemovedRoles(req, existingUser, roles);
+  if (unauthorizedRemovedRoles.length > 0) {
+    return res.status(403).json({
+      error: `You can only remove roles you already have: ${unauthorizedRemovedRoles.join(", ")}.`
+    });
+  }
+
+  const unauthorizedRemovedPermissions = getUnauthorizedRemovedPermissions(req, existingUser, permissions);
+  if (unauthorizedRemovedPermissions.length > 0) {
+    return res.status(403).json({
+      error: `You can only remove permissions you already have: ${unauthorizedRemovedPermissions.join(", ")}.`
+    });
+  }
+
   try {
     const result = updateUserAccess(target, { roles, permissions });
-    if (!result || result.changes === 0) {
-      return res.status(404).json({ error: "User not found." });
-    }
+    if (!result || result.changes === 0) return res.status(404).json({ error: "User not found." });
 
     const updated = getUserByUsername(target);
     audit(getAuditActor(req), 'update user access', 'server', null, {
@@ -1599,15 +1743,36 @@ router.patch("/users/:username/roles", requireManageUsers, (req, res) => {
     return res.status(400).json({ error: "Invalid username." });
   }
 
+  if (isSelfUserManagementTarget(req, target)) {
+    return res.status(403).json({ error: "You cannot change your own access." });
+  }
+
   if (roles.length === 0) {
     return res.status(400).json({ error: "At least one role is required." });
   }
 
+  const existingUser = getUserByUsername(target);
+  if (!existingUser) {
+    return res.status(404).json({ error: "User not found." });
+  }
+
+  const unauthorizedRoles = getUnauthorizedGrantedRoles(req, roles);
+  if (unauthorizedRoles.length > 0) {
+    return res.status(403).json({
+      error: `You can only grant roles you already have: ${unauthorizedRoles.join(", ")}.`
+    });
+  }
+
+  const unauthorizedRemovedRoles = getUnauthorizedRemovedRoles(req, existingUser, roles);
+  if (unauthorizedRemovedRoles.length > 0) {
+    return res.status(403).json({
+      error: `You can only remove roles you already have: ${unauthorizedRemovedRoles.join(", ")}.`
+    });
+  }
+
   try {
     const result = updateUserRoles(target, roles);
-    if (!result || result.changes === 0) {
-      return res.status(404).json({ error: "User not found." });
-    }
+    if (!result || result.changes === 0) return res.status(404).json({ error: "User not found." });
 
     const updated = getUserByUsername(target);
     audit(getAuditActor(req), 'update user roles', 'server', null, {

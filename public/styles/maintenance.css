@@ -301,6 +301,90 @@
   margin: 0;
 }
 
+.user-access-catalog {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.user-access-catalog-head {
+  color: #5f6b7a;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.user-access-list {
+  display: grid;
+  gap: 8px;
+}
+
+.user-access-item {
+  align-items: baseline;
+  background: #fff;
+  border: 1px solid #dce4ee;
+  border-radius: 10px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  padding: 10px 12px;
+}
+
+.user-access-item--permission {
+  margin-left: 20px;
+}
+
+.user-access-toggle {
+  align-items: center;
+  color: #1b2430;
+  display: inline-flex;
+  gap: 10px;
+  font-weight: 700;
+}
+
+.user-access-toggle input[type="checkbox"] {
+  margin: 0;
+}
+
+.user-access-description {
+  color: #5f6b7a;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.user-access-item--unavailable {
+  background: #f5f7fa;
+  border-color: #d8dee6;
+}
+
+.user-access-item--unavailable .user-access-toggle,
+.user-access-item--unavailable .user-access-description {
+  color: #8a94a3;
+}
+
+.user-access-note {
+  background: #fff7e6;
+  border: 1px solid #f2d08b;
+  border-radius: 10px;
+  color: #7a5a12;
+  font-size: 0.92rem;
+  line-height: 1.4;
+  margin-top: 12px;
+  padding: 10px 12px;
+}
+
+@media (max-width: 720px) {
+  .user-access-item {
+    gap: 6px;
+    grid-template-columns: 1fr;
+  }
+
+  .user-access-item--permission {
+    margin-left: 12px;
+  }
+}
+
 .table-wrap {
   border: 1px solid #e7ebf0;
   border-radius: 12px;
@@ -896,10 +980,12 @@ footer {
 :root[data-theme="dark"] .panel-head h2,
 :root[data-theme="dark"] .panel-head h3,
 :root[data-theme="dark"] .maintenance-subpanel-head h3,
+:root[data-theme="dark"] .user-access-catalog-head,
 :root[data-theme="dark"] .maintenance-form-grid label,
 :root[data-theme="dark"] .maintenance-filter-row label,
 :root[data-theme="dark"] .maintenance-checkbox-grid label,
 :root[data-theme="dark"] .maintenance-inline-toggle,
+:root[data-theme="dark"] .user-access-toggle,
 :root[data-theme="dark"] .maintenance-form-grid input[type="text"],
 :root[data-theme="dark"] .maintenance-form-grid input[type="password"],
 :root[data-theme="dark"] .maintenance-form-grid input[type="number"],
@@ -968,6 +1054,7 @@ footer {
 :root[data-theme="dark"] .table-wrap,
 :root[data-theme="dark"] .maintenance-subpanel,
 :root[data-theme="dark"] .maintenance-result-box,
+:root[data-theme="dark"] .user-access-item,
 :root[data-theme="dark"] .error-box {
   border-color: #253349;
 }
@@ -990,8 +1077,30 @@ footer {
 :root[data-theme="dark"] .integrity-fix-meta,
 :root[data-theme="dark"] .integrity-detail-label,
 :root[data-theme="dark"] .maintenance-detail-label,
+:root[data-theme="dark"] .user-access-catalog-head,
+:root[data-theme="dark"] .user-access-description,
 :root[data-theme="dark"] .maintenance-inline-list {
   color: #94a3b8;
+}
+
+:root[data-theme="dark"] .user-access-item {
+  background: #0f172a;
+}
+
+:root[data-theme="dark"] .user-access-item--unavailable {
+  background: #111827;
+  border-color: #334155;
+}
+
+:root[data-theme="dark"] .user-access-item--unavailable .user-access-toggle,
+:root[data-theme="dark"] .user-access-item--unavailable .user-access-description {
+  color: #64748b;
+}
+
+:root[data-theme="dark"] .user-access-note {
+  background: #2b2111;
+  border-color: #6b4f1d;
+  color: #f1d28f;
 }
 
 :root[data-theme="dark"] .maintenance-inline-pill {

@@ -368,30 +368,11 @@
                 <div class="maintenance-subpanel-head">
                   <div>
                     <h3>Add User</h3>
-                    <p>Create an initial password and assign one or more access options.</p>
+                    <p>Create a new user and define their access to the app.</p>
                   </div>
-                </div>
-                <div class="maintenance-form-grid">
-                  <label for="new-user-username">Username</label>
-                  <input type="text" id="new-user-username" placeholder="Username (letters/numbers/._-)" autocomplete="username" />
-
-                  <label for="new-user-password">Initial Password</label>
-                  <input type="password" id="new-user-password" placeholder="Password" autocomplete="new-password" />
-
-                  <label for="new-user-confirm-password">Confirm Password</label>
-                  <input type="password" id="new-user-confirm-password" placeholder="Confirm Password" autocomplete="new-password" />
-                </div>
-                <div id="new-user-roles" class="maintenance-checkbox-grid">
-                  <label><input type="checkbox" name="new-user-role" value="admin" checked /> Manage Items</label>
-                  <label><input type="checkbox" name="new-user-role" value="cashier" /> Manage Payments</label>
-                  <label><input type="checkbox" name="new-user-role" value="maintenance" /> Manage Auctions</label>
-                  <label><input type="checkbox" name="new-user-role" value="slideshow" checked/> Slideshow</label>
-                  <label><input type="checkbox" name="new-user-permission" value="live_feed" checked/> Manage Collections</label>
-                  <label><input type="checkbox" id="new-user-admin-bidding" name="new-user-permission" value="admin_bidding" checked/> Manage Bids</label>
-                  <label><input type="checkbox" id="new-user-manage-users" name="new-user-permission" value="manage_users" /> Manage Users</label>
-                </div>
-                <div class="maintenance-actions-row">
-                  <button id="add-user-button" type="button">Add User</button>
+                  <div class="maintenance-actions-row">
+                    <button id="open-add-user-modal" type="button">Add User...</button>
+                  </div>
                 </div>
               </section>
             </div>
@@ -644,14 +625,17 @@
           <div class="app-modal-header">
             <div>
               <h3>About Convention Auction</h3>
-              <p>Current software versions for this installation.</p>
+              <p>Current software and database details for this installation.</p>
             </div>
             <button id="close-about-modal" type="button" class="app-modal-close" aria-label="Close about dialog">Close</button>
           </div>
           <div class="about-grid">
-            <div class="about-row"><span>Backend</span><strong id="about-version-backend">Unknown</strong></div>
-            <div class="about-row"><span>Schema</span><strong id="about-version-schema">Unknown</strong></div>
-            <div class="about-row"><span>Payment processor</span><strong id="about-version-payment">Unknown</strong></div>
+            <div class="about-row"><span>Software</span><strong id="about-version-summary">Unknown</strong></div>
+            <div class="about-row"><span>Database ID</span><strong id="about-database-id">Unknown</strong></div>
+            <div class="about-row"><span>Database created</span><strong id="about-database-created-at">Unknown</strong></div>
+            <div class="about-row"><span>Created by backend</span><strong id="about-database-created-by-backend">Unknown</strong></div>
+            <div class="about-row"><span>Last restore</span><strong id="about-database-restore">Never</strong></div>
+            <div class="about-row"><span>Backend uptime</span><strong id="about-backend-uptime">Unknown</strong></div>
           </div>
           <p class="about-license">Copyright © 2026 Chris Staples. This program is free software, licensed under the GNU General Public License, version 3. Distributed without any warranty.</p>
         </div>
@@ -733,6 +717,94 @@
           <div class="maintenance-actions-row modal-actions-row">
             <button id="backup-db" type="button">Create Backup</button>
             <button id="cancel-create-backup" type="button" class="app-modal-close">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="add-user-modal" class="app-modal" hidden>
+        <div class="app-modal-card app-modal-card--wide">
+          <div class="app-modal-header">
+            <div>
+              <h3>Add User</h3>
+              <p>Create an initial password and assign roles.</p>
+            </div>
+            <button id="close-add-user-modal" type="button" class="app-modal-close" aria-label="Close add user dialog">Close</button>
+          </div>
+          <div class="maintenance-form-grid">
+            <label for="new-user-username">Username</label>
+            <input type="text" id="new-user-username" placeholder="Username (letters/numbers/._-)" autocomplete="username" />
+
+            <label for="new-user-password">Initial Password</label>
+            <input type="password" id="new-user-password" placeholder="Password" autocomplete="new-password" />
+
+            <label for="new-user-confirm-password">Confirm Password</label>
+            <input type="password" id="new-user-confirm-password" placeholder="Confirm Password" autocomplete="new-password" />
+          </div>
+
+          <div class="user-access-catalog">
+            <div class="user-access-catalog-head">Access Options</div>
+            <div id="new-user-roles" class="user-access-list">
+              <label class="user-access-item">
+                <span class="user-access-toggle">
+                  <input type="checkbox" name="new-user-role" value="admin" />
+                  <span>Manage Items</span>
+                </span>
+                <span class="user-access-description">Create and edit lots, create exports</span>
+              </label>
+                            <label class="user-access-item user-access-item--permission">
+                <span class="user-access-toggle">
+                  <input type="checkbox" id="new-user-admin-bidding" name="new-user-permission" value="admin_bidding" />
+                  <span>Manage Bids</span>
+                </span>
+                <span class="user-access-description">Depends on <strong>Manage Items</strong>; allows recording and retracting bids</span>
+              </label>
+              <label class="user-access-item">
+                <span class="user-access-toggle">
+                  <input type="checkbox" name="new-user-role" value="cashier" />
+                  <span>Manage Payments</span>
+                </span>
+                <span class="user-access-description">Process checkout, record payments, and handle cashier workflows.</span>
+              </label>
+              <label class="user-access-item">
+                <span class="user-access-toggle">
+                  <input type="checkbox" name="new-user-role" value="maintenance" />
+                  <span>Manage Auctions</span>
+                </span>
+                <span class="user-access-description">Use the maintenance console for setup, templates, backups, diagnostics, and system tasks.</span>
+              </label>
+                            <label class="user-access-item user-access-item--permission">
+                <span class="user-access-toggle">
+                  <input type="checkbox" id="new-user-manage-users" name="new-user-permission" value="manage_users" />
+                  <span>Manage Users</span>
+                </span>
+                <span class="user-access-description">Depends on <strong>Manage Auctions</strong>; allows account creation, password resets, and access changes.</span>
+              </label>
+                            <label class="user-access-item">
+                <span class="user-access-toggle">
+                  <input type="checkbox" name="new-user-permission" value="live_feed" />
+                  <span>Manage Collections</span>
+                </span>
+                <span class="user-access-description">Manage item collection, view the live feed.</span>
+              </label>
+              <label class="user-access-item">
+                <span class="user-access-toggle">
+                  <input type="checkbox" name="new-user-role" value="slideshow" />
+                  <span>Slideshow</span>
+                </span>
+                <span class="user-access-description">Open presentation and display view. </span>
+              </label>
+
+
+
+            </div>
+          </div>
+          <div id="add-user-access-note" class="user-access-note" hidden>
+            Some options are unavailable because you can't grant permissions that you don't currently have yourself.
+          </div>
+
+          <div class="maintenance-actions-row modal-actions-row">
+            <button id="cancel-add-user" type="button" class="app-modal-close">Cancel</button>
+            <button id="add-user-button" type="button">Add User</button>
           </div>
         </div>
       </div>

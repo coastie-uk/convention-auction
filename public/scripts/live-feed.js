@@ -56,9 +56,12 @@
     aboutModal: $('about-modal'),
     openAboutModalBtn: $('open-about-modal'),
     closeAboutModalBtn: $('close-about-modal'),
-    aboutVersionBackend: $('about-version-backend'),
-    aboutVersionSchema: $('about-version-schema'),
-    aboutVersionPayment: $('about-version-payment')
+    aboutVersionSummary: $('about-version-summary'),
+    aboutDatabaseId: $('about-database-id'),
+    aboutDatabaseCreatedAt: $('about-database-created-at'),
+    aboutDatabaseCreatedByBackend: $('about-database-created-by-backend'),
+    aboutDatabaseRestore: $('about-database-restore'),
+    aboutBackendUptime: $('about-backend-uptime')
   };
 
   const menuGroups = Array.from(document.querySelectorAll('.menu-group'));
@@ -115,6 +118,43 @@
       .replace(/\b\w/g, char => char.toUpperCase());
   }
 
+  function formatDateTime(value) {
+    if (!value) return 'Unknown';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString();
+  }
+
+  function formatDuration(ms) {
+    const totalSeconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const parts = [];
+    if (days) parts.push(`${days}d`);
+    if (hours || days) parts.push(`${hours}h`);
+    if (minutes || hours || days) parts.push(`${minutes}m`);
+    parts.push(`${seconds}s`);
+    return parts.join(' ');
+  }
+
+  function formatUptime(startedAt) {
+    if (!startedAt) return 'Unknown';
+    const started = new Date(startedAt);
+    if (Number.isNaN(started.getTime())) return 'Unknown';
+    return formatDuration(Date.now() - started.getTime());
+  }
+
+  function formatRestoreSummary(versions = {}) {
+    if (!versions?.restored_at) return 'Never';
+    const backupId = versions.restored_from_backup_id === 'uploaded-database'
+      ? 'Uploaded database'
+      : (versions.restored_from_backup_id ? `Backup #${versions.restored_from_backup_id}` : 'Unknown backup');
+    const sourceDatabaseId = versions.restored_from_database_id ? `, source DB ${versions.restored_from_database_id}` : '';
+    return `${backupId} on ${formatDateTime(versions.restored_at)}${sourceDatabaseId}`;
+  }
+
   function parseDurationInput(value) {
     const seconds = Number(value);
     return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 15000;
@@ -139,9 +179,15 @@
   }
 
   function updateAboutBox(versions = null) {
-    if (els.aboutVersionBackend) els.aboutVersionBackend.textContent = versions?.backend || 'Unknown';
-    if (els.aboutVersionSchema) els.aboutVersionSchema.textContent = versions?.schema || 'Unknown';
-    if (els.aboutVersionPayment) els.aboutVersionPayment.textContent = versions?.payment_processor || 'Unknown';
+    const backend = versions?.backend || 'Unknown';
+    const schema = versions?.schema || 'Unknown';
+    const payment = versions?.payment_processor || 'Unknown';
+    if (els.aboutVersionSummary) els.aboutVersionSummary.textContent = `Backend ${backend} / Schema ${schema} / Payment ${payment}`;
+    if (els.aboutDatabaseId) els.aboutDatabaseId.textContent = versions?.database_id || 'Unknown';
+    if (els.aboutDatabaseCreatedAt) els.aboutDatabaseCreatedAt.textContent = formatDateTime(versions?.database_created_at);
+    if (els.aboutDatabaseCreatedByBackend) els.aboutDatabaseCreatedByBackend.textContent = versions?.database_created_by_backend_version || 'Unknown';
+    if (els.aboutDatabaseRestore) els.aboutDatabaseRestore.textContent = formatRestoreSummary(versions || {});
+    if (els.aboutBackendUptime) els.aboutBackendUptime.textContent = formatUptime(versions?.last_started_at);
   }
 
   function setSessionMeta(user = null, versions = null) {

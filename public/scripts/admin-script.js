@@ -79,9 +79,12 @@ document.addEventListener("DOMContentLoaded", function () {
     const imagePreviewModalTitle = document.getElementById("image-preview-modal-title");
     const imagePreviewModalImage = document.getElementById("image-preview-modal-image");
     const closeImagePreviewModalButton = document.getElementById("close-image-preview-modal");
-    const aboutVersionBackendEl = document.getElementById("about-version-backend");
-    const aboutVersionSchemaEl = document.getElementById("about-version-schema");
-    const aboutVersionPaymentEl = document.getElementById("about-version-payment");
+    const aboutVersionSummaryEl = document.getElementById("about-version-summary");
+    const aboutDatabaseIdEl = document.getElementById("about-database-id");
+    const aboutDatabaseCreatedAtEl = document.getElementById("about-database-created-at");
+    const aboutDatabaseCreatedByBackendEl = document.getElementById("about-database-created-by-backend");
+    const aboutDatabaseRestoreEl = document.getElementById("about-database-restore");
+    const aboutBackendUptimeEl = document.getElementById("about-backend-uptime");
     const exportTypeInputs = Array.from(document.querySelectorAll('input[name="export-type"]'));
     const exportSelectionModeInputs = Array.from(document.querySelectorAll('input[name="export-selection-mode"]'));
     const bidderReportModeInputs = Array.from(document.querySelectorAll('input[name="bidder-report-mode"]'));
@@ -1573,10 +1576,53 @@ document.addEventListener("DOMContentLoaded", function () {
         return formatRoleLabel(state);
     }
 
+    function formatDateTime(value) {
+        if (!value) return "Unknown";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return String(value);
+        return date.toLocaleString();
+    }
+
+    function formatDuration(ms) {
+        const totalSeconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+        const days = Math.floor(totalSeconds / 86400);
+        const hours = Math.floor((totalSeconds % 86400) / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        const parts = [];
+        if (days) parts.push(`${days}d`);
+        if (hours || days) parts.push(`${hours}h`);
+        if (minutes || hours || days) parts.push(`${minutes}m`);
+        parts.push(`${seconds}s`);
+        return parts.join(" ");
+    }
+
+    function formatUptime(startedAt) {
+        if (!startedAt) return "Unknown";
+        const started = new Date(startedAt);
+        if (Number.isNaN(started.getTime())) return "Unknown";
+        return formatDuration(Date.now() - started.getTime());
+    }
+
+    function formatRestoreSummary(versions = {}) {
+        if (!versions?.restored_at) return "Never";
+        const backupId = versions.restored_from_backup_id === "uploaded-database"
+            ? "Uploaded database"
+            : (versions.restored_from_backup_id ? `Backup #${versions.restored_from_backup_id}` : "Unknown backup");
+        const sourceDatabaseId = versions.restored_from_database_id ? `, source DB ${versions.restored_from_database_id}` : "";
+        return `${backupId} on ${formatDateTime(versions.restored_at)}${sourceDatabaseId}`;
+    }
+
     function updateAboutBox(user = null, versions = null) {
-        if (aboutVersionBackendEl) aboutVersionBackendEl.textContent = versions?.backend || "Unknown";
-        if (aboutVersionSchemaEl) aboutVersionSchemaEl.textContent = versions?.schema || "Unknown";
-        if (aboutVersionPaymentEl) aboutVersionPaymentEl.textContent = versions?.payment_processor || "Unknown";
+        const backend = versions?.backend || "Unknown";
+        const schema = versions?.schema || "Unknown";
+        const payment = versions?.payment_processor || "Unknown";
+        if (aboutVersionSummaryEl) aboutVersionSummaryEl.textContent = `Backend ${backend} / Schema ${schema} / Payment ${payment}`;
+        if (aboutDatabaseIdEl) aboutDatabaseIdEl.textContent = versions?.database_id || "Unknown";
+        if (aboutDatabaseCreatedAtEl) aboutDatabaseCreatedAtEl.textContent = formatDateTime(versions?.database_created_at);
+        if (aboutDatabaseCreatedByBackendEl) aboutDatabaseCreatedByBackendEl.textContent = versions?.database_created_by_backend_version || "Unknown";
+        if (aboutDatabaseRestoreEl) aboutDatabaseRestoreEl.textContent = formatRestoreSummary(versions || {});
+        if (aboutBackendUptimeEl) aboutBackendUptimeEl.textContent = formatUptime(versions?.last_started_at);
     }
 
     function setAdminSessionMeta(user = null, versions = null) {
