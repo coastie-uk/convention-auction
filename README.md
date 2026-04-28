@@ -17,16 +17,27 @@ This software provides a single platform which automates the process from item s
 - Cashier panel to record payments
 - Integration with SumUp supporting web hosted checkouts and app payments with a card reader.
 - Maintenance tools: manage auctions, logs, auditing, import/export, auto-create test items, etc.
-- User accounts with username/password login and per-user role assignment (`admin`, `cashier`, `maintenance`, `slideshow`)
+- User accounts with username/password login, per-user roles, and extra scoped permissions
 - Automatic PowerPoint generation from custom templates (slide deck + item cards)
 - Printing of receipt-style item slips
 - Auto-updating slideshow for in-venue advertising
 - Automatic randomised item & bid generators (for testing/training/evaluation)
 - Mobile-friendly interfaces
 
+## New v3 Features
+
+- Completely reworked menu-driven UI with single login point
+- Fine-grained access control
+- User preference persistence, including operator theme settings and other per-user UI state
+- Soft-delete workflow for auction items, with restore support
+- Managed backup archives with metadata, downloadable restore bundles, and selective restore of database, photos, and resource/config assets
+- Improved export functions including auction and bidder report generation
+- New item assembly management and collection tracking
+
+
 ## System Requirements
 
-- Linux server (developed on Ubuntu & Mint) 
+- Linux server (developed on Ubuntu & Mint) with Node.js 20+
 - Root/sudo access for installation (runs as normal user)  
 - A registered domain name pointing to your server's IP address
 - For SumUp payments, a SumUp merchant account and card reader
