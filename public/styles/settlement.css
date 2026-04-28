@@ -172,11 +172,13 @@ body {
 .detail-layout {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .detail-sections {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .detail-section + .detail-section {
@@ -243,6 +245,8 @@ body {
   border: 1px solid #e7ebf0;
   border-radius: 10px;
   overflow: hidden;
+  max-width: 100%;
+  min-width: 0;
 }
 
 table {
@@ -377,6 +381,7 @@ tbody tr:first-child td {
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px;
   margin-top: 12px;
+  min-width: 0;
 }
 
 .receipt-actions {
@@ -662,14 +667,101 @@ body.buyer-display-page {
 
   .table-wrap {
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   table {
     min-width: 640px;
   }
 
+  .panel-body,
+  .detail-layout,
+  .detail-sections,
+  .detail-section {
+    min-width: 0;
+  }
+
+  .detail-section .table-wrap {
+    max-width: 100%;
+  }
+
+  #bidderTable {
+    width: 100%;
+    min-width: 100%;
+    table-layout: fixed;
+  }
+
+  #bidderTable th,
+  #bidderTable td {
+    white-space: nowrap;
+  }
+
+  #bidderTable th:first-child,
+  #bidderTable td:first-child {
+    width: auto;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  #bidderTable th:last-child,
+  #bidderTable td:last-child {
+    width: 7.5rem;
+  }
+
   .lot-preview-strip {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .payment-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .payment-button {
+    min-width: 0;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Override legacy admin styles that hide the bidder label column on small screens. */
+  #bidderTable thead th:first-child,
+  #bidderTable tbody td:first-child {
+    display: table-cell !important;
+  }
+
+  #bidderTable th,
+  #bidderTable td {
+    color: #1b2430;
+  }
+
+  #bidderTable th:first-child,
+  #bidderTable td:first-child {
+    width: auto;
+  }
+
+  #bidderTable th,
+  #bidderTable td {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  #bidderTable th:last-child,
+  #bidderTable td:last-child {
+    width: 6.5rem;
+  }
+
+  #lotsTable {
+    min-width: 520px;
+  }
+
+  #payTable {
+    min-width: 620px;
+  }
+
+  .payment-actions {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -757,6 +849,13 @@ body.buyer-display-page {
 
 :root[data-theme="dark"] .modal-overlay {
   background: rgba(3, 8, 15, 0.72);
+}
+
+@media (max-width: 480px) {
+  :root[data-theme="dark"] #bidderTable th,
+  :root[data-theme="dark"] #bidderTable td {
+    color: var(--admin-text);
+  }
 }
 
 :root[data-theme="dark"] .modal-card {

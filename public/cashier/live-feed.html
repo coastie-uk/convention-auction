@@ -122,6 +122,7 @@
     }
     .panel-body {
       padding: 10px 12px 12px;
+      min-width: 0;
     }
     .stacked-panels {
       display: grid;
@@ -130,6 +131,12 @@
     .compact-table th,
     .compact-table td {
       padding: 8px 10px;
+    }
+    .feed-table-wrap {
+      max-width: 100%;
+      min-width: 0;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
     }
     .datatable {
       width: 100%;
@@ -174,6 +181,7 @@
       border-radius: 10px;
       padding: 10px;
       background: #fff;
+      min-width: 0;
     }
     .bidder-group.is-ready {
       border-left-color: #1f8f4e;
@@ -410,6 +418,12 @@
       border-collapse: collapse;
       table-layout: fixed;
     }
+    .bidder-table-wrap {
+      max-width: 100%;
+      min-width: 0;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
     .bidder-table th,
     .bidder-table td {
       padding: 7px 10px;
@@ -509,6 +523,33 @@
       }
       .bucket-preview-strip {
         grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 720px) {
+      .panel-body,
+      .bidder-groups,
+      .bidder-group {
+        min-width: 0;
+      }
+      .bidder-group-header {
+        grid-template-columns: 1fr;
+        align-items: start;
+      }
+      .bucket-actions {
+        justify-content: flex-start;
+      }
+      .ready-toggle {
+        white-space: normal;
+      }
+      .bidder-table {
+        min-width: 430px;
+      }
+      .bidder-table th:nth-child(2),
+      .bidder-table td:nth-child(2) {
+        min-width: 180px;
+      }
+      .stacked-panels .datatable {
+        min-width: 440px;
       }
     }
   </style>
@@ -631,12 +672,14 @@
               <span class="panel-subtle"></span>
             </div>
             <div class="panel-body">
-              <table id="recentFeed" class="datatable compact-table">
-                <thead>
-                  <tr><th>Paddle #</th><th>Lot</th><th>Title</th><th>Price</th></tr>
-                </thead>
-                <tbody></tbody>
-              </table>
+              <div class="feed-table-wrap">
+                <table id="recentFeed" class="datatable compact-table">
+                  <thead>
+                    <tr><th>Paddle #</th><th>Lot</th><th>Title</th><th>Price</th></tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
             </div>
           </section>
 
@@ -646,12 +689,14 @@
               <span class="panel-subtle"></span>
             </div>
             <div class="panel-body">
-              <table id="unsoldFeed" class="datatable compact-table">
-                <thead>
-                  <tr><th>Lot</th><th>Title</th></tr>
-                </thead>
-                <tbody></tbody>
-              </table>
+              <div class="feed-table-wrap">
+                <table id="unsoldFeed" class="datatable compact-table">
+                  <thead>
+                    <tr><th>Lot</th><th>Title</th></tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
               <div id="unsoldEmpty" class="empty-state" hidden>No unsold lots are currently shown.</div>
             </div>
           </section>

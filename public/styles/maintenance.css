@@ -95,6 +95,7 @@
 
 .maintenance-content-panel {
   min-height: 0;
+  min-width: 0;
 }
 
 .maintenance-tab-panel[hidden] {
@@ -104,12 +105,14 @@
 .maintenance-tab-body {
   display: grid;
   gap: 14px;
+  min-width: 0;
 }
 
 .maintenance-subpanel {
   background: #fbfcfe;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
+  min-width: 0;
   padding: 14px;
 }
 
@@ -388,7 +391,11 @@
 .table-wrap {
   border: 1px solid #e7ebf0;
   border-radius: 12px;
+  max-width: 100%;
+  min-width: 0;
   overflow: auto;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   background: #fff;
 }
 
@@ -533,6 +540,10 @@
   width: 120px;
 }
 
+#auction-table {
+  table-layout: auto;
+}
+
 #auction-table td:nth-child(2),
 #auction-table th:nth-child(2) {
   width: 120px;
@@ -552,6 +563,21 @@
 #auction-table td:nth-child(3) {
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+#auction-table td:nth-child(1),
+#auction-table th:nth-child(1),
+#auction-table td:nth-child(4),
+#auction-table th:nth-child(4),
+#auction-table td:nth-child(5),
+#auction-table th:nth-child(5),
+#auction-table td:nth-child(6),
+#auction-table th:nth-child(6),
+#auction-table td:nth-child(7),
+#auction-table th:nth-child(7),
+#auction-table td:nth-child(8),
+#auction-table th:nth-child(8) {
+  white-space: nowrap;
 }
 
 #user-table td,
@@ -934,6 +960,10 @@ footer {
 
   .maintenance-tab-button.is-active {
     transform: none;
+  }
+
+  #auction-table {
+    min-width: 860px;
   }
 
 }

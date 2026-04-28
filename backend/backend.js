@@ -1375,59 +1375,59 @@ registerExportRoutes({
 //--------------------------------------------------------------------------
 
 
-app.post('/rotate-photo', authenticateRole("admin"), async (req, res) => {
-    const { id, direction } = req.body;
-    logFromRequest(req, logLevels.DEBUG, `Rotate Request for item ${id} (${direction})`);
+// app.post('/rotate-photo', authenticateRole("admin"), async (req, res) => {
+//     const { id, direction } = req.body;
+//     logFromRequest(req, logLevels.DEBUG, `Rotate Request for item ${id} (${direction})`);
 
-    if (direction !== 'left' && direction !== 'right') {
-        return res.status(400).json({ error: 'Invalid rotation direction' });
-    }
+//     if (direction !== 'left' && direction !== 'right') {
+//         return res.status(400).json({ error: 'Invalid rotation direction' });
+//     }
 
-    try {
-        const row = db.prepare(`
-            SELECT i.photo,
-                   i.winning_bidder_id,
-                   i.hammer_price,
-                   i.is_deleted,
-                   a.status AS auction_status
-              FROM items i
-              LEFT JOIN auctions a ON a.id = i.auction_id
-             WHERE i.id = ?
-        `).get(Number(id));
+//     try {
+//         const row = db.prepare(`
+//             SELECT i.photo,
+//                    i.winning_bidder_id,
+//                    i.hammer_price,
+//                    i.is_deleted,
+//                    a.status AS auction_status
+//               FROM items i
+//               LEFT JOIN auctions a ON a.id = i.auction_id
+//              WHERE i.id = ?
+//         `).get(Number(id));
 
-        if (!row || !row.photo) {
-            return res.status(404).json({ error: 'Photo not found' });
-        }
+//         if (!row || !row.photo) {
+//             return res.status(404).json({ error: 'Photo not found' });
+//         }
 
-        const { can_edit, edit_block_reason } = getItemEditState(row, row.auction_status);
-        if (!can_edit) {
-            logFromRequest(req, logLevels.WARN, `Rotate blocked: item ${id} cannot be edited (${edit_block_reason})`);
-            return res.status(400).json({ error: edit_block_reason });
-        }
+//         const { can_edit, edit_block_reason } = getItemEditState(row, row.auction_status);
+//         if (!can_edit) {
+//             logFromRequest(req, logLevels.WARN, `Rotate blocked: item ${id} cannot be edited (${edit_block_reason})`);
+//             return res.status(400).json({ error: edit_block_reason });
+//         }
 
-        const photoFilename = row.photo;
-        const photoPath = path.join(UPLOAD_DIR, photoFilename);
-        const previewPath = path.join(UPLOAD_DIR, `preview_${photoFilename}`);
-        const angle = direction === 'left' ? -90 : 90;
+//         const photoFilename = row.photo;
+//         const photoPath = path.join(UPLOAD_DIR, photoFilename);
+//         const previewPath = path.join(UPLOAD_DIR, `preview_${photoFilename}`);
+//         const angle = direction === 'left' ? -90 : 90;
 
-        await sharp(photoPath)
-            .rotate(angle)
-            .toFile(photoPath + '.tmp');
-        fs.renameSync(photoPath + '.tmp', photoPath);
+//         await sharp(photoPath)
+//             .rotate(angle)
+//             .toFile(photoPath + '.tmp');
+//         fs.renameSync(photoPath + '.tmp', photoPath);
 
-        await sharp(previewPath)
-            .rotate(angle)
-            .toFile(previewPath + '.tmp');
-        fs.renameSync(previewPath + '.tmp', previewPath);
+//         await sharp(previewPath)
+//             .rotate(angle)
+//             .toFile(previewPath + '.tmp');
+//         fs.renameSync(previewPath + '.tmp', previewPath);
 
-        db.prepare(`UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime') WHERE id = ?`).run(Number(id));
-        res.json({ message: 'Image rotated' });
-        logFromRequest(req, logLevels.INFO, `Rotate: ${photoFilename} rotated ${angle} degrees`);
-    } catch (error) {
-        logFromRequest(req, logLevels.ERROR, `Image rotation failed for item ${id}: ${error.message}`);
-        res.status(500).json({ error: 'Rotation failed' });
-    }
-});
+//         db.prepare(`UPDATE items SET mod_date = strftime('%d-%m-%Y %H:%M:%S', 'now', 'localtime') WHERE id = ?`).run(Number(id));
+//         res.json({ message: 'Image rotated' });
+//         logFromRequest(req, logLevels.INFO, `Rotate: ${photoFilename} rotated ${angle} degrees`);
+//     } catch (error) {
+//         logFromRequest(req, logLevels.ERROR, `Image rotation failed for item ${id}: ${error.message}`);
+//         res.status(500).json({ error: 'Rotation failed' });
+//     }
+// });
 
 //--------------------------------------------------------------------------
 // GET /auctions/:auctionId/slideshow-items

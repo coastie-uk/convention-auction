@@ -1446,52 +1446,52 @@ addTest("B-038l","POST /auctions/:auctionId/items/confirm-slip-print failure inv
   assert.ok(json && json.error, "Expected error payload for invalid confirmation payload");
 });
 
-addTest("B-038m","POST /auctions/:auctionId/items/reset-slip-print success", async () => {
-  const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/reset-slip-print`, {
-    method: "POST",
-    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({})
-  });
-  await expectStatus(res, 200);
-  assert.ok(json && Number.isInteger(json.updated_count), "Expected updated_count integer");
-
-  const { res: itemsRes, json: itemsJson } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items`, {
-    headers: authHeaders(context.token)
-  });
-  await expectStatus(itemsRes, 200);
-  const items = Array.isArray(itemsJson?.items) ? itemsJson.items : [];
-  assert.ok(items.length > 0, "Expected auction items to exist");
-  const anyPrinted = items.some((row) => row.last_print != null && String(row.last_print).trim() !== "");
-  assert.equal(anyPrinted, false, "Expected all item last_print values to be cleared");
-});
-
-addTest("B-038n","POST /auctions/:auctionId/items/reset-slip-print failure unauthenticated", async () => {
-  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/reset-slip-print`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({})
-  });
-  await expectStatus(res, 403);
-});
-
-addTest("B-038o","POST /auctions/:auctionId/items/reset-slip-print failure wrong role", async () => {
-  const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/reset-slip-print`, {
-    method: "POST",
-    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
-    body: JSON.stringify({})
-  });
-  await expectStatus(res, 403);
-});
-
-addTest("B-038p","POST /auctions/:auctionId/items/reset-slip-print failure invalid auction id", async () => {
-  const { res, json } = await fetchJson(`${baseUrl}/auctions/abc/items/reset-slip-print`, {
-    method: "POST",
-    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({})
-  });
-  await expectStatus(res, 400);
-  assert.ok(json && json.error, "Expected error payload for invalid auction id");
-});
+// addTest("B-038m","POST /auctions/:auctionId/items/reset-slip-print success", async () => {
+//   const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/reset-slip-print`, {
+//     method: "POST",
+//     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+//     body: JSON.stringify({})
+//   });
+//   await expectStatus(res, 200);
+//   assert.ok(json && Number.isInteger(json.updated_count), "Expected updated_count integer");
+//
+//   const { res: itemsRes, json: itemsJson } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items`, {
+//     headers: authHeaders(context.token)
+//   });
+//   await expectStatus(itemsRes, 200);
+//   const items = Array.isArray(itemsJson?.items) ? itemsJson.items : [];
+//   assert.ok(items.length > 0, "Expected auction items to exist");
+//   const anyPrinted = items.some((row) => row.last_print != null && String(row.last_print).trim() !== "");
+//   assert.equal(anyPrinted, false, "Expected all item last_print values to be cleared");
+// });
+//
+// addTest("B-038n","POST /auctions/:auctionId/items/reset-slip-print failure unauthenticated", async () => {
+//   const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/reset-slip-print`, {
+//     method: "POST",
+//     headers: { "Content-Type": "application/json" },
+//     body: JSON.stringify({})
+//   });
+//   await expectStatus(res, 403);
+// });
+//
+// addTest("B-038o","POST /auctions/:auctionId/items/reset-slip-print failure wrong role", async () => {
+//   const res = await fetch(`${baseUrl}/auctions/${testData.auctionId}/items/reset-slip-print`, {
+//     method: "POST",
+//     headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+//     body: JSON.stringify({})
+//   });
+//   await expectStatus(res, 403);
+// });
+//
+// addTest("B-038p","POST /auctions/:auctionId/items/reset-slip-print failure invalid auction id", async () => {
+//   const { res, json } = await fetchJson(`${baseUrl}/auctions/abc/items/reset-slip-print`, {
+//     method: "POST",
+//     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+//     body: JSON.stringify({})
+//   });
+//   await expectStatus(res, 400);
+//   assert.ok(json && json.error, "Expected error payload for invalid auction id");
+// });
 
 addTest("B-038pa","POST /auctions/:auctionId/items/reset-export-tracking success slides", async () => {
   const { res, json } = await fetchJson(`${baseUrl}/auctions/${testData.auctionId}/items/reset-export-tracking`, {
@@ -1684,43 +1684,43 @@ addTest("B-042","POST /export-csv failure wrong role", async () => {
 
 
 
-addTest("B-043","POST /rotate-photo success", async () => {
-  await setAuctionStatus("locked");
-  const { res, json } = await fetchJson(`${baseUrl}/rotate-photo`, {
-    method: "POST",
-    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ id: testData.rotatePhotoItem, direction: "left" })
-  });
-  await expectStatus(res, 200);
-  assert.ok(json && json.message, "Missing rotate message");
-});
-
-addTest("B-044","POST /rotate-photo failure unauthenticated", async () => {
-  const res = await fetch(`${baseUrl}/rotate-photo`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: testData.rotatePhotoItem, direction: "left" })
-  });
-  await expectStatus(res, 403);
-});
-
-addTest("B-045","POST /rotate-photo failure wrong role", async () => {
-  const res = await fetch(`${baseUrl}/rotate-photo`, {
-    method: "POST",
-    headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ id: testData.rotatePhotoItem, direction: "left" })
-  });
-  await expectStatus(res, 403);
-});
-
-addTest("B-046","POST /rotate-photo failure invalid item", async () => {
-  const { res } = await fetchJson(`${baseUrl}/rotate-photo`, {
-    method: "POST",
-    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ id: 999999, direction: "left" })
-  });
-  await expectStatus(res, 404);
-});
+// addTest("B-043","POST /rotate-photo success", async () => {
+//   await setAuctionStatus("locked");
+//   const { res, json } = await fetchJson(`${baseUrl}/rotate-photo`, {
+//     method: "POST",
+//     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+//     body: JSON.stringify({ id: testData.rotatePhotoItem, direction: "left" })
+//   });
+//   await expectStatus(res, 200);
+//   assert.ok(json && json.message, "Missing rotate message");
+// });
+//
+// addTest("B-044","POST /rotate-photo failure unauthenticated", async () => {
+//   const res = await fetch(`${baseUrl}/rotate-photo`, {
+//     method: "POST",
+//     headers: { "Content-Type": "application/json" },
+//     body: JSON.stringify({ id: testData.rotatePhotoItem, direction: "left" })
+//   });
+//   await expectStatus(res, 403);
+// });
+//
+// addTest("B-045","POST /rotate-photo failure wrong role", async () => {
+//   const res = await fetch(`${baseUrl}/rotate-photo`, {
+//     method: "POST",
+//     headers: authHeaders(tokens.cashier, { "Content-Type": "application/json" }),
+//     body: JSON.stringify({ id: testData.rotatePhotoItem, direction: "left" })
+//   });
+//   await expectStatus(res, 403);
+// });
+//
+// addTest("B-046","POST /rotate-photo failure invalid item", async () => {
+//   const { res } = await fetchJson(`${baseUrl}/rotate-photo`, {
+//     method: "POST",
+//     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+//     body: JSON.stringify({ id: 999999, direction: "left" })
+//   });
+//   await expectStatus(res, 404);
+// });
 
 
 
@@ -1894,7 +1894,7 @@ addTest("B-062a","POST /list-auctions success live_feed permission only", async 
 addTest("B-062b","POST /validate refreshes access after maintenance update", async () => {
   const update = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(managedUsers.liveFeedOnly.username)}/access`, {
     method: "PATCH",
-    headers: authHeaders(tokens.maintenance, { "Content-Type": "application/json" }),
+    headers: authHeaders(tokens.bootstrap, { "Content-Type": "application/json" }),
     body: JSON.stringify({ roles: ["slideshow"], permissions: [] })
   });
   await expectStatus(update.res, 200);
@@ -1911,7 +1911,7 @@ addTest("B-062b","POST /validate refreshes access after maintenance update", asy
 
   const restore = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(managedUsers.liveFeedOnly.username)}/access`, {
     method: "PATCH",
-    headers: authHeaders(tokens.maintenance, { "Content-Type": "application/json" }),
+    headers: authHeaders(tokens.bootstrap, { "Content-Type": "application/json" }),
     body: JSON.stringify({ roles: [], permissions: ["live_feed"] })
   });
   await expectStatus(restore.res, 200);

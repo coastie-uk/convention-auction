@@ -2838,30 +2838,30 @@ function registerExportRoutes({
         }
     });
 
-    app.post('/auctions/:auctionId/items/reset-slip-print', authenticateRole("admin"), checkAuctionState(allowedStatuses), async (req, res) => {
-        const auctionId = Number(req.params.auctionId);
-        if (!auctionId) {
-            return res.status(400).json({ error: "Invalid auction id" });
-        }
+    // app.post('/auctions/:auctionId/items/reset-slip-print', authenticateRole("admin"), checkAuctionState(allowedStatuses), async (req, res) => {
+    //     const auctionId = Number(req.params.auctionId);
+    //     if (!auctionId) {
+    //         return res.status(400).json({ error: "Invalid auction id" });
+    //     }
 
-        try {
-            const clearedCount = resetItemExportTracking(auctionId, "slips");
-            audit(getAuditActor(req), 'reset slip print tracking', 'auction', auctionId, {
-                auction_id: auctionId,
-                export_type: "slips",
-                cleared_count: clearedCount
-            });
-            logFromRequest(req, logLevels.INFO, `Reset slip print tracking for auction ${auctionId}: ${clearedCount} item(s)`);
+    //     try {
+    //         const clearedCount = resetItemExportTracking(auctionId, "slips");
+    //         audit(getAuditActor(req), 'reset slip print tracking', 'auction', auctionId, {
+    //             auction_id: auctionId,
+    //             export_type: "slips",
+    //             cleared_count: clearedCount
+    //         });
+    //         logFromRequest(req, logLevels.INFO, `Reset slip print tracking for auction ${auctionId}: ${clearedCount} item(s)`);
 
-            return res.json({
-                message: `Cleared slip print tracking for ${clearedCount} item(s)`,
-                updated_count: clearedCount
-            });
-        } catch (error) {
-            logFromRequest(req, logLevels.ERROR, `Reset slip print tracking failed for auction ${auctionId}: ${error.message}`);
-            return res.status(500).json({ error: "Failed to reset slip print tracking" });
-        }
-    });
+    //         return res.json({
+    //             message: `Cleared slip print tracking for ${clearedCount} item(s)`,
+    //             updated_count: clearedCount
+    //         });
+    //     } catch (error) {
+    //         logFromRequest(req, logLevels.ERROR, `Reset slip print tracking failed for auction ${auctionId}: ${error.message}`);
+    //         return res.status(500).json({ error: "Failed to reset slip print tracking" });
+    //     }
+    // });
 
     app.post('/export-csv', authenticateRole("admin"), (req, res) => {
         let selection;

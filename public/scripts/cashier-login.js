@@ -4,7 +4,7 @@
   const API = "/api";
   const REFRESH_MS = 10000;
   const BUYER_DISPLAY_STATE_KEY = "cashierBuyerDisplayState";
-  const CASHIER_ASSET_VERSION = window.__CASHIER_ASSET_VERSION__ || "2026-04-10-buyer-display-1";
+  const CASHIER_ASSET_VERSION = window.__CASHIER_ASSET_VERSION__ || "2026-04-28-queue-mobile-1";
 
   const $ = (id) => document.getElementById(id);
   const els = {

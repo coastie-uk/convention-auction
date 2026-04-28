@@ -1026,7 +1026,10 @@
       });
 
     table.append(thead, tbody);
-    group.appendChild(table);
+    const tableWrap = document.createElement('div');
+    tableWrap.className = 'bidder-table-wrap';
+    tableWrap.appendChild(table);
+    group.appendChild(tableWrap);
 
     const pictureItems = liveItems.filter(item => item.photo);
     if (showPictures && pictureItems.length) {

@@ -1010,7 +1010,7 @@ addTest("M-021ea","manage_users user cannot grant permissions they do not have w
     body: JSON.stringify({
       username: `mt_blocked_create_${userSeed}`,
       password: "BlockedCreate_123!",
-      roles: ["cashier"],
+      roles: ["maintenance"],
       permissions: ["live_feed"]
     })
   });
@@ -1047,13 +1047,13 @@ addTest("M-021eb","manage_users user cannot change their own access", async () =
   await expectStatus(selfAccess.res, 403);
   assert.match(selfAccess.json?.error || "", /cannot change your own access/i);
 
-  const selfRoles = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(managedUsers.permissionManager.username)}/roles`, {
-    method: "PATCH",
-    headers: authHeaders(limitedToken, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ roles: ["maintenance"] })
-  });
-  await expectStatus(selfRoles.res, 403);
-  assert.match(selfRoles.json?.error || "", /cannot change your own access/i);
+  // const selfRoles = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(managedUsers.permissionManager.username)}/roles`, {
+  //   method: "PATCH",
+  //   headers: authHeaders(limitedToken, { "Content-Type": "application/json" }),
+  //   body: JSON.stringify({ roles: ["maintenance"] })
+  // });
+  // await expectStatus(selfRoles.res, 403);
+  // assert.match(selfRoles.json?.error || "", /cannot change your own access/i);
 });
 
 addTest("M-021f","maintenance/users create failure duplicate username", async () => {
@@ -1069,43 +1069,43 @@ addTest("M-021f","maintenance/users create failure duplicate username", async ()
   await expectStatus(res, 409);
 });
 
-addTest("M-021g","maintenance/users/:username/roles failure invalid username", async () => {
-  const { res } = await fetchJson(`${baseUrl}/maintenance/users/Bad User/roles`, {
-    method: "PATCH",
-    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ roles: ["admin"] })
-  });
-  await expectStatus(res, 400);
-});
-
-addTest("M-021h","maintenance/users/:username/roles failure missing roles", async () => {
-  const { res } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(context.managedUser.username)}/roles`, {
-    method: "PATCH",
-    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ roles: [] })
-  });
-  await expectStatus(res, 400);
-});
-
-addTest("M-021i","maintenance/users/:username/roles failure missing user", async () => {
-  const { res } = await fetchJson(`${baseUrl}/maintenance/users/no_such_user_${userSeed}/roles`, {
-    method: "PATCH",
-    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ roles: ["admin"] })
-  });
-  await expectStatus(res, 404);
-});
-
-addTest("M-021j","maintenance/users/:username/roles success", async () => {
-  const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(context.managedUser.username)}/roles`, {
-    method: "PATCH",
-    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ roles: ["cashier", "maintenance"] })
-  });
-  await expectStatus(res, 200);
-  assert.ok(json && Array.isArray(json.user?.roles), `Unexpected role update response: ${text}`);
-  assert.ok(json.user.roles.includes("maintenance"), "Expected maintenance role after update");
-});
+// addTest("M-021g","maintenance/users/:username/roles failure invalid username", async () => {
+//   const { res } = await fetchJson(`${baseUrl}/maintenance/users/Bad User/roles`, {
+//     method: "PATCH",
+//     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+//     body: JSON.stringify({ roles: ["admin"] })
+//   });
+//   await expectStatus(res, 400);
+// });
+//
+// addTest("M-021h","maintenance/users/:username/roles failure missing roles", async () => {
+//   const { res } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(context.managedUser.username)}/roles`, {
+//     method: "PATCH",
+//     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+//     body: JSON.stringify({ roles: [] })
+//   });
+//   await expectStatus(res, 400);
+// });
+//
+// addTest("M-021i","maintenance/users/:username/roles failure missing user", async () => {
+//   const { res } = await fetchJson(`${baseUrl}/maintenance/users/no_such_user_${userSeed}/roles`, {
+//     method: "PATCH",
+//     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+//     body: JSON.stringify({ roles: ["admin"] })
+//   });
+//   await expectStatus(res, 404);
+// });
+//
+// addTest("M-021j","maintenance/users/:username/roles success", async () => {
+//   const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(context.managedUser.username)}/roles`, {
+//     method: "PATCH",
+//     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+//     body: JSON.stringify({ roles: ["cashier", "maintenance"] })
+//   });
+//   await expectStatus(res, 200);
+//   assert.ok(json && Array.isArray(json.user?.roles), `Unexpected role update response: ${text}`);
+//   assert.ok(json.user.roles.includes("maintenance"), "Expected maintenance role after update");
+// });
 
 addTest("M-021ja","maintenance/users/:username/access success with permission normalization", async () => {
   const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(context.managedUser.username)}/access`, {
@@ -1128,7 +1128,7 @@ addTest("M-021jaa","manage_users user cannot grant permissions they do not have 
     method: "PATCH",
     headers: authHeaders(limitedToken, { "Content-Type": "application/json" }),
     body: JSON.stringify({
-      roles: ["cashier"],
+      roles: ["maintenance"],
       permissions: ["live_feed"]
     })
   });
@@ -1180,43 +1180,43 @@ addTest("M-021jaaab","manage_users user cannot grant roles they do not have when
   assert.match(json?.error || "", /only grant roles/i);
 });
 
-addTest("M-021jaaac","manage_users user cannot grant roles they do not have via roles-only endpoint", async () => {
-  const limitedToken = await ensurePermissionManagerToken();
-  const { res, json } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(context.managedUser.username)}/roles`, {
-    method: "PATCH",
-    headers: authHeaders(limitedToken, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ roles: ["cashier"] })
-  });
-  await expectStatus(res, 403);
-  assert.match(json?.error || "", /only grant roles/i);
-});
-
-addTest("M-021jaaad","manage_users user cannot remove roles they do not have via roles-only endpoint", async () => {
-  const privilegedRoleUser = `mt_role_target_${userSeed}`;
-  const privilegedPassword = "PrivilegedRole_123!";
-  const createPrivileged = await fetchJson(`${baseUrl}/maintenance/users`, {
-    method: "POST",
-    headers: authHeaders(context.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({
-      username: privilegedRoleUser,
-      password: privilegedPassword,
-      roles: ["maintenance", "cashier"],
-      permissions: ["manage_users"]
-    })
-  });
-  if (createPrivileged.res.status !== 201 && createPrivileged.res.status !== 409) {
-    throw new Error(`Failed to prepare privileged role target user: ${createPrivileged.text || createPrivileged.res.status}`);
-  }
-
-  const limitedToken = await ensurePermissionManagerToken();
-  const { res, json } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(privilegedRoleUser)}/roles`, {
-    method: "PATCH",
-    headers: authHeaders(limitedToken, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ roles: ["maintenance"] })
-  });
-  await expectStatus(res, 403);
-  assert.match(json?.error || "", /only remove roles/i);
-});
+// addTest("M-021jaaac","manage_users user cannot grant roles they do not have via roles-only endpoint", async () => {
+//   const limitedToken = await ensurePermissionManagerToken();
+//   const { res, json } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(context.managedUser.username)}/roles`, {
+//     method: "PATCH",
+//     headers: authHeaders(limitedToken, { "Content-Type": "application/json" }),
+//     body: JSON.stringify({ roles: ["cashier"] })
+//   });
+//   await expectStatus(res, 403);
+//   assert.match(json?.error || "", /only grant roles/i);
+// });
+//
+// addTest("M-021jaaad","manage_users user cannot remove roles they do not have via roles-only endpoint", async () => {
+//   const privilegedRoleUser = `mt_role_target_${userSeed}`;
+//   const privilegedPassword = "PrivilegedRole_123!";
+//   const createPrivileged = await fetchJson(`${baseUrl}/maintenance/users`, {
+//     method: "POST",
+//     headers: authHeaders(context.token, { "Content-Type": "application/json" }),
+//     body: JSON.stringify({
+//       username: privilegedRoleUser,
+//       password: privilegedPassword,
+//       roles: ["maintenance", "cashier"],
+//       permissions: ["manage_users"]
+//     })
+//   });
+//   if (createPrivileged.res.status !== 201 && createPrivileged.res.status !== 409) {
+//     throw new Error(`Failed to prepare privileged role target user: ${createPrivileged.text || createPrivileged.res.status}`);
+//   }
+//
+//   const limitedToken = await ensurePermissionManagerToken();
+//   const { res, json } = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(privilegedRoleUser)}/roles`, {
+//     method: "PATCH",
+//     headers: authHeaders(limitedToken, { "Content-Type": "application/json" }),
+//     body: JSON.stringify({ roles: ["maintenance"] })
+//   });
+//   await expectStatus(res, 403);
+//   assert.match(json?.error || "", /only remove roles/i);
+// });
 
 addTest("M-021jb","maintenance/users/:username/logout-now success invalidates active token", async () => {
   const activeLogin = await fetchJson(`${baseUrl}/login`, {
@@ -1323,7 +1323,7 @@ addTest("M-021o","maintenance/users/:username delete failure root from non-root 
     throw new Error(`Failed to prepare guard user: ${createGuard.text || createGuard.res.status}`);
   }
   if (createGuard.res.status === 409) {
-    const patchGuard = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(guardUsername)}/roles`, {
+    const patchGuard = await fetchJson(`${baseUrl}/maintenance/users/${encodeURIComponent(guardUsername)}/access`, {
       method: "PATCH",
       headers: authHeaders(context.token, { "Content-Type": "application/json" }),
       body: JSON.stringify({ roles: ["maintenance"], permissions: ["manage_users"] })
@@ -1688,20 +1688,20 @@ addTest("M-048","maintenance/cleanup-orphan-photos failure unauthenticated", asy
   await expectStatus(res, 403);
 });
 
-addTest("M-049","maintenance/download-full success", async () => {
-  const res = await fetch(`${baseUrl}/maintenance/download-full`, {
-    headers: authHeaders(context.token)
-  });
-  await expectStatus(res, 200);
-  const contentType = res.headers.get("content-type") || "";
-  assert.ok(contentType.includes("application/zip"), `Unexpected content-type: ${contentType}`);
-  await res.arrayBuffer();
-});
-
-addTest("M-050","maintenance/download-full failure unauthenticated", async () => {
-  const res = await fetch(`${baseUrl}/maintenance/download-full`);
-  await expectStatus(res, 403);
-});
+// addTest("M-049","maintenance/download-full success", async () => {
+//   const res = await fetch(`${baseUrl}/maintenance/download-full`, {
+//     headers: authHeaders(context.token)
+//   });
+//   await expectStatus(res, 200);
+//   const contentType = res.headers.get("content-type") || "";
+//   assert.ok(contentType.includes("application/zip"), `Unexpected content-type: ${contentType}`);
+//   await res.arrayBuffer();
+// });
+//
+// addTest("M-050","maintenance/download-full failure unauthenticated", async () => {
+//   const res = await fetch(`${baseUrl}/maintenance/download-full`);
+//   await expectStatus(res, 403);
+// });
 
 addTest("M-051","maintenance/audit-log failure invalid filter", async () => {
   const res = await fetch(`${baseUrl}/audit-log?object_type=invalid`, {

@@ -493,6 +493,7 @@ async function verifyAndFinalizeIntent(intentId, { raw = null, source = 'manual'
   // If we're here, we're marking success.
   const amount = Number(toPounds(intent.amount_minor));
   const donationAmount = Number(toPounds(intent.donation_minor || 0));
+  const paymentMethod = intent.channel === 'hosted' ? 'sumup-web' : 'sumup-app';
   const createdBy = auditUser;
   const providerTxn = latest?.transactions?.[0]?.id || crypto.randomUUID();
   const t = db.transaction(() => {
@@ -515,7 +516,7 @@ async function verifyAndFinalizeIntent(intentId, { raw = null, source = 'manual'
     const r = db.prepare(`
       INSERT INTO payments (bidder_id, amount, donation_amount, method, note, created_by, provider, provider_txn_id, intent_id, raw_payload, currency, created_at)
       VALUES (?, ?, ?, ? , ?, ?, 'sumup', ?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
-    `).run(intent.bidder_id, amount, donationAmount, createdBy, intent.note, auditUser, providerTxn, intent.intent_id, raw ? JSON.stringify(raw) : (latest ? JSON.stringify(latest) : null), CURRENCY);
+    `).run(intent.bidder_id, amount, donationAmount, paymentMethod, intent.note, createdBy, providerTxn, intent.intent_id, raw ? JSON.stringify(raw) : (latest ? JSON.stringify(latest) : null), CURRENCY);
 
     // Mark intent done
     db.prepare(`UPDATE payment_intents SET status = 'succeeded' WHERE intent_id=?`).run(intent.intent_id);

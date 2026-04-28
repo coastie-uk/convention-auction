@@ -1735,61 +1735,61 @@ router.patch("/users/:username/access", requireManageUsers, (req, res) => {
   }
 });
 
-router.patch("/users/:username/roles", requireManageUsers, (req, res) => {
-  const target = normaliseUsername(req.params.username);
-  const roles = normaliseRoles(req.body?.roles);
+// router.patch("/users/:username/roles", requireManageUsers, (req, res) => {
+//   const target = normaliseUsername(req.params.username);
+//   const roles = normaliseRoles(req.body?.roles);
 
-  if (!isValidUsername(target)) {
-    return res.status(400).json({ error: "Invalid username." });
-  }
+//   if (!isValidUsername(target)) {
+//     return res.status(400).json({ error: "Invalid username." });
+//   }
 
-  if (isSelfUserManagementTarget(req, target)) {
-    return res.status(403).json({ error: "You cannot change your own access." });
-  }
+//   if (isSelfUserManagementTarget(req, target)) {
+//     return res.status(403).json({ error: "You cannot change your own access." });
+//   }
 
-  if (roles.length === 0) {
-    return res.status(400).json({ error: "At least one role is required." });
-  }
+//   if (roles.length === 0) {
+//     return res.status(400).json({ error: "At least one role is required." });
+//   }
 
-  const existingUser = getUserByUsername(target);
-  if (!existingUser) {
-    return res.status(404).json({ error: "User not found." });
-  }
+//   const existingUser = getUserByUsername(target);
+//   if (!existingUser) {
+//     return res.status(404).json({ error: "User not found." });
+//   }
 
-  const unauthorizedRoles = getUnauthorizedGrantedRoles(req, roles);
-  if (unauthorizedRoles.length > 0) {
-    return res.status(403).json({
-      error: `You can only grant roles you already have: ${unauthorizedRoles.join(", ")}.`
-    });
-  }
+//   const unauthorizedRoles = getUnauthorizedGrantedRoles(req, roles);
+//   if (unauthorizedRoles.length > 0) {
+//     return res.status(403).json({
+//       error: `You can only grant roles you already have: ${unauthorizedRoles.join(", ")}.`
+//     });
+//   }
 
-  const unauthorizedRemovedRoles = getUnauthorizedRemovedRoles(req, existingUser, roles);
-  if (unauthorizedRemovedRoles.length > 0) {
-    return res.status(403).json({
-      error: `You can only remove roles you already have: ${unauthorizedRemovedRoles.join(", ")}.`
-    });
-  }
+//   const unauthorizedRemovedRoles = getUnauthorizedRemovedRoles(req, existingUser, roles);
+//   if (unauthorizedRemovedRoles.length > 0) {
+//     return res.status(403).json({
+//       error: `You can only remove roles you already have: ${unauthorizedRemovedRoles.join(", ")}.`
+//     });
+//   }
 
-  try {
-    const result = updateUserRoles(target, roles);
-    if (!result || result.changes === 0) return res.status(404).json({ error: "User not found." });
+//   try {
+//     const result = updateUserRoles(target, roles);
+//     if (!result || result.changes === 0) return res.status(404).json({ error: "User not found." });
 
-    const updated = getUserByUsername(target);
-    audit(getAuditActor(req), 'update user roles', 'server', null, {
-      username: target,
-      roles: updated?.roles || roles,
-      permissions: updated?.permissions || []
-    });
-    logFromRequest(req, logLevels.INFO, `Updated roles for user ${target}: ${updated?.roles.join(", ") || roles.join(", ")}`);
-    return res.json({ message: `Permissions updated for "${target}".`, user: updated });
-  } catch (err) {
-    if (err.message === 'roles_required') {
-      return res.status(400).json({ error: "At least one role is required." });
-    }
-    logFromRequest(req, logLevels.ERROR, `Failed to update user roles for ${target}: ${err.message}`);
-    return res.status(500).json({ error: "Failed to update user permissions." });
-  }
-});
+//     const updated = getUserByUsername(target);
+//     audit(getAuditActor(req), 'update user roles', 'server', null, {
+//       username: target,
+//       roles: updated?.roles || roles,
+//       permissions: updated?.permissions || []
+//     });
+//     logFromRequest(req, logLevels.INFO, `Updated roles for user ${target}: ${updated?.roles.join(", ") || roles.join(", ")}`);
+//     return res.json({ message: `Permissions updated for "${target}".`, user: updated });
+//   } catch (err) {
+//     if (err.message === 'roles_required') {
+//       return res.status(400).json({ error: "At least one role is required." });
+//     }
+//     logFromRequest(req, logLevels.ERROR, `Failed to update user roles for ${target}: ${err.message}`);
+//     return res.status(500).json({ error: "Failed to update user permissions." });
+//   }
+// });
 
 router.post("/users/:username/password", requireManageUsers, (req, res) => {
   const target = normaliseUsername(req.params.username);
@@ -1971,71 +1971,71 @@ router.get("/logs", (req, res) => {
 // API to download a zip file containing the database and all images
 //--------------------------------------------------------------------------
 
-router.get("/download-full", (req, res) => {
-  logFromRequest(req, logLevels.DEBUG, `Full download requested`);
-  const archive = archiver("zip", { zlib: { level: 9 } });
+// router.get("/download-full", (req, res) => {
+//   logFromRequest(req, logLevels.DEBUG, `Full download requested`);
+//   const archive = archiver("zip", { zlib: { level: 9 } });
 
-  const now = new Date();
-  const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19); // e.g. 2024-04-10T14-33-58
-  const filename = `auction_backup_${timestamp}.zip`;
-
-
-  res.setHeader("Content-Type", "application/zip");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-
-  // close and reopen the database to make sure changes are written back
-  db.setMaintenanceLock(true);
-  try {
-    db.close();
-    if (typeof db.reopen === "function") {
-      db.reopen({ skipClose: true });
-    }
-  } finally {
-    db.setMaintenanceLock(false);
-  }
-
-  archive.pipe(res);
-
-  // Add DB file
-  archive.file(path.join(DB_PATH, DB_NAME));
-
-  // Add referenced photos
-  db.all("SELECT photo FROM items WHERE photo IS NOT NULL", [], (err, rows) => {
-    if (err) {
-      archive.append(`Error reading DB: ${err.message}`, { name: "error.txt" });
-      archive.finalize();
-      return;
-    }
-
-    const usedPhotos = new Set(rows.map(r => r.photo));
-    for (const filename of usedPhotos) {
-      const filePath = path.join(UPLOAD_DIR, filename);
-      if (fs.existsSync(filePath)) {
-//        archive.file(filePath, { name: `uploads/${filename}` });
-        archive.file(filePath, { name: path.join(UPLOAD_DIR, filename) });
-
-      }
-    }
+//   const now = new Date();
+//   const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19); // e.g. 2024-04-10T14-33-58
+//   const filename = `auction_backup_${timestamp}.zip`;
 
 
-    // Include additional image resources from CONFIG_IMG_DIR
-    const extraResources = fs.readdirSync(CONFIG_IMG_DIR).filter(f =>
-      [".jpg", ".jpeg", ".png"].includes(path.extname(f).toLowerCase())
-    );
+//   res.setHeader("Content-Type", "application/zip");
+//   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
-    for (const resource of extraResources) {
-      const resourcePath = path.join(CONFIG_IMG_DIR, resource);
-      if (fs.existsSync(resourcePath)) {
-        archive.file(resourcePath, { name: `resources/${resource}` });
-      }
-    }
+//   // close and reopen the database to make sure changes are written back
+//   db.setMaintenanceLock(true);
+//   try {
+//     db.close();
+//     if (typeof db.reopen === "function") {
+//       db.reopen({ skipClose: true });
+//     }
+//   } finally {
+//     db.setMaintenanceLock(false);
+//   }
+
+//   archive.pipe(res);
+
+//   // Add DB file
+//   archive.file(path.join(DB_PATH, DB_NAME));
+
+//   // Add referenced photos
+//   db.all("SELECT photo FROM items WHERE photo IS NOT NULL", [], (err, rows) => {
+//     if (err) {
+//       archive.append(`Error reading DB: ${err.message}`, { name: "error.txt" });
+//       archive.finalize();
+//       return;
+//     }
+
+//     const usedPhotos = new Set(rows.map(r => r.photo));
+//     for (const filename of usedPhotos) {
+//       const filePath = path.join(UPLOAD_DIR, filename);
+//       if (fs.existsSync(filePath)) {
+// //        archive.file(filePath, { name: `uploads/${filename}` });
+//         archive.file(filePath, { name: path.join(UPLOAD_DIR, filename) });
+
+//       }
+//     }
 
 
-    archive.finalize();
-    logFromRequest(req, logLevels.INFO, `Full download generated`);
+//     // Include additional image resources from CONFIG_IMG_DIR
+//     const extraResources = fs.readdirSync(CONFIG_IMG_DIR).filter(f =>
+//       [".jpg", ".jpeg", ".png"].includes(path.extname(f).toLowerCase())
+//     );
 
-  });
-});
+//     for (const resource of extraResources) {
+//       const resourcePath = path.join(CONFIG_IMG_DIR, resource);
+//       if (fs.existsSync(resourcePath)) {
+//         archive.file(resourcePath, { name: `resources/${resource}` });
+//       }
+//     }
+
+
+//     archive.finalize();
+//     logFromRequest(req, logLevels.INFO, `Full download generated`);
+
+//   });
+// });
 
 //--------------------------------------------------------------------------
 // GET /orphan-photos
