@@ -634,7 +634,7 @@ async function deleteAuctionById(auctionId, auctionFullName = "") {
   const confirmed = await DayPilot.Modal.confirm(
     isLast
       ? `⚠️ WARNING: This is the last auction and deleting it will reset the database. Audit data and counters will NOT be reset. Proceed?`
-      : `Are you sure you want to delete auction ${auctionFullName || auctionId}?`
+      : `Are you sure you want to delete auction "${auctionFullName || auctionId}"?`
   );
 
   if (confirmed.canceled) return false;
@@ -658,9 +658,10 @@ async function deleteAuctionById(auctionId, auctionFullName = "") {
   return true;
 }
 
-async function resetAuctionById(auctionId) {
-  const confirmMsg = `Delete all items from auction ${auctionId}? Bidder and payment details will also be removed`;
-  const password = await promptPassword(`Enter maintenance password to reset auction`, confirmMsg);
+async function resetAuctionById(auctionId, auctionFullName = "") {
+  const auctionLabel = auctionFullName || auctionId;
+  const confirmMsg = `Delete all items from auction "${auctionLabel}"? Bidder and payment details will also be removed`;
+  const password = await promptPassword(`Enter your current password to reset auction`, confirmMsg);
   if (!password) return false;
 
   const res = await fetch(`${API}/maintenance/reset`, {
@@ -685,7 +686,7 @@ async function resetAuctionById(auctionId) {
 async function purgeDeletedItemsByAuctionId(auctionId) {
   const deletedCount = Number(editAuctionModal?.dataset.auctionDeletedItemCount || 0);
   const confirmMsg = `Permanently delete ${deletedCount} deleted item(s) from auction ${auctionId}? Associated photo files will also be removed.`;
-  const password = await promptPassword(`Enter maintenance password to purge deleted items`, confirmMsg);
+  const password = await promptPassword(`Enter your password to purge deleted items`, confirmMsg);
   if (!password) return false;
 
   const res = await fetch(`${API}/maintenance/auctions/purge-deleted-items`, {
@@ -1932,7 +1933,7 @@ function openLogPopup() {
       <div class="popup-head">
         <div>
           <h1>Server Logs</h1>
-          <div class="popup-subtle">Monitoring window linked to the maintenance panel.</div>
+          <div class="popup-subtle">Monitoring window linked to the Manage Auctions panel.</div>
         </div>
         <div class="popup-actions">
           <label><input id="popup-auto-refresh" type="checkbox"> Auto-refresh</label>
@@ -2436,7 +2437,7 @@ editAuctionResetButton?.addEventListener("click", async () => {
 
   editAuctionResetButton.disabled = true;
   try {
-    const reset = await resetAuctionById(auctionId);
+    const reset = await resetAuctionById(auctionId, editAuctionModal?.dataset.auctionFullName || "");
     if (!reset) return;
     closeEditAuctionModal();
     refreshAuctions();

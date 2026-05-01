@@ -1062,7 +1062,7 @@ if (info.changes === 0) {
 }
 
 //    db.run(`UPDATE items SET winning_bidder_id = ?, hammer_price = ? WHERE id = ?`, [bidder.id, price, itemId]);
-    audit(getAuditActor(req), 'finalize', 'item', itemId, { paddle_no: paddleNumber, price, bidder_name: bidder.name || '' });
+    audit(getAuditActor(req), 'finalise', 'item', itemId, { paddle_no: paddleNumber, price, bidder_name: bidder.name || '' });
     logFromRequest(req, logLevels.INFO, `Bid recorded for auction ${auctionId}, bidder ${paddleNumber}, item ${itemId}, price ${price}`);
 
 
@@ -1086,7 +1086,7 @@ if (info.changes === 0) {
 
     // audit entry for traceability
     audit(getAuditActor(req), 'auto_settlement', 'auction', auctionId, {
-      reason: 'all lots sold via finalize endpoint'
+      reason: 'all lots sold via finalise endpoint'
     });
     logFromRequest(req, logLevels.INFO, `All lots sold in auction ${auctionId}, setting state to settlement`);
 

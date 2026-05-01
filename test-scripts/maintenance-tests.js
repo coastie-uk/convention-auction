@@ -1659,6 +1659,33 @@ await sleep(2500);
 });
 
 addTest("M-046","maintenance/reset success", async () => {
+  const resetFixtureBuffer = createTempDbBuffer(await downloadCurrentDbBuffer(), (tempDb) => {
+    const maxPaddle = tempDb.prepare("SELECT COALESCE(MAX(paddle_number), 0) AS max_paddle FROM bidders WHERE auction_id = ?").get(context.testAuctionId);
+    const paddleNumber = Number(maxPaddle?.max_paddle || 0) + 1;
+    const bidderId = Number(tempDb.prepare(`
+      INSERT INTO bidders (paddle_number, name, auction_id)
+      VALUES (?, 'Reset Linked Payment Bidder', ?)
+    `).run(paddleNumber, context.testAuctionId).lastInsertRowid);
+    const intentId = `reset-linked-${Date.now()}`;
+
+    tempDb.prepare(`
+      INSERT INTO items (description, contributor, auction_id, item_number, winning_bidder_id, hammer_price, date)
+      VALUES ('Reset linked payment item', 'Maintenance Tests', ?, 1, ?, 10, '2026-01-01 12:00:00')
+    `).run(context.testAuctionId, bidderId);
+
+    tempDb.prepare(`
+      INSERT INTO payment_intents (intent_id, bidder_id, amount_minor, donation_minor, created_by, currency, status, channel, created_at, expires_at, note)
+      VALUES (?, ?, 1000, 0, 'test-suite', 'GBP', 'succeeded', 'app', '2026-01-01 12:00:00', '2026-01-01 13:00:00', 'reset fixture')
+    `).run(intentId, bidderId);
+
+    tempDb.prepare(`
+      INSERT INTO payments (bidder_id, amount, donation_amount, method, created_by, provider, intent_id, currency, created_at)
+      VALUES (?, 10, 0, 'sumup', 'test-suite', 'sumup', ?, 'GBP', '2026-01-01 12:01:00')
+    `).run(bidderId, intentId);
+
+    tempDb.prepare("UPDATE auctions SET status = 'archived' WHERE id = ?").run(context.testAuctionId);
+  });
+  await restoreDbBuffer(resetFixtureBuffer, "reset-linked-payment-fixture.db");
 
   const { res, json, text } = await fetchJson(`${baseUrl}/maintenance/reset`, {
     method: "POST",
@@ -1667,6 +1694,8 @@ addTest("M-046","maintenance/reset success", async () => {
   });
   await expectStatus(res, 200);
   assert.ok(json && json.ok, `Unexpected response: ${text}`);
+  assert.ok(Number(json.deleted?.payments || 0) >= 1, `Expected reset to delete payments: ${text}`);
+  assert.ok(Number(json.deleted?.payment_intents || 0) >= 1, `Expected reset to delete payment intents: ${text}`);
 });
 
 addTest("M-047","maintenance/cleanup-orphan-photos success", async () => {

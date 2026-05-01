@@ -40,6 +40,7 @@ const API = "/api"
 
     // states in which we should hide the bid  control buttons
     const hideFinaliseStates = ['setup', 'locked', 'archived'];
+    const BID_PERMISSION_DISABLED_TITLE = 'You do not have permission to record or retract bids.';
 
 
   function getToken() {
@@ -188,10 +189,7 @@ const API = "/api"
 
   // --------------- inject buttons ----------------------------
   function enhanceRows() {
-    if (!canManageBids()) {
-      TABLE_BODY.querySelectorAll('.btn-finalize, .btn-undo').forEach((button) => button.remove());
-      return;
-    }
+    const hasBidPermission = canManageBids();
 
     if (hideFinaliseStates.includes(auctionStatus)) return;
 
@@ -213,19 +211,43 @@ const API = "/api"
       const actionStrip = cell.querySelector('.item-actions') || cell;
 
       // Finalize button (only for unsold lots)
-      if (!isSold && !actionStrip.querySelector('.btn-finalize')) {
-        const btn = buildActionButton('btn-finalize', 'Record bid', ACTION_ICONS.finalize);
-        btn.onclick     = () => openFinalizeModal(id, item_no, description, tr);
-        actionStrip.appendChild(btn);
+      if (!isSold) {
+        let btn = actionStrip.querySelector('.btn-finalize');
+        if (!btn) {
+          btn = buildActionButton('btn-finalize', 'Record bid', ACTION_ICONS.finalize);
+          actionStrip.appendChild(btn);
+        }
+        configureBidActionButton(btn, hasBidPermission, () => openFinalizeModal(id, item_no, description, tr));
       }
 
       // Undo button (sold but not locked)
-      if (isSold && !locked && !actionStrip.querySelector('.btn-undo')) {
-        const u = buildActionButton('btn-undo', 'Undo bid', ACTION_ICONS.undo);
-        u.onclick     = () => undoFinalize(id, tr);
-        actionStrip.appendChild(u);
+      if (isSold && !locked) {
+        let u = actionStrip.querySelector('.btn-undo');
+        if (!u) {
+          u = buildActionButton('btn-undo', 'Undo bid', ACTION_ICONS.undo);
+          actionStrip.appendChild(u);
+        }
+        configureBidActionButton(u, hasBidPermission, () => undoFinalize(id, tr));
       }
     });
+  }
+
+  function configureBidActionButton(button, enabled, onClick) {
+    const defaultTitle = button.dataset.defaultTitle || button.title || '';
+    if (!enabled) {
+      button.disabled = true;
+      button.classList.add('disabled');
+      button.title = BID_PERMISSION_DISABLED_TITLE;
+      button.setAttribute('aria-label', `${defaultTitle}. ${BID_PERMISSION_DISABLED_TITLE}`);
+      button.onclick = null;
+      return;
+    }
+
+    button.disabled = false;
+    button.classList.remove('disabled');
+    button.title = defaultTitle;
+    button.setAttribute('aria-label', defaultTitle);
+    button.onclick = onClick;
   }
 
   function buildActionButton(className, title, icon) {

@@ -154,11 +154,38 @@ document.addEventListener("DOMContentLoaded", function () {
         "test_item",
         "test_bid",
         "winning_bidder_id",
+        "paddle_no",
         "hammer_price",
         "is_deleted",
         "deleted_at",
         "deleted_by"
     ]);
+    const ITEM_DETAIL_FIELD_LABELS = Object.freeze({
+        id: "Database ID",
+        description: "Item description",
+        contributor: "Contributor",
+        artist: "Creator",
+        photo: "Photo file",
+        date: "Created",
+        notes: "Notes",
+        mod_date: "Last modified",
+        last_print: "Last printed",
+        last_slide_export: "Last slide export",
+        last_card_export: "Last card export",
+        last_bid_update: "Last bid update",
+        collected_at: "Collected",
+        text_mod_date: "Text last modified",
+        item_number: "Item number",
+        auction_id: "Auction",
+        test_item: "Test item",
+        test_bid: "Test bid",
+        winning_bidder_id: "Winning bidder ID",
+        paddle_no: "Paddle number",
+        hammer_price: "Hammer price",
+        is_deleted: "Deleted",
+        deleted_at: "Deleted at",
+        deleted_by: "Deleted by"
+    });
     const SORT_FIELD_LABELS = Object.freeze({
         item_number: "Number",
         description: "Name",
@@ -3223,8 +3250,16 @@ document.addEventListener("DOMContentLoaded", function () {
         return `Created on: <b>${created}</b> Last modified: <b>${modified}</b> Database ID: <b>${id}</b>`;
     }
 
-    function formatItemDetailsValue(value) {
+    function formatItemDetailsValue(value, field) {
         if (value === null || value === undefined || value === "") return "—";
+        if (field === "test_item" || field === "test_bid" || field === "is_deleted") return convertBooleanToYesNo(value);
+        return String(value);
+    }
+
+    function convertBooleanToYesNo(value) {
+        if (value === null || value === undefined) return "—";
+        if (typeof value === "boolean") return value ? "Yes" : "No";
+        if (typeof value === "number" && (value === 0 || value === 1)) return value === 1 ? "Yes" : "No";
         return String(value);
     }
 
@@ -3271,8 +3306,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
             itemDetailsTableBody.innerHTML = ITEM_DETAIL_FIELDS.map((field) => `
                 <tr>
-                    <th scope="row">${escapeHtml(field)}</th>
-                    <td>${escapeHtml(formatItemDetailsValue(data[field]))}</td>
+                    <th scope="row">${escapeHtml(ITEM_DETAIL_FIELD_LABELS[field] || field)}</th>
+                    <td>${escapeHtml(formatItemDetailsValue(data[field], field))}</td>
                 </tr>
             `).join("");
         } catch (error) {

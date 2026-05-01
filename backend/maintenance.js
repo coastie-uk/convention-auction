@@ -1190,40 +1190,28 @@ router.post("/backups/:backupId/restore", async (req, res) => {
 
 router.post("/reset", checkAuctionState(['setup', 'archived']), (req, res) => {
   const { auction_id, password } = req.body;
-  const username = req.user?.username;
 
-  if (!auction_id || !password || !username) {
+  if (!auction_id || !password) {
     return res.status(400).json({ error: "Missing auction_id or password." });
   }
 
   try {
-    const user = getUserByUsername(username);
-    if (!user || !user.password) {
-      return res.status(403).json({ error: "Incorrect password" });
-    }
-
-    const stored = String(user.password || '');
-    const valid = stored.startsWith('$2')
-      ? bcrypt.compareSync(password, stored)
-      : stored === password;
-
-    if (!valid) {
-      logFromRequest(req, logLevels.WARN, `Incorrect password attempt for auction reset by ${username}`);
-      return res.status(403).json({ error: "Incorrect password" });
-    }
+    verifyMaintenancePassword(req, password);
   } catch (err) {
-    return res.status(500).json({ error: "Error verifying password" });
+    if (err.statusCode === 403) {
+      logFromRequest(req, logLevels.WARN, `Incorrect password attempt for auction reset by ${req.user?.username || "unknown"}`);
+    }
+    return res.status(err.statusCode || 500).json({ error: err.message || "Error verifying password" });
   }
 
   try {
   //  db.pragma('defer_foreign_keys = ON');
     const result = db.transaction(id => {
-
-      // Payment intents
-      const delIntents = db.prepare(`DELETE FROM payment_intents WHERE bidder_id IN (SELECT id FROM bidders WHERE auction_id = ?)`).run(id).changes;
-      
       /* payments */
       const delPay = db.prepare(`DELETE FROM payments WHERE bidder_id IN (SELECT id FROM bidders WHERE auction_id = ?)`).run(id).changes;
+
+      /* payment intents */
+      const delIntents = db.prepare(`DELETE FROM payment_intents WHERE bidder_id IN (SELECT id FROM bidders WHERE auction_id = ?)`).run(id).changes;
 
       /* items */
       const delItems = db.prepare(`DELETE FROM items WHERE auction_id = ?`).run(id).changes;
