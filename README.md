@@ -68,14 +68,14 @@ This software provides a single platform which automates the process from item s
   or the [hosted guide](https://mainbid.co.uk/docker_installation.html).
 - For standalone Node.js/Apache setup see
   [docs/installation.md](docs/installation.md) or the
-  [hosted guide](https://mainbid.co.uk/installation.html).
+  [hosted guide](https://manebid.co.uk/installation.html).
 - For payment setup see [docs/sumup_setup.md](docs/sumup_setup.md) or the
-  [hosted guide](https://mainbid.co.uk/sumup.html).
+  [hosted guide](https://manebid.co.uk/sumup.html).
 - For PowerPoint and item slip template setup see
   [docs/template_editing.md](docs/template_editing.md) or the
-  [hosted guide](https://mainbid.co.uk/pptx_guide.html).
+  [hosted guide](https://manebid.co.uk/pptx_guide.html).
 
 ## Quick-start
 
 See [docs/quickstart.md](docs/quickstart.md) or the
-[hosted guide](https://mainbid.co.uk/quickstart.html).
+[hosted guide](https://manebid.co.uk/quickstart.html).
