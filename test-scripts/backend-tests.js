@@ -311,6 +311,10 @@ addTest("B-001a","setup: login slideshow role directly", async () => {
   await expectStatus(res, 200);
   assert.ok(res._session, "Slideshow login failed");
   assert.equal(json?.token, undefined, "Login must not expose a JWT");
+  assert.ok(
+    ["native", "docker"].includes(json?.versions?.deployment_mode),
+    `Unexpected deployment mode: ${json?.versions?.deployment_mode}`
+  );
   tokens.slideshow = res._session;
 });
 

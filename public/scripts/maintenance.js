@@ -18,6 +18,7 @@ const openAboutModalButton = document.getElementById("open-about-modal");
 const aboutModal = document.getElementById("about-modal");
 const closeAboutModalButton = document.getElementById("close-about-modal");
 const aboutVersionSummaryEl = document.getElementById("about-version-summary");
+const aboutDeploymentModeEl = document.getElementById("about-deployment-mode");
 const aboutDatabaseEntryEl = document.getElementById("about-database-entry");
 const aboutDatabaseRestoreEl = document.getElementById("about-database-restore");
 const aboutBackendUptimeEl = document.getElementById("about-backend-uptime");
@@ -1049,6 +1050,11 @@ function updateVersionDisplays(versions = {}) {
   const backend = currentVersions.backend || "N/A";
   const schema = currentVersions.schema || "N/A";
   const payment = currentVersions.payment_processor || "N/A";
+  const deploymentMode = currentVersions.deployment_mode === "docker"
+    ? "Docker"
+    : currentVersions.deployment_mode === "native"
+      ? "Native"
+      : "Unknown";
   const versionSummary = `Backend ${backend} / Schema ${schema} / Payment ${payment}`;
   const databaseId = currentVersions.database_id || "Unknown";
   const databaseCreatedAt = formatDateTime(currentVersions.database_created_at);
@@ -1062,6 +1068,7 @@ function updateVersionDisplays(versions = {}) {
   }
 
   if (aboutVersionSummaryEl) aboutVersionSummaryEl.textContent = versionSummary;
+  if (aboutDeploymentModeEl) aboutDeploymentModeEl.textContent = deploymentMode;
   if (aboutDatabaseEntryEl) aboutDatabaseEntryEl.textContent = databaseEntry;
   if (aboutDatabaseRestoreEl) aboutDatabaseRestoreEl.textContent = restoreSummary;
   if (aboutBackendUptimeEl) aboutBackendUptimeEl.textContent = uptime;

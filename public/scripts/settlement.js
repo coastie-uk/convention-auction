@@ -1385,11 +1385,29 @@ overlay.querySelector('#amt').focus();
     };
   }
 
+  function browserAppearsMobile() {
+    if (typeof navigator.userAgentData?.mobile === 'boolean') {
+      return navigator.userAgentData.mobile;
+    }
+
+    const userAgent = navigator.userAgent || '';
+    const isMobileUserAgent = /Android|iPhone|iPad|iPod|Mobile|Tablet|Silk|Kindle/i.test(userAgent);
+    const isIPadUsingDesktopMode = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+    return isMobileUserAgent || isIPadUsingDesktopMode;
+  }
+
   function openPayModal(method, methodLabel = ''){
     const tpl=document.getElementById('payTpl').content.cloneNode(true);
     const overlay=tpl.firstElementChild;document.body.appendChild(overlay);
     const displayLabel = methodLabel || formatPaymentMethod(method);
-    overlay.querySelector('#modalTitle').textContent=`Add ${displayLabel} payment`;
+    const modalTitle = overlay.querySelector('#modalTitle');
+    modalTitle.textContent=`Add ${displayLabel} payment`;
+    if (method === 'sumup-app' && !browserAppearsMobile()) {
+      modalTitle.insertAdjacentHTML(
+        'afterend',
+        '<div class="modal-warning" role="alert"><strong>Mobile device required</strong><br>This payment method only works on a mobile device with the SumUp app installed. This browser does not appear to be mobile.</div>'
+      );
+    }
     const amtIn=overlay.querySelector('#amt');
     const donationIn = overlay.querySelector('#donation');
     const balanceDue = roundCurrency(selBidder.balance || 0);

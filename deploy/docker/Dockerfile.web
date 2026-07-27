@@ -1,4 +1,20 @@
 FROM caddy:2.11.4-alpine
 
+RUN mkdir -p /usr/share/licenses/manebid \
+    && awk -F: 'BEGIN { OFS="\t" } \
+      /^P:/ { package_name=substr($0, 3) } \
+      /^V:/ { package_version=substr($0, 3) } \
+      /^L:/ { print package_name, package_version, substr($0, 3) }' \
+      /lib/apk/db/installed \
+      | LC_ALL=C sort > /tmp/alpine-packages.tsv \
+    && printf 'package\tversion\tdeclared_license\n' \
+      > /usr/share/licenses/manebid/alpine-packages.tsv \
+    && cat /tmp/alpine-packages.tsv \
+      >> /usr/share/licenses/manebid/alpine-packages.tsv \
+    && rm /tmp/alpine-packages.tsv \
+    && caddy build-info > /usr/share/licenses/manebid/caddy-build-info.txt \
+    && caddy version > /usr/share/licenses/manebid/runtime-versions.txt
+
+COPY public/THIRD_PARTY_NOTICES.md public/licenses/Apache-2.0.txt /usr/share/licenses/manebid/
 COPY deploy/docker/Caddyfile /etc/caddy/Caddyfile
 COPY public/ /srv/

@@ -319,6 +319,7 @@ the standalone defaults in several important ways:
   client-supplied forwarding headers;
 - application storage is measured from `/app` rather than from the container
   filesystem root;
+- the authenticated About dialog reports the deployment mode as `Docker`;
 - every writable path is below `/var/lib/manebid` on the persistent volume;
 - `RESTART_MODE=exit` asks the container supervisor to restart the process
   rather than invoking systemd or PM2.
@@ -351,6 +352,35 @@ docker compose start
 docker compose down
 ```
 
+To rebuild both images after changing the source and recreate the containers
+while retaining all named volumes:
+
+```bash
+./rebuild-containers.sh
+```
+
+To retain the data and leave the backend available for local debugging and
+test scripts at `127.0.0.1:3000`:
+
+```bash
+./rebuild-containers.sh --test-access
+```
+
+`--debug` is an alias for `--test-access`. The mapping is bound only to the
+Docker host's loopback interface. A later rebuild without either option returns
+the backend to normal private mode.
+
+For a complete reset, including permanent deletion of the database, uploads,
+resources, backups, generated files, logs, messaging state, and Caddy
+certificate data:
+
+```bash
+./rebuild-containers.sh --reset
+```
+
+The reset form requires typing `RESET`. For deliberate non-interactive
+automation, pass both `--reset --yes`.
+
 `docker compose down` removes containers and the private network but preserves
 the named volumes. `docker compose down --volumes` permanently removes the
 database, uploads, resources, generated files, logs, and Caddy state; use it
@@ -360,6 +390,34 @@ The Maintenance UI's restart action is supported. The backend exits cleanly,
 flushes operator messages, closes SQLite, and Compose's `unless-stopped` policy
 starts a replacement process. An explicit `docker compose stop` remains
 stopped, as expected.
+
+### Temporary backend access for tests
+
+The backend normally has no host port, so the API integration tests cannot
+connect directly to their default `http://localhost:3000` address. Use the
+provided mode switch to publish port 3000 on the Docker host's loopback
+interface only:
+
+```bash
+./backend-access-mode.sh test
+cd ../..
+BASE_URL=http://127.0.0.1:3000 ./test-scripts/run-all.sh
+cd deploy/docker
+./backend-access-mode.sh normal
+```
+
+Check the current mode without changing it:
+
+```bash
+./backend-access-mode.sh status
+```
+
+Test mode maps `127.0.0.1:3000` to the backend; it does not listen on the
+host's LAN or public addresses. Normal mode recreates the backend without that
+mapping. Both modes use the same application data volume. The integration
+tests create and modify application data, exercise restores and repairs, and
+delete test objects, so do not run the full suite against a production
+database. Use a separate deployment and volume for routine testing.
 
 For the server-management CLI, stop the normal backend first so that only one
 process writes the SQLite database:
@@ -401,6 +459,36 @@ docker compose ps
 
 The named volumes remain attached. Check the backend log for schema migration
 messages and confirm `/api/healthz` before resuming auction operations.
+
+## Container third-party notices
+
+Each image carries a release-specific compliance bundle under
+`/usr/share/licenses/manebid`. The backend build records its installed npm and
+Debian packages; the web build records its installed Alpine packages and
+Caddy's compiled Go module list. The bundle also contains ManeBid's
+third-party notice and the Apache License 2.0 text used by Caddy.
+
+After every release image build, verify that the expected files remain present
+and non-empty:
+
+```bash
+./verify-container-licenses.sh
+```
+
+Pass image tags when verifying images that do not use the local defaults:
+
+```bash
+./verify-container-licenses.sh \
+  registry.example.org/manebid-backend:3.2.0 \
+  registry.example.org/manebid-web:3.2.0
+```
+
+The source checkout also publishes the notice at
+`public/THIRD_PARTY_NOTICES.md` and the Caddy license at
+`public/licenses/Apache-2.0.txt`. Review the generated inventories whenever a
+base image or dependency lockfile changes. Image distributors remain
+responsible for satisfying any applicable source-availability requirements
+for copyleft components listed by those inventories.
 
 ## Troubleshooting
 

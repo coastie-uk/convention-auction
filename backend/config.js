@@ -212,6 +212,7 @@ try {
   const PORT           = reqNum(json, 'PORT', 1, 65535);               // e.g., 3000
   const HOST           = optStr(json, 'HOST', '127.0.0.1', 1, 255);
   const TRUSTED_PROXIES = optTrustedProxies(json);
+  const DEPLOYMENT_MODE = parseDeploymentMode(process.env.MANEBID_DEPLOYMENT_MODE);
   const PPTX_CONFIG_DIR = reqStr(json, 'PPTX_CONFIG_DIR'); // e.g., "pptx-config"
   const LOG_DIR      = reqStr(json, 'LOG_DIR');         // e.g., "logs"
   const LOG_NAME      = reqStr(json, 'LOG_NAME');         // e.g., "server.log"
@@ -270,6 +271,7 @@ try {
     PORT,
     HOST,
     TRUSTED_PROXIES,
+    DEPLOYMENT_MODE,
     LOG_LEVEL,
     DB_PATH,
     DB_NAME,
@@ -374,6 +376,16 @@ function parseBoolEnv(name, defaultValue = false) {
 
   throw new Error(
     `Invalid boolean value for ${name}: "${raw}". Expected true/false/1/0/yes/no/on/off.`
+  );
+}
+
+function parseDeploymentMode(value) {
+  const normalized = String(value || 'native').trim().toLowerCase();
+  if (normalized === 'native' || normalized === 'docker') {
+    return normalized;
+  }
+  throw new Error(
+    `Invalid MANEBID_DEPLOYMENT_MODE "${value}". Expected "native" or "docker".`
   );
 }
 

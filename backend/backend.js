@@ -54,6 +54,7 @@ const {
     PORT,
     HOST,
     TRUSTED_PROXIES,
+    DEPLOYMENT_MODE,
     LOG_LEVEL,
     MAX_ITEMS,
     PPTX_CONFIG_DIR,
@@ -294,6 +295,7 @@ function buildSessionResponse(user, decoded) {
       backend: backendVersion,
       schema: schemaVersion,
       payment_processor: paymentProcessorVer,
+      deployment_mode: DEPLOYMENT_MODE,
       database_id: db.getMetadataValue('database_id'),
       database_created_at: db.getMetadataValue('database_created_at'),
       database_created_by_backend_version: db.getMetadataValue('database_created_by_backend_version'),
@@ -325,7 +327,7 @@ const { registerExportRoutes } = require('./export-routes');
 //     { ttlSeconds: 2 }
 // );
 
-log('General', logLevels.INFO, `Backend version: ${backendVersion}, DB schema version: ${schemaVersion}`);
+log('General', logLevels.INFO, `Backend version: ${backendVersion}, DB schema version: ${schemaVersion}, deployment mode: ${DEPLOYMENT_MODE}`);
 log('General', logLevels.INFO, `Payment processor: ${paymentProcessorVer}`);
 
 setLogLevel(LOG_LEVEL.toUpperCase());

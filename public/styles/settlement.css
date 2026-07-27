@@ -404,6 +404,17 @@ tbody tr:first-child td {
   color: #6f5815;
 }
 
+.modal-warning {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid #e3b341;
+  border-radius: 8px;
+  background: #fff8df;
+  color: #6f4d0b;
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+
 .pending-payments-panel {
   margin-top: 12px;
   padding: 10px;
@@ -1101,6 +1112,12 @@ body.buyer-display-page {
 :root[data-theme="dark"] .payment-state-hint {
   background: #2b2612;
   border-color: #6f5b1f;
+  color: #f2d479;
+}
+
+:root[data-theme="dark"] .modal-warning {
+  background: #2b2612;
+  border-color: #8a6b1f;
   color: #f2d479;
 }
 
