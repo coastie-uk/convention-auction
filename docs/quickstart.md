@@ -53,7 +53,7 @@ Multiple auctions are supported. This is useful for cases such as:
 
 * Use **Template Editor** to configure the auction slide pack and item slip/card output.
 * Use **Image Management** to upload shared graphics used by auction branding or templates.
-* See `pptx_template_editing.md` for the JSON fields controlling slide layout.
+* See `template_editing.md` for the JSON fields controlling slide layout.
 
 Items can now be added by four routes:
 
