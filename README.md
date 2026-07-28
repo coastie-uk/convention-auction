@@ -55,17 +55,17 @@ This software provides a single platform which automates the process from item s
 
 ## Stack
 
+- Native install or Docker Compose deployment with a Caddy HTTPS frontend
 - Node.js + Express
 - SQLite (via better-sqlite3)
 - Plain HTML, CSS, JS
 - Hosted via a webserver of your choice (instructions included for Apache + HTTPS + Let's Encrypt)
-- Optional Docker Compose deployment with a Caddy HTTPS frontend
 
 
 ## Installation
 
 - For Docker deployment see [docs/docker_installation.md](docs/docker_installation.md)
-  or the [hosted guide](https://mainbid.co.uk/docker_installation.html).
+  or the [hosted guide](https://manebid.co.uk/docker_installation.html).
 - For standalone Node.js/Apache setup see
   [docs/installation.md](docs/installation.md) or the
   [hosted guide](https://manebid.co.uk/installation.html).
